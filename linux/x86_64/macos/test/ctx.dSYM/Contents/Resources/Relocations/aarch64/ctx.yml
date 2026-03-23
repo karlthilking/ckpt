@@ -1,9 +1,0 @@
----
-triple:          'arm64-apple-darwin'
-binary-path:     ctx
-relocations:
-  - { offsetInCU: 0x26, offset: 0x26, size: 0x8, addend: 0x0, symName: _main, symObjAddr: 0x0, symBinAddr: 0x100003DDC, symSize: 0x110 }
-  - { offsetInCU: 0x4D, offset: 0x4D, size: 0x8, addend: 0x0, symName: _regs, symObjAddr: 0x178, symBinAddr: 0x100008000, symSize: 0x0 }
-  - { offsetInCU: 0x67, offset: 0x67, size: 0x8, addend: 0x0, symName: _main, symObjAddr: 0x0, symBinAddr: 0x100003DDC, symSize: 0x110 }
-  - { offsetInCU: 0x8C, offset: 0x8C, size: 0x8, addend: 0x0, symName: _main.count, symObjAddr: 0x112C, symBinAddr: 0x1000080E0, symSize: 0x0 }
-...
