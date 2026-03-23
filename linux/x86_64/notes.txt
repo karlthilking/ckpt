@@ -1,0 +1,12 @@
+Replacing library calls and system calls with wrapper functions
+- use LD_PRELOAD to load dynamically linked shared library (the checkpoint 
+  library into the executable to be checkpointed), then calls to library
+  or system call routines will enter into the wrapper first
+- use syscall(SYS_xxx, ...) to call system calls directly
+- use dlysm to get real library function call into libc after wrapper
+  does its works (use RTLD_NEXT)
+
+- interpose on the function pointer passed to pthread_create to
+  point to an external function which calls the actual function
+  pointer and then registers that the thread has exited when
+  the embedded function returns

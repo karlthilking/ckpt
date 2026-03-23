@@ -1,0 +1,527 @@
+arm64 Pointer authentication instructions
+
+Summary:
+- PAC* instruction yields a PAC value
+- The pointer is authenticated using an AUT* instruction
+
+PAC* instructions:
+Inputs: Destination crypto key register, modifer, pointer
+
+PAC R12, LR, SP
+- Compute PAC using LR as address, SP as modifier and key.
+  Computed PAC is written to R12.
+
+PACG Rd, Rn, Rn
+- Compute PAC using two input registers and a key; PAC is 
+  written to Rd
+
+PACBTI R12, LR, SP 
+- Compute PAC using LR as address, SP as modifier and key.
+  Provide a validation BTI 'landing pad'.
+
+AUT R12, LR, SP
+- Authenticate LR using SP as the modifier
+
+AUT Ra, Rn, Rm
+- Authenticate Rn using Rm as the modifier
+
+Notes:
+- A PAC instruction stores signature in high-order bits of a pointer
+- AUT instruction removes and authenticates signature before
+  reading the pointer
+- If the pointer value changes before the write and read will
+  invalidate the signature and the CPU interprets authentication
+  failure as memory corruption (i.e. authentication fails, then
+  system invalidates the pointer, and when you try to use it,
+  a segmentation fault occurs)
+
+Epilogue and Prologue with arm64e:
+- pacibsp: Pointer authentication code for instruction address 
+           (link register, x30/lr) using IB key and sp (stack 
+           pointer) as discriminator/modifier
+- retab: Return from subroutine with pointer authentication
+- autibsp: Authenticate x30/lr using IB key and sp
+
+Four signing keys: IA, IB, DA, DB
+- I for instructions, D for data
+- A keys are global keys (process-independent)
+- B keys are local keys (unique among processes)
+  - key does not change in child after fork()
+  - however they can be changed in child after exec()
+- LR (link register; holds return address) is always signed
+  with the IB key using the SP on entry as discriminator.
+  (Unless a function does not spill LR to stack) 
+
+Further:
+- ptrauth.h from clang (for pac related user functions)
+
+macOS architecture:
+        User space process
+        libSystem.dylib (libc, libpthread, etc.)
+        BSD layer (posix APIS, BSD syscalls, signals, etc.)
+        Mach layer (tasks, thread, ipc, vm, scheduling, traps)
+        Hardware layer
+
+Transparent checkpointing difficulties with PAC:
+- return addresses and function pointers are bound to a
+  per boot/process key which is in a privileged register, if a
+  process is transparently restored in terms of memory regions,
+  register contexts, etc., there will still be issues with
+  return addresses and function pointers because the crypto key
+  for signing/authenticating changes for each boot/new process
+- Any memory containing signed pointers have PAC values
+  - If these pointers are copied to the checkpoint file and
+    restored without any modifications, the signed values will
+    be invalid (i.e. authentication will fail, seg fault occurs)
+  - return addresses are signed with pacibsp; after restore, each
+    needs to be re-signed with the new key (generated per process)
+    and using the correct modifier (sp)
+
+Issue with setcontext():
+- when setcontext() restores an mcontext_t with saved lr, the saved
+  lr was signed with the old sp
+- the context is restored, but on a different stack, so when the
+  subroutine returns (retab, autibsp + ret, etc.) the stack pointer
+  used as the discriminator is different and the authentication
+  fails
+
+Possible workarounds:
+- setjmp/longjmp
+- hand-written assembly for getcontext()/setcontext()
+  - save and restore registers x19-x28, x29, x30, sp and d8-d15
+  - if x30 (link register) is restored directly without compiler
+    generated pacibsp in epilogue, autibsp in prologue so there
+    will be no issues with PAC
+  - xpaci instruction is avaialable to strip the keyed PAC from a
+    pointer without authentication
+  - walk frame and resign pointers with pacibsp to correctly sign
+    pointers based on the new per boot/process keys
+- libucontext
+  - external library providing ucontext.h that works correctly on
+    M-series chips
+- Process tracing (requires root privileges)
+  - task_for_pid, task_suspend, thread_get_state, thread_set_state
+  - mach_vm_read, mach_vm_write
+
+Full getcontext() responsibilities:
+- saves a ucontext_t which includes an mcontext_t
+- on arm64, mcontext_t captures general-purpose registers x0-x30,
+  as well as sp, pc, and neon/fp registers
+- also saves the signal was with sigprocmask()
+- i.e. the general responsibilities of getcontext() are all
+  possible in user space without an special privileges
+- things do require privilege:
+  - SCTLR_EL1, PAC key regs (APIAKey, APIBKey), TPIDR_ELI1, etc.
+
+macOS/arm64 replacement for getcontext/setcontext:
+- getcontext(): thread_get_state() with ARM_THREAD_STATE64
+  - mach trap into kernel that strips PAC tags from register values
+  - pc, lr, and sp from thread_get_state() are untagged
+- setcontext(): thread_set_state() with ARM_THREAD_STATE64
+  - register values passed to thread_set_state() are untagged,
+    when trap into kernel, the return address is re-signed
+- requires privileged helper to call Mach APIs on the checkpointed
+  process' threads (privilege=com.apple.security.cs.debugger)
+
+macOS equivalent to /proc/self/maps:
+- mach_vm_region/vm_region_recurse_64 to get all memory regions
+- read contents of memory region with mach_vm_read
+- restore memory regions with mach_vm_allocate + mach_vm_write
+
+Validating all signed return addresses in restored process:
+- Walk the stack frame and re-sign at restore time
+  - walk stack using x29 (fp), find each lr at [fp, #8], strip
+    the PAC with xpaci, re-sign with correct modifier (sp)
+  - modifier should always be sp at function entry (fp + 16)
+- pseudocode (works for standard frames):
+  u64 old_lr      = *(u64 *)(fp + 8)
+  u64 strip_lr    = ptrauth_strip((void *)old_lr,
+                                  ptrauth_key_return_address)
+  u64 sp_at_entry = fp + 16
+  u64 new_lr      = ptrauth_sign_unauthenticated(
+        (void *)strip_lr, ptrauth_key_ib, sp_at_entry
+  )
+  *(u64 *)(fp + 8) = new_lr
+
+Use a signal handler to re-sign on fault:
+- pointer authentication failures raises SIGSEV / EXC_BAD_ACCESS
+- when failure occurs, the fault address has high bits sets
+  - the handler can strip the high bits, find the correct signing context,
+    re-sign and resume
+  - to reliably recover the original return address, use si_addr in a 
+    siginfo_t structure which should have the faulting address which can
+    be re-signed
+
+goals:
+ - handle return addresses on the stack
+
+linux vs macos implementation:
+     Linux      |       macOS
+/proc/self/maps    mach_vm_region
+getcontext()       thread_get_state()
+setcontext()       thread_set_state
+   no PAC          frame walk+xpaci+ptrauth_sign_unauthenticated
+   no PAC          parse __AUTH_CONST + re-sign pointers
+   wrappers        same approach with wrappers
+   unprivileged    requires com.apple.security.cs.debugger     
+
+- Check to see if libSystem (macOS runtime) is compiled as arm64e:
+  ls /System/Volumes/Preboot/Cryptexes/OS/System/Library/dyld
+
+- Inspecting libSystem:
+  1) dyld-shared-cache-extractor \
+     /System/Volumes/Preboot/Cryptexes/OS/System/Library/dyld/\
+     dyld_shared_cache_arm64e \
+  
+  Inspect Mach-O header
+  2) otool -hv path/to/extracted/usr/lib/libSystem.B.dylib
+
+  Use objdump to see PAC instruction usage
+  3) llvm-objdump --disassemble-symbols=_setcontext \
+     /path/to/extracted/usr/lib/libSystem.B.dylib
+
+Other notes on PAC:
+- user-space binaries are compiled to arm64, but system libraries are arm64e
+
+com.apple.security.cs.debugger:
+- grants a process debugger privileges, allowing it to attach
+  to another process
+- calling task_for_pid() returns a Mach task port for the
+  child process which allows the debugger process to read
+  and write to the child's address space, and control
+  the child's threads
+- allows the use of privileged operations:
+  - mach_vm_read + mach_vm_write (save/restore memory)
+  - thread_suspend / thread_resume
+  - thread_get_state + thread_set_state (save/restore registers)
+  - mach_vm_region_recurse (enumerate memory mapping)
+- nuances:
+  - target process must enable get-task-allow, otherwise
+    task_for_pid will be blocked by SIP (system integity
+    protection)
+- need entitlements plist and sign with developer certificate
+  - example xml:
+     <dict>
+       <key>com.apple.security.cs.debugger</key>
+       <true/>
+       <key>com.apple.security.cs.disable-library-validation</key>
+       <true/>
+       ...
+     </dict>
+  - signing for com.apple.security.cs.debugger:
+     codesign -f -s --entitlements <entitlements> --options \
+     <options> ./<executable>
+- re-signing user binaries with get-task-allow (to permit
+  calling task_for_pid)
+  - codesign -f -s --entitlements <entitlements> \
+    <executable> exec <executable>
+- checkpoint/restore process:
+  - coordinator has cs.debugger privileges + signed entitlements
+  - launch signs target executable with get-task-allow
+  checkpoint:
+    task_port <- task_for_pid()
+    
+    for thread in task:
+      thread_suspend()
+      regs <- thread_get_state(ARM_THREAD_STATE64)
+    
+    mach_vm_region_recurse()
+    checkpoint-file <- mach_vm_read()
+    walk fp:
+      read lr
+      xpaci
+      ptrauth_sign_unauthenticated
+    save to checkpoint file
+    thread_resume()
+
+  restart:
+    fork()
+    mach_vm_allocate()
+
+    for thread in task:
+      thread_create()
+      walk fp:
+        re-sign lr
+      thread_set_state(ARM_THREAD_STATE64, regs)
+      thread_resume()
+
+- SIP policies on macOS:
+  - ALLOW_TASK_FOR_PID
+    - whether task_for_pid can be used to attach to processes without
+      get-task-allow enabled
+    - with SIP enabled, root privileges do not imply being able to call
+      task_for_pid if a process is protected
+    - without SIP, root can call task_for_pid on any process
+    - csrutil enable --without debug allows the checkpoint coordinator
+      to call task_for_pid attach to processes without get-task-allow
+  - ALLOW_UNRESTRICTED_FS
+    - protects /System, /usr, /bin, and /sbin files from modification
+    - for checkpointing a system binary (e.g. /usr/bin/python3), the
+      binary can not be modified directly with get-task-allow
+
+- Disabling SIP:
+  - checkpoint coordinator is compiled as arm64, system libraries are
+    compiled as arm64e
+  - to test checkpointing an arm64e binary, SIP must be disabled and
+    the NVRAM flag must be set, otherwise, PAC/AUT instructions will
+    be nops
+  - for testing PAC compatibility:
+    - allow task_for_pid capabilities
+       csrutil enable --without debug
+    - set NVRAM flag
+       sudo nvram boot-args=-arm64e_preview_abi
+
+SCTLR_EL1
+ - system register holding EnIA, EnIB, EnDA, EnDB (instruction A key,
+   instruction B key, data A key, data B, key)
+ - reconfigured when context switching from arm64 to arm64e process
+
+Re-signing target binary's pointers:
+ - using ptrauth_sign_unauthenticated from within the coordinator 
+   process will not work due to the per/process signing key being
+   different
+ - thread_set_state re-signs a pointer with the target's key but only
+   handles the lr register
+ - re-signing keys (walking stack frame and calling pacibsp on each lr)
+   must occur within the target process the ensure usage of the correct
+   key for signing
+
+- Alternative to task_for_pid, cs.debugger, get-task-allow
+  - use DYLD_INSERT_LIBRARIES to load checkpoint shared library into
+    target process
+    - only issue would be constraints against library injection
+  - entitlements for shared library architecture:
+    <dict>
+     <key>com.apple.security.cs.disable-library-validation</key>
+     <true/>
+     <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+     <true/>
+    </dict>
+  - disable-library-validation allows for DYLD_INSERT_LIBRARIES to
+    inject a runtime library into a target process
+  - allow-unsigned-executable-memory allows the shared library map
+    in memory regions on restart
+  - with shared library model, the checkpoint coordinator will not
+    require elevated privileges
+  - the target binary must be resigned with disable-library-validation
+    and allow-unsigned-executable-memory, and load in the shared library
+    before executing the target process
+
+- Shared library responsibilities:
+  - checkpoint
+    - saving memory regions
+      - mach_task_self: descriptor referring to current process
+      - mach_vm_region_recurse: enumerates over all memory regions  
+      - special regions/regions to skip on macOS:
+        - NO VM_PROT_READ (guard pages)
+        - VM_MEMORY_SHARED_PMAP (shared cache, restored by dyld)
+        - VM_MEMORY_DYLIB (shared region)
+        - VM_MEMORY_STACK (exclude stack guard pages but not live stack)
+        - VM_MEMORY_REALLOC (kernel-managed memory)
+        - dlyd shared cache (libSystem, libc++, i.e. runtime libraries)
+           
+           size_t cache_size;
+           void *base = _dyld_get_shared_cache_range(&cache_size)
+           if (addr >= base && addr < base + cache_size)
+                   return 1; // is dyld shared cache region
+           else
+                   return 0;
+      
+      - restoring memory regions:
+         mach_vm_allocate: analagous to mmap
+         mach_vm_protect: analagous to mprotect
+         VM_FLAGS_FIXED: analagous to mmap(..., MAP_FIXED, ...)
+         VM_FLAG_OVERWRITE:
+          - allows memory mapping to overwrite exisiting segments,
+            i.e. restart process stack, heap, etc.
+
+    - saving/restoring register contexts:
+      - hand-write getcontext(), setcontext() replacements due to issues
+        with these sys calls in libSystem or libc using pacibsp, retab,
+        etc.
+      - assembly implementation uses ret (no authentication) and omits
+        using retab/autibsp/autib (authentication + branch) instructions
+      - ucontext_t values will not be pointer authenticated and are
+        managed explicitly
+
+aarch64 registers:
+  x0-x7        general purpose, used for arguments, return values
+  x8           syscall number
+  x9-x15       general purpose, used for temporary data storage
+  x16-x17      temporary registers, scratch
+  x18          platform register, platform-specific use cases
+  x19-x28      callee-saved registers
+  x29 (fp)     frame pointer, points to start of stack frame
+  x30 (lr)     link register, hold return address
+  sp           stack pointer, points to top of stack
+  pc           program counter, holds next instruction address
+  zr, wzr, xzr zero register
+  
+  integer registers:
+  w*: 32 bits
+  x*: 64 bits
+
+  fp registers:
+  v*, q*: 128 bits
+  d*:     64 bits
+  s*:     32 bits
+
+aarch64 instructions:
+
+
+- Strip PAC from return addresses before writing to checkpoint file:
+    u64 *fp = (u64 *)ctx->fp;
+    while (fp) {
+            u64 *saved_lr = fp + 1;     // saved lr on stack
+            u64 signed_lr = *saved_lr;  // get the value (signed)
+
+            u64 raw_lr;                 // assign with raw lr value
+            __asm__ volatile(
+                "mov    x9, %1  \n"     // x9 = signed lr
+                "xpaci  x9      \n"     // strip PAC
+                "mov    %0, x9  \n"     // raw_lr = x9
+                : "=r"(raw_lr)
+                : "r"(signed_lr)
+                : "x9"
+            );
+
+            *saved_lr = raw_lr;         // saved the un-signed lr
+            fp = (u64 *)fp[0];          // advance to next frame
+    }
+
+- Re-sign saved return addresses before restoring memory:
+    u64 *fp = (u64 *)ctx->fp;
+    while (fp) {
+            u64 *saved_lr = fp + 1;
+            u64 raw_lr    = *saved_lr;
+            
+            // modifier is the stack pointer
+            u64 modifier  = (u64)fp + 16;
+            u64 signed_lr;
+
+            __asm__ volatile(
+                "mov    x9, %1  \n"     // x9 = raw lr
+                "mov    x10, %2 \n"     // x10 = modifier
+                "pacib  x9, x10 \n"     // sign raw lr with IB key
+                "mov    %0, x9  \n"     // signed lr = x9
+                : "=r"(signed_lr)
+                : "r"(raw_lr), "r"(modifier)
+                : "x9", "x10"
+            );
+
+            *saved_lr = signed_lr;
+            fp = (u64 *)fp[0];
+    }   
+
+- Challenges with frame-walking approach:
+  - function may not have valid frame (i.e. [fp, #8])
+    - leaf functions (no frame record; stp x29, x30)
+    - assembly code without frame record
+  - frame pointer walk fp = fp[0] can be corrupted
+  - example:
+     foo:
+       pacibsp
+       ** interrupted by signal **
+       stp         x29, x30 [sp, #-16]
+     - x30 (lr) has been signed, but the frame record (fp, lr) were
+       not saved on the stack before the arrival of a signal
+     - foo has no frame record at checkpoint time, so lr will not
+       be stripped and re-signed properly, and getcontext() will then
+       save the unstripped lr register (will cause EXC_BAD_ACCESS)
+  - checkpointing is safe iff:
+    - every active frame has established a frame record
+    - no signal handler is mid-execution
+    - all function prologues have completed
+      - check pc to ensure frame record is eiter complete or not
+        yet started
+
+getcontext arm64 in libSystem:
+ pacibsp
+ stp    x29, x30
+ mov    x29, sp
+ mov    x1, sp
+ # branches to populate_signal_stack_context -> sigprocmask
+ bl     0x1832e9e74
+ mov    sp, x29
+ ldp    x29, x30, [sp], #0x10
+ mov    x10, x29
+ mov    x9, #0x4517
+ pacda  x10, x9
+ mov    x11, x9
+ mov    x9, #0xcbed
+ pacda  x11, x9
+ mov    x12, x30
+ mov    x13, #0x2
+ stp    x10, x12, [x0, #0xf8]
+ str    x11, [x0, #0x108]
+ str    w13, [x0, #0x11c]
+ stp    x19, x20, [x0, #0xa8]
+ stp    x21, x22, [x0, #0xb8]
+ stp    x23, x24, [x0, #0xc8]
+ stp    x25, x26, [x0, #0xd8]
+ stp    x27, x28, [x0, #0xe8]
+ str    xzr, [x0, #0x10]
+ str    d8,  [x0, #0x1a8]
+ str    d9,  [x0, #0x1b8]
+ str    d10, [x0, #0x1c8]
+ str    d11, [x0, #0x1d8]
+ str    d12, [x0, #0x1e8]
+ str    d13, [x0, #0x1f8]
+ str    d14, [x0, #0x208]
+ str    d15, [x0, #0x218]
+ mov    x0, xzr
+ retab
+
+setcontext arm64 in libSystem:
+ pacibsp
+ stp    x20, x19, [sp, #-0x20]
+ stp    x29, x30, [sp, #0x10]
+ add    x29, sp, #0x10
+ ldr    x8, [x0, #0x28]
+ cbz    x8, 0x1832e9f5c]        ; <+76>
+ mov    x19, x0
+ add    x1, x0, #0x4
+ mov    w0, #0x3
+ mov    x2, #0x0
+ bl     0x1832ea5a8             ; sigprocmask
+ add    x0, x19, #0x40
+ ldp    x29, x30, [sp, #0x10]
+ ldp    x20, x19, [sp], #0x20
+ autibsp
+ eor    x16, x30, x30, lsl
+ tbz    x16, #0x3e, 0x1832e8f58 ; <+72>
+ brk    #0xc471
+ b      0x1832e9f78             ; _setcontext
+ bl     0x1832ea3e8             ; __error
+ ldp    x19, x20, [x0, #0xa8]
+ ldp    x21, x22, [x0, #0xb8]
+ ldp    x23, x24, [x0, #0xc8]
+ ldp    x25, x26, [x0, #0xd8]
+ ldp    x27, x28, [x0, #0xe8]
+ ldr    d8,  [x0, #0x1a8]
+ ldr    d9,  [x0, #0x1b8]
+ ldr    d10, [x0, #0x1c8]
+ ldr    d11, [x0, #0x1d8]
+ ldr    d12, [x0, #0x1e8]
+ ldr    d13, [x0, #0x1f8]
+ ldr    d14, [x0, #0x208]
+ ldr    d15, [x0, #0x218]
+ ldp    x10, x12, [x0, #0xf8]
+ ldr    x11, [x0, #0x108]
+ ldr    w13, [x0, #0x11c]
+ mov    x9, #0cxbed
+ autda  x11, x9
+ ldr    xzr, [x11]
+ mov    sp, x11
+ mov    x9, #0x4517
+ autda  x10, x9
+ mov    x29, x10
+ mov    x30, x12
+ tbnz   w13, #0x1, 0x1832ea004  ; <+140>
+ mov    x16, x12
+ mov    x17, x16
+ mov    x9, #0x77d3
+ mov    x0, xzr
+ retab
+ 
+
