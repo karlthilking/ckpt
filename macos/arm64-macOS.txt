@@ -524,4 +524,22 @@ setcontext arm64 in libSystem:
  mov    x0, xzr
  retab
  
+Checkpoint Timeline:
+ get memory regions             -> mach_vm_region_recurse
+ read memory regions            -> read
+ strip PAC for frames           -> xpaci
+ save register state            -> asm getcontext
+ save register state            -> thread_suspend + thread_get_state
+ save signal mask               -> sigprocmask
+ write checkpoint file          -> write
 
+Restart Timeline:
+ Deallocate restart memory      -> mach_vm_deallocate
+ Restore memory regions         -> mach_vm_allocate FIXED + OVERWRITE
+ Restore memory protections     -> mach_vm_protect max + cur
+ Restore memory contents        -> write
+ Re-sign PAC values             -> pacib
+ Restore register contexts      -> asm setcontext
+ Restore register contexts      -> thread_set_state
+ Restore signal mask            -> sigprocmask
+ Resume threads                 -> thread_resume

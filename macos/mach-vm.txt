@@ -1,0 +1,201 @@
+Mach VM Subsystem:
+System calls:
+ vm_map:
+  - Maps a vm object handle into address space
+ vm_allocate:
+  - Allocate memory in address space
+ mach_make_memory_entry_64:
+  - Creates a handle for the underlying vm object
+  - The handle can be passed via IPC
+ vm_region_object_create:
+  - Creates a submap
+Structures:
+ vm_map_entry:
+  - Contains task specific about an individual 
+    mapping and reference to backing object
+  - Fields:
+   - is_submap: Boolean indicating if the map entry is a
+              normal VM object or a submap
+     - a submap is a collection of mappings that are part
+       of a larger map
+   - protection: Access permissions of the vm object
+   - max_protection: Maximum access obtainable
+   - use_pmap: Indicates if mappings should be shared
+    - shared libraries share text segment (use_pmap=true)
+      but not rw (data) segments (use_pmap=false)
+  
+Resources:
+ xnu/osfmk/mach/vm_prot.h
+
+For browsing mach headers:
+ ls $(xcrun --show-sdk-path)/usr/include/mach
+
+Mach VM related headers:
+ #include <mach/mach.h>
+ #include <mach/mach_vm.h>
+ #include <mach/vm_region.h>
+
+Mach VM function prototypes:
+kern_return_t 
+mach_vm_region_recurse(vm_map_read_t            target_task,
+                       mach_vm_address_t        *address,
+                       mach_vm_size_t           *size,
+                       natural_t                *nesting_depth,
+                       vm_region_recurse_info_t info,
+                       mach_msg_type_number_t   *infoCnt);
+
+/**
+ * Returns the contents of a specified range of the virtual
+ * address space of the target task. The range must be aligned
+ * on a virtual page boundary and must be a multiple of pages
+ * in extent. The protection of the specified range must permit
+ * reading.
+ */
+kern_return_t
+mach_vm_read(vm_map_read_t              target_task,
+             mach_vm_address_t          address,
+             mach_vm_size_t             size,
+             vm_offset_t                *data,
+             mach_msg_type_numer_t      *dataCnt);
+
+/**
+ * Writes the contents of the specified range of the virtual
+ * address space of the target task. The page must be aligned
+ * on a virtual page boundary and must be a multiple of pages
+ * in extent. The protection of the specified range must permit
+ * writing.
+ */
+kern_return_t
+mach_vm_write(vm_map_t                  target_task,
+              mach_vm_address_t         address,
+              vm_offset_t               data,
+              mach_ms_type_number_t     dataCnt);
+
+/**
+ * Allocate zero-filled memory in the address space of the
+ * target task, either at the specified address, or wherever
+ * space can be found (controlled by flags), of the specified
+ * size. The address at which the allocation took place is
+ * returned.
+ */
+kern_return_t
+mach_vm_allocate(vm_map_t               target,
+                 mach_vm_address_t      *address,
+                 mach_vm_size_t         size,
+                 int                    flags);
+
+/**
+ * Maps a user-supplied memory object into the virtual address
+ * space of the target task. Can handle allocation at a specific
+ * address, or an address selected by the kernel.
+ *
+ * The start address will be aligned on a virtual page boundary.
+ * The address will meet the mask requirements (bits turned on
+ * in the mask must not be turned on in the result). The size of
+ * the mapping is rounded up to an intergral number of virtual
+ * pages.
+ */
+kern_return_t
+mach_vm_map(vm_map_t                    target_task,
+            mach_vm_address_t           *address,
+            mach_vm_size_t              size,
+            mach_vm_offset_t            mask,
+            int                         flags,
+            mem_entry_name_port_t       object,
+            memory_object_offset_t      offset,
+            boolean_t                   copy,
+            vm_prot_t                   cur_prot,
+            vm_prot_t                   max_prot,
+            vm_inherit_t                inheritance);
+
+/**
+ * Sets the current or maximum protections of a specified range
+ * of the virtual address space of the target task. Protections
+ * are a subset of {read, write, execute}.
+ *
+ * Current protection limits the memory access rights of threads
+ * within the task; maximum protection limits the accesses that
+ * may be given for the current protection.
+ */
+kern_return_t
+mach_vm_protect(vm_map_t                target_task,
+                mach_vm_address_t       address,
+                mach_vm_size_t          size,
+                boolean_t               set_max,
+                vm_prot_t               new_prot);
+
+/* mach_vm_read_t */
+typedef struct {
+        mach_msg_header_t               hdr;
+        mach_msg_body_t                 body;
+        mach_msg_ool_descriptor_t       data;
+        NDR_record_t                    NDR;
+        mach_msg_type_number_t          dataCnt;
+} mach_vm_read_t;
+
+/* vm_map_t */
+typedef struct {
+        mach_msg_header_t       hdr;
+        NDR_record_t            NDR;
+        kern_return_t           rc;
+        vm_address_t            address;
+} vm_map_t;
+
+typedef int vm_prot_t;
+
+
+Linux/POSIX vs Mach APIs for checkpoint/restart:
+        Linux/POSIX             vs                Mach
+       mmap(MAP_ANON)                         mach_vm_allocate
+       mmap(MAP_FIXED)                  mach_vm_allocate + VM_FLAGS_FIXED
+mmap(MAP_FIXED | MAP_ANON | MAP_SHARED)         mach_vm_map
+           munmap                            mach_vm_deallocate
+          mprotect                             mach_vm_protect
+            read                                mach_vm_read
+            write                               mach_vm_write
+        /proc/self/maps                    mach_vm_region_recurse
+    getcontext/setcontext               thread_get_state/thread_set_state
+     kill(..., SIGSTOP)                         thread_suspend
+     kill(..., SIGCONT)                         thread_resume
+
+To allocate an anonymous mapping (equivalent):
+ mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0);
+ mach_vm_allocate(mach_task_self(), &addr, size, VM_FLAGS_ANYWHERE);
+
+To allocate memory at a fixed address:
+ mmap(addr, size, prot, MAP_FIXED | MAP_PRIVATE, fd, 0);
+ mach_vm_allocate(..., ..., ..., VM_FLAGS_FIXED | VM_FLAGS_OVERWRITE);
+ - mmap + MAP_FIXED can fail on macOS if the range is occupied
+
+To change memory mapping protections (equivalent):
+ mach_vm_protect(mach_task_self(), addr, size, FALSE, prot);
+ mprotect(&addr, len, prot);
+ - boolean parameter for mach_vm_protect (set_max) determines whether
+   or not to the set the maximum protections for the memory mapping,
+   as opposed to the current protection level
+ - this implies that at restart, both protections must be restored:
+    mach_vm_protect(..., ..., ..., TRUE, max_prot); // max protection
+    mach_vm_protect(..., ..., ..., FALSE, prot); // current protection
+
+For iterating virtual address space:
+ Linux: /proc/self/maps
+ MacOS: mach_vm_region_recurse + VM_REGION_SUBMAP_INFO_COUNT_64
+ - proc_regionfilename (in libproc.h) can provide the backing
+   file for a region
+
+For capturing and restoring thread state:
+ thread_get_state(ARM_THREAD_STATE64) = getcontext()
+ thread_set_state(ARM_THREAD_STATE64) = setcontext()
+ kill(..., SIGSTOP) = thread_suspend
+ kill(..., SIGCONT) = thread_resume
+ task_threads returns an array of Mach thread ports for all threads
+ in the calling task
+
+For saving and restoring signal mask:
+ save:          sigprocmask(SIG_BLOCK, NULL, &mask)
+ restore:       sigprocmask(SIG_SETMASK, &mask, NULL)
+ Both should work on macOS
+
+All file descriptor/file io unix system calls should work on macOS
+ open, read, write, close, lseek, dup2, etc.
+
