@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
+#include <assert.h>
 #include <mach/mach.h>
 #include <mach/mach_vm.h>
 #include <mach/vm_region.h>
@@ -10,13 +11,18 @@
 #include <mach-o/dyld.h>
 #include <libproc.h>
 
-// #ifndef VM_MEMORY_DYLD
+// #ifdef VM_MEMORY_DYLD
+// #undef VM_MEMORY_DYLD
+// #endif
+// 
+// #ifdef VM_MEMORY_DYLD_MALLOC
+// #undef VM_MEMORY_DYLD_MALLOC
+// #endif
+// 
 // #define VM_MEMORY_DYLD          60
-// #endif
-
-// #ifndef VM_MEMORY_DYLD_MALLOC
 // #define VM_MEMORY_DYLD_MALLOC   61
-// #endif
+
+typedef uint64_t        u64;
 
 typedef struct {
         mach_vm_address_t       start;
@@ -27,6 +33,26 @@ typedef struct {
         char                    name[128];
 } mem_rgn_t;
 
+// extern const void *_dyld_get_shared_cache_range(size_t *);
+// extern const char *dyld_shared_cache_file_path(void);
+
+int is_shared_cache_rgn(mach_vm_address_t addr)
+{
+//         static void     *base   = NULL;
+//         static size_t   size    = 0;
+// 
+//         if (!base)
+//                 base = _dyld_get_shared_cache_range(&size);
+// 
+//         if (addr >= (u64)base && addr < (u64)base + size)
+//                 return 1;
+        if (addr >= SHARED_REGION_BASE_ARM64 &&
+            addr < SHARED_REGION_BASE_ARM64 +
+                   SHARED_REGION_SIZE_ARM64)
+                return 1;
+        return 0;
+}
+
 void mem_rgn_name(mem_rgn_t *r)
 {
         int rc = proc_regionfilename(getpid(),
@@ -34,8 +60,15 @@ void mem_rgn_name(mem_rgn_t *r)
                                      r->name,
                                      sizeof(r->name));
         
-        if (rc > 0)
+        if (rc > 0) {
+                assert(r->name[0] != '\0');
                 return;
+        } else if (is_shared_cache_rgn(r->start)) {
+                snprintf(r->name,
+                         sizeof(r->name),
+                         "[dyld_shared_cache]");
+                return;
+        }
 
         switch (r->tag) {
         case VM_MEMORY_MALLOC:
@@ -45,22 +78,34 @@ void mem_rgn_name(mem_rgn_t *r)
         case VM_MEMORY_MALLOC_LARGE:
         case VM_MEMORY_MALLOC_LARGE_REUSABLE:
         case VM_MEMORY_MALLOC_LARGE_REUSED:
-                snprintf(r->name, sizeof(r->name), "[heap]");
+                snprintf(r->name,
+                         sizeof(r->name),
+                         "[heap]");
                 return;
         case VM_MEMORY_STACK:
-                snprintf(r->name, sizeof(r->name), "[stack]");
+                snprintf(r->name,
+                         sizeof(r->name),
+                         "[stack]");
                 return;
         case VM_MEMORY_GUARD:
-                snprintf(r->name, sizeof(r->name), "[guard]");
+                snprintf(r->name,
+                         sizeof(r->name),
+                         "[guard]");
                 return;
         // case VM_MEMORY_DLYD:
-        //         snprintf(r->name, sizeof(r->name), "[dyld]");
+        //         snprintf(r->name,
+        //                  sizeof(r->name),
+        //                  "[dyld]");
         //         return;
         // case VM_MEMORY_DLYD_MALLOC:
-        //         snprintf(r->name, sizeof(r->name), "[dyld_heap]");
+        //         snprintf(r->name,
+        //                  sizeof(r->name),
+        //                  "[dyld_heap]");
         //         return;
         case VM_MEMORY_SHARED_PMAP:
-                snprintf(r->name, sizeof(r->name), "[shared_pmap]");
+                snprintf(r->name,
+                         sizeof(r->name),
+                         "[shared_pmap]");
                 return;
         default:
                 break;
@@ -69,6 +114,17 @@ void mem_rgn_name(mem_rgn_t *r)
         if (r->start == 0 && r->prot == VM_PROT_NONE) {
                 snprintf(r->name, sizeof(r->name), "[zeropage]");
                 return;
+        } else {
+                vm_prot_t mask = VM_PROT_READ | VM_PROT_WRITE |
+                                 VM_PROT_EXECUTE;
+
+                if ((r->prot == VM_PROT_NONE) | 
+                   !(r->prot & mask)) {
+                        snprintf(r->name,
+                                 sizeof(r->name),
+                                 "[guard]");
+                        return;
+                }
         }
 
         snprintf(r->name, sizeof(r->name), "[anonymous]");
@@ -84,7 +140,7 @@ void print_one_region(mem_rgn_t *r)
         
         mem_rgn_name(r);
 
-        printf("%llx-%llx %c%c%c %s\n",
+        printf("%llx-%llx\t%c%c%c\t%s\n",
                 r->start, r->end,
                 rwx[0], rwx[1], rwx[2],
                 r->name);

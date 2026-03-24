@@ -2,50 +2,66 @@
 #include <ucontext.h>
 #include <stdlib.h>
 #include <stdio.h>
-#include <ptrauth.h>
-
-ucontext_t uc;
-
-char *regs[33] =
-{
-        "x0", "x1", "x2", "x3", "x4", "x5", "x6","x7","x8","x9",
-        "x10","x11", "x12", "x13", "x14", "x15", "x16", "x17",
-        "x18", "x19", "x20", "x21", "x22", "x23", "x24", "x25",
-        "x26", "x27", "x28", "fp", "lr", "sp", "pc"
-};
+#include <err.h>
+#include <unistd.h>
+#include <mach/mach.h>
+#include <mach/thread_act.h>
+#include <mach/arm/thread_state.h>
 
 void print_ucontext(ucontext_t *uc)
 {
+        printf("Register context from getcontext:\n");
+
         mcontext_t mc = uc->uc_mcontext;
 
         for (int i = 0; i < 29; i++)
-                printf("%s:\t%llu\n", regs[i], mc->__ss.__x[i]);
+                printf("x%d:\t%llu\n", i, mc->__ss.__x[i]);
         
-        printf("%s:\t%llu\n", regs[29], mc->__ss.__fp);
-        printf("%s:\t%llu\n", regs[30], mc->__ss.__lr);
-        printf("%s:\t%llu\n", regs[31], mc->__ss.__sp);
-        printf("%s:\t%llu\n", regs[32], mc->__ss.__pc);
-
-        // ptrauth_strip(IB, mc->__ss.__lr);
+        printf("fp:\t%llu\n", mc->__ss.__fp);
+        printf("lr:\t%llu\n", mc->__ss.__lr);
+        printf("sp:\t%llu\n", mc->__ss.__sp);
+        printf("pc:\t%llu\n", mc->__ss.__pc);
 }
 
-void recursive(int levels)
+void print_thread_state(arm_thread_state64_t *ts)
 {
-        if (levels > 0)
-                recursive(levels - 1);
-        else {
-                getcontext(&uc);
-                printf("Context after 1000 recursive calls\n");
-                print_ucontext(&uc);
-        }
-        return;
+        printf("Register context from thread_get_state:\n");
+
+        for (int i = 0; i < 29; i++)
+                printf("x%d:\t%llu\n", i, ts->__x[i]);
+
+        printf("fp:\t%llu\n", ts->__fp);
+        printf("lr:\t%llu\n", ts->__lr);
+        printf("sp:\t%llu\n", ts->__sp);
+        printf("pc:\t%llu\n", ts->__pc);
 }
 
 int main(void)
-{
-        printf("Starting context\n");
-        getcontext(&uc);
+{       
+        ucontext_t              uc;
+        kern_return_t           kr;
+        arm_thread_state64_t    ts;
+        mach_msg_type_number_t  count;
+        
+        if (getcontext(&uc) < 0)
+                err(EXIT_FAILURE, "getcontext");
+
+        /* print ucontext_t internals */
         print_ucontext(&uc);
-        recursive(1000);
+
+        count = ARM_THREAD_STATE64_COUNT;
+        kr = thread_get_state(mach_thread_self(),
+                              ARM_THREAD_STATE64,
+                              (thread_state_t)&ts,
+                              &count);
+        if (kr != KERN_SUCCESS) {
+                fprintf(stderr,
+                        "thread_get_state: %s\n",
+                        mach_error_string(kr));
+                exit(EXIT_FAILURE);
+        }
+
+        /* print arm_thread_state64_t internals */
+        print_thread_state(&ts);
         exit(0);
 }
