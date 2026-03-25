@@ -7,6 +7,7 @@
 #include <mach/mach.h>
 #include <mach/thread_act.h>
 #include <mach/arm/thread_state.h>
+#include <ptrauth.h>
 
 void print_ucontext(ucontext_t *uc)
 {
@@ -17,6 +18,15 @@ void print_ucontext(ucontext_t *uc)
         for (int i = 0; i < 29; i++)
                 printf("x%d:\t%llu\n", i, mc->__ss.__x[i]);
         
+        /**
+         * Strip PAC from LR
+         *
+         *
+         */
+        // __asm__ volatile(
+
+        // );
+
         printf("fp:\t%llu\n", mc->__ss.__fp);
         printf("lr:\t%llu\n", mc->__ss.__lr);
         printf("sp:\t%llu\n", mc->__ss.__sp);
@@ -29,7 +39,7 @@ void print_thread_state(arm_thread_state64_t *ts)
 
         for (int i = 0; i < 29; i++)
                 printf("x%d:\t%llu\n", i, ts->__x[i]);
-
+        
         printf("fp:\t%llu\n", ts->__fp);
         printf("lr:\t%llu\n", ts->__lr);
         printf("sp:\t%llu\n", ts->__sp);
