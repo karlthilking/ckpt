@@ -4,7 +4,7 @@ CFLAGS=-g3 -O0
 build: ctx maps pac
 
 pac: pac.c
-	$(CC) $(CFLAGS) -arch arm64e -o $@ $<
+	$(CC) $(CFLAGS) -o $@ $<
 
 %: %.c
 	$(CC) $(CFLAGS) -o $@ $<
