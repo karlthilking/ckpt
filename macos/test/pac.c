@@ -13,7 +13,7 @@ typedef uint16_t        u16;
 typedef uint8_t         u8;
 
 /* Strip PAC from pointer to instruction address */
-#define PACSTRIP_I(ptr) \
+#define XPACI(ptr) \
         do { \
                 __asm__ __volatile__ ( \
                         "xpaci %0" \
@@ -24,7 +24,7 @@ typedef uint8_t         u8;
         } while (0)
 
 /* Strip PAC from pointer to data address */
-#define PACSTRIP_D(ptr) \
+#define XPACD(ptr) \
         do { \
                 __asm__ __volatile__ ( \
                         "xpacd %0" \
@@ -35,7 +35,7 @@ typedef uint8_t         u8;
         } while (0)
 
 /* Sign pointer with IA key using a modifier */
-#define PACSIGN_IA(ptr, modifier) \
+#define PACIA(ptr, modifier) \
         do { \
                 __asm__ __volatile__ ( \
                         "pacia %0, %1" \
@@ -46,7 +46,7 @@ typedef uint8_t         u8;
         } while (0)
 
 /* Sign pointer with IB key using a modifier */
-#define PACSIGN_IB(ptr, modifier) \
+#define PACIB(ptr, modifier) \
         do { \
                 __asm__ __volatile__ ( \
                         "pacib %0, %1" \
@@ -56,13 +56,48 @@ typedef uint8_t         u8;
                 ); \
         } while (0)
 
+/* Sign pointer with DA key using a modifier */
+#define PACDA(ptr, modifier) \
+        do { \
+                __asm__ __volatile__ ( \
+                        "pacda %0, %1" \
+                        : "+r" (ptr) \
+                        : "r"  (modifier) \
+                        : "memory" \
+                ); \
+        } while (0)
+
+/* Sign pointer with DB key using a modifier */
+#define PACDB(ptr, modifier) \
+        do { \
+                __asm__ __volatile__ ( \
+                        "pacdb %0, %1" \
+                        : "+r" (ptr) \
+                        : "r"  (modifier) \
+                        : "memory" \
+                ); \
+        } while (0)
+
+
+/**
+ * Determine if a pointer contains a PAC signature based on the
+ * presence of high bits set in the pointer. Mask should be a
+ * 64 bit integer with each bit set beyond the number of bits
+ * used for the virtual address space.
+ */
 #define PACSIGNED(ptr, mask) ((ptr) & (mask))
+
+typedef struct __reg_ctx_t {
+        ucontext_t      uc;
+        int             stripped_lr;
+} reg_ctx_t;
 
 int main(void)
 {
-        ucontext_t uc;
-        getcontext(&uc);
-        mcontext_t mc = uc.uc_mcontext;
+        reg_ctx_t ctx;
+        getcontext(&ctx.uc);
+        ucontext_t uc = ctx.uc;
+        mcontext_t mc = ctx.uc.uc_mcontext;
 
         u32     vabits;
         u64     vamask;
@@ -70,10 +105,18 @@ int main(void)
         
         int rc = sysctlbyname("machdep.virtual_address_size",
                               &vabits, &size, NULL, 0);
+        
+        if (rc < 0) {
+                rc = sysctlbyname(
+                        "machdep.cpu.address_bits.virtual",
+                        &vabits, &size, NULL, 0
+                );
+        }
 
-        if (!rc)
+        if (rc == 0) {
+                printf("Virtual address bits: %d\n", vabits);
                 vamask = ~((UINT64_C(1) << vabits) - 1);
-        else {
+        } else {
                 fprintf(stderr, "Could not find the virtual "
                                 "address space size. Assuming "
                                 "48 bits\n");
@@ -81,13 +124,19 @@ int main(void)
         }
         
         printf("original lr:\t%llu\n", mc->__ss.__lr);
-        assert(PACSIGNED(mc->__ss.__lr, vamask));
+        if (PACSIGNED(mc->__ss.__lr, vamask))
+                ctx.stripped_lr = 1;
         
-        PACSTRIP_I(mc->__ss.__lr);
-        printf("stripped lr:\t%llu\n", mc->__ss.__lr);
-        assert(!PACSIGNED(mc->__ss.__lr, vamask));
+        if (ctx.stripped_lr) {
+                XPACI(mc->__ss.__lr);
+                printf("stripped lr:\t%llu\n",
+                        mc->__ss.__lr);
+                printf("uc lr:\t%llu\n",
+                        uc.uc_mcontext->__ss.__lr);
+                assert(!PACSIGNED(mc->__ss.__lr, vamask));
+        }
         
-        PACSIGN_IB(mc->__ss.__lr, mc->__ss.__sp);
+        PACIB(mc->__ss.__lr, mc->__ss.__sp);
         printf("re-signed lr:\t%llu\n", mc->__ss.__lr);
         assert(PACSIGNED(mc->__ss.__lr, vamask));
 

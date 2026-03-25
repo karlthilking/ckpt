@@ -186,6 +186,7 @@ void print_memory_regions()
                 r.size  = size;
                 r.end   = addr + size;
                 r.prot  = info.protection;
+                r.tag   = info.user_tag;
 
                 print_one_region(&r);
 

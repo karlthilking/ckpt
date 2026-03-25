@@ -1,10 +1,20 @@
 CC=clang
 CFLAGS=-g3 -O0
 
-build: src/maps
+SOURCE  = ./src
+INCLUDE = ./include
+TEST    = ./test
 
-%: %.c
+build: libckpt.dylib ckpt readckpt count
+
+%.dylib: $(SOURCE)/%.c
+	$(CC) $(CFLAGS) -dynamiclib -o $@ $<
+
+%: $(SOURCE)/%.c
+	$(CC) $(CFLAGS) -o $@ $<
+
+%: $(TEST)/%.c
 	$(CC) $(CFLAGS) -o $@ $<
 
 clean:
-	rm -f src/maps *.dSYM *.so
+	rm -rf *.dat *.dSYM *.dylib ckpt readckpt count 
