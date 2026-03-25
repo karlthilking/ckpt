@@ -3,10 +3,14 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <assert.h>
+#include <sys/sysctl.h>
 #include <ucontext.h>
 #include <ptrauth.h>
 
-typedef uint64_t u64;
+typedef uint64_t        u64;
+typedef uint32_t        u32;
+typedef uint16_t        u16;
+typedef uint8_t         u8;
 
 /* Strip PAC from pointer to instruction address */
 #define PACSTRIP_I(ptr) \
@@ -52,37 +56,53 @@ typedef uint64_t u64;
                 ); \
         } while (0)
 
-#define PACSIGNED(ptr) ((u64)(ptr) > (((u64)(1) << 48) - 1))
+#define PACSIGNED(ptr, mask) ((ptr) & (mask))
 
 int main(void)
 {
         ucontext_t uc;
         getcontext(&uc);
         mcontext_t mc = uc.uc_mcontext;
+
+        u32     vabits;
+        u64     vamask;
+        size_t  size;
+        
+        int rc = sysctlbyname("machdep.virtual_address_size",
+                              &vabits, &size, NULL, 0);
+
+        if (!rc)
+                vamask = ~((UINT64_C(1) << vabits) - 1);
+        else {
+                fprintf(stderr, "Could not find the virtual "
+                                "address space size. Assuming "
+                                "48 bits\n");
+                vamask = ~((UINT64_C(1) << 48) - 1);
+        }
         
         printf("original lr:\t%llu\n", mc->__ss.__lr);
-        assert(PACSIGNED(mc->__ss.__lr));
+        assert(PACSIGNED(mc->__ss.__lr, vamask));
         
         PACSTRIP_I(mc->__ss.__lr);
         printf("stripped lr:\t%llu\n", mc->__ss.__lr);
-        assert(!PACSIGNED(mc->__ss.__lr));
+        assert(!PACSIGNED(mc->__ss.__lr, vamask));
         
         PACSIGN_IB(mc->__ss.__lr, mc->__ss.__sp);
         printf("re-signed lr:\t%llu\n", mc->__ss.__lr);
-        assert(PACSIGNED(mc->__ss.__lr));
+        assert(PACSIGNED(mc->__ss.__lr, vamask));
 
         for (int i = 0; i < 29; i++) {
-                if (PACSIGNED(mc->__ss.__x[i])) {
+                if (PACSIGNED(mc->__ss.__x[i], vamask)) {
                         printf("x%d:\t%llu\n",
                                 i, mc->__ss.__x[i]);
                 }
         }
 
-        if (PACSIGNED(mc->__ss.__sp))
+        if (PACSIGNED(mc->__ss.__sp, vamask))
                 printf("signed sp:\t%llu\n", mc->__ss.__sp);
-        if (PACSIGNED(mc->__ss.__fp))
+        if (PACSIGNED(mc->__ss.__fp, vamask))
                 printf("signed fp:\t%llu\n", mc->__ss.__fp);
-        if (PACSIGNED(mc->__ss.__pc))
+        if (PACSIGNED(mc->__ss.__pc, vamask))
                 printf("signed pc:\t%llu\n", mc->__ss.__pc);
         
         exit(0);
