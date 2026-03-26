@@ -1,3 +1,4 @@
+/* readckpt.c */
 #define _XOPEN_SOURCE
 #include <stdlib.h>
 #include <stdio.h>
@@ -9,7 +10,7 @@
 #include <err.h>
 #include "../include/ckpt.h"
 
-int read_data(int fd, void *data, size_t size)
+size_t read_data(int fd, void *data, size_t size)
 {
         ssize_t rc;
         size_t  bytes = 0;
@@ -19,11 +20,13 @@ int read_data(int fd, void *data, size_t size)
                 if (rc < 0) {
                         perror("read");
                         return -1;
+                } else if (rc == 0 || rc == EOF) {
+                        return 0;
                 }
                 bytes += rc;
         }
-
-        return bytes == size ? 0 : -1;
+        
+        return bytes;
 }
 
 int shared_cache_rgn(mem_rgn_t *r)
@@ -86,9 +89,9 @@ void print_mem_rgn(mem_rgn_t *r)
                name);
 }
 
-void print_reg_ctx(reg_ctx_t *c)
+void print_reg_ctx(mcontext_t *mcp)
 {
-        mcontext_t mc = c->uc.uc_mcontext;
+        mcontext_t mc = *mcp;
 
         for (int i = 0; i < 29; i++)
                 printf("x%d:\t%llu\n", i, mc->__ss.__x[i]);
@@ -102,10 +105,15 @@ void print_reg_ctx(reg_ctx_t *c)
 int read_ckpt(char *ckptfile)
 {
         int             fd, rc, nr_hdrs = 0;
-        size_t          bytes;
+        size_t          bytes = 0;
         off_t           ckpt_size;
         ckpt_hdr_t      hdrs[MAX_CKPT_HDRS];
+        mcontext_t      mc = malloc(sizeof(*mc));
 
+        if (mc == NULL)
+                err(EXIT_FAILURE, "malloc");
+        
+        memset(hdrs, 0, sizeof(ckpt_hdr_t) * MAX_CKPT_HDRS);
         if ((fd = open(ckptfile, O_RDONLY)) < 0) {
                 perror("open");
                 return -1;
@@ -123,9 +131,11 @@ int read_ckpt(char *ckptfile)
                 rc = read_data(fd, hdrs + nr_hdrs,
                                sizeof(ckpt_hdr_t));
                 
-                if (rc < 0)
+                if (rc <= 0)
                         break;
-                else if (hdrs[nr_hdrs].type & MEM_RGN_HDR) {
+                bytes += sizeof(ckpt_hdr_t);
+                
+                if (hdrs[nr_hdrs].type & MEM_RGN_HDR) {
                         rc = lseek(fd, hdrs[nr_hdrs].rgn.size, 
                                    SEEK_CUR);
                         if (rc < 0) {
@@ -133,9 +143,15 @@ int read_ckpt(char *ckptfile)
                                 return -1;
                         }
                         bytes += hdrs[nr_hdrs].rgn.size;
+                } else if (hdrs[nr_hdrs].type & REG_CTX_HDR) {
+                        rc = read_data(fd, mc, sizeof(*mc));
+                        if (rc <= 0)
+                                break;
+                        bytes += sizeof(*mc);
+                } else {
+                        break;
                 }
 
-                bytes += sizeof(ckpt_hdr_t);
                 nr_hdrs++;
         }
 
@@ -143,9 +159,10 @@ int read_ckpt(char *ckptfile)
                 if (hdrs[i].type & MEM_RGN_HDR)
                         print_mem_rgn(&hdrs[i].rgn);
                 else if (hdrs[i].type & REG_CTX_HDR)
-                        print_reg_ctx(&hdrs[i].ctx);
+                        print_reg_ctx(&mc);
         }
         
+        free(mc);
         return 0;
 }
 
@@ -157,7 +174,11 @@ int main(int argc, char *argv[])
                 exit(1);
         }
 
-        read_ckpt(argv[1]);
+        if (read_ckpt(argv[1]) < 0) {
+                fprintf(stderr,
+                        "Failed to read checkpoint file\n");
+                exit(1);
+        }
 
         exit(0);
 }

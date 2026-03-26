@@ -189,22 +189,100 @@ int write_ckpt(ckpt_hdr_t *hdrs, int nr_hdrs)
                 if (rc < 0)
                         return -1;
                 
-                if (hdrs[i].type & REG_CTX_HDR)
-                        continue;
+                void    *data = NULL;
+                size_t  size  = 0;
+
+                if (hdrs[i].type == REG_CTX_HDR) {
+                        mcontext_t mc;
+                        mc = hdrs[i].ctx.uc.uc_mcontext;
+                        data = (void *)mc;
+                        size = sizeof(*mc);
+                } else if (hdrs[i].type == MEM_RGN_HDR) {
+                        assert(hdrs[i].rgn.prot & VM_PROT_READ);
+                        data = (void *)hdrs[i].rgn.start;
+                        size = hdrs[i].rgn.size;
+                }
         
-                /**
-                 * If this header is for a memory region,
-                 * write the contents of that memory region
-                 */
-                assert(hdrs[i].rgn.prot & VM_PROT_READ);
-                rc = write_data(fd,
-                                (void *)hdrs[i].rgn.start,
-                                hdrs[i].rgn.size);
+                rc = write_data(fd, data, size);
                 if (rc < 0)
                         return -1;
         }
 
         return 0;
+}
+
+int pac_modifier(mcontext_t mc, u64 pac, u64 raw,
+                 u8 type, u8 *ret)
+{
+        if (type == INSTR_ADDR) {
+                for (int i = 0; i < 29; i++) {
+                        PACIB(raw, mc->__ss.__x[i]);
+                        if (raw == pac) {
+                                *ret = i;
+                                return 0;
+                        }
+                        XPACI(raw);
+                }
+                PACIB(raw, mc->__ss.__fp);
+                if (raw == pac) {
+                        *ret = 29;
+                        return 0;
+                }
+                XPACI(raw);
+                PACIB(raw, mc->__ss.__lr);
+                if (raw == pac) {
+                        *ret = 30;
+                        return 0;
+                }
+                XPACI(raw);
+                PACIB(raw, mc->__ss.__sp);
+                if (raw == pac) {
+                        *ret = 31;
+                        return 0;
+                }
+                XPACI(raw);
+                PACIB(raw, mc->__ss.__pc);
+                if (raw == pac) {
+                        *ret = 32;
+                        return 0;
+                }
+                XPACI(raw);
+        } else if (type == DATA_ADDR) {
+                for (int i = 0; i < 29; i++) {
+                        PACDB(raw, mc->__ss.__x[i]);
+                        if (raw == pac) {
+                                *ret = i;
+                                return 0;
+                        }
+                        XPACD(raw);
+                }
+                PACDB(raw, mc->__ss.__fp);
+                if (raw == pac) {
+                        *ret = 29;
+                        return 0;
+                }
+                XPACD(raw);
+                PACDB(raw, mc->__ss.__lr);
+                if (raw == pac) {
+                        *ret = 30;
+                        return 0;
+                }
+                XPACD(raw);
+                PACDB(raw, mc->__ss.__sp);
+                if (raw == pac) {
+                        *ret = 31;
+                        return 0;
+                }
+                XPACD(raw);
+                PACDB(raw, mc->__ss.__pc);
+                if (raw == pac) {
+                        *ret = 32;
+                        return 0;
+                }
+                XPACD(raw);
+        }
+        
+        return -1;
 }
 
 /**
@@ -223,7 +301,7 @@ void pac_strip(reg_ctx_t *ctx)
         
         if (PACSIGNED(mc->__ss.__lr, vamask)) {
                 XPACI(mc->__ss.__lr);
-                ctx->stripped = 1;
+                ctx->pacmap |= (UINT64_C(1) << 30);
         }
 }
 
@@ -240,7 +318,7 @@ void pac_resign(reg_ctx_t *ctx)
 {
         mcontext_t mc = ctx->uc.uc_mcontext;
 
-        if (!ctx->stripped)
+        if (!(ctx->pacmap & (UINT64_C(1) << 30)))
                 return;
 
         PACIB(mc->__ss.__lr, mc->__ss.__sp);

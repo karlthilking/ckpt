@@ -5,10 +5,18 @@ SOURCE  = ./src
 INCLUDE = ./include
 TEST    = ./test
 
-build: libckpt.dylib ckpt readckpt count
+build: libckpt.dylib ckpt restart readckpt count
 
 %.dylib: $(SOURCE)/%.c
 	$(CC) $(CFLAGS) -dynamiclib -o $@ $<
+
+restart: $(SOURCE)/restart.c
+	$(CC) $(CFLAGS) \
+                -Wl,-segaddr,__TEXT,0x200000000 \
+                -Wl,-segaddr,__DATA,0x200800000 \
+                -Wl,-segaddr,__DATA_CONST,0x200900000 \
+                -Wl,-segaddr,__LINKEDIT,0x200A00000 \
+                -o $@ $<
 
 %: $(SOURCE)/%.c
 	$(CC) $(CFLAGS) -o $@ $<
@@ -17,4 +25,4 @@ build: libckpt.dylib ckpt readckpt count
 	$(CC) $(CFLAGS) -o $@ $<
 
 clean:
-	rm -rf *.dat *.dSYM *.dylib ckpt readckpt count 
+	rm -rf *.dSYM *.dylib ckpt restart readckpt count 

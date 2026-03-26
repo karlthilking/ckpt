@@ -114,6 +114,12 @@ typedef uint64_t        u64;
  */
 #define PACSIGNED(ptr, mask) ((ptr) & (mask))
 
+#define PACMOD_I(ptr, raw, mod) \
+        do { \
+                PACIB((raw), (mod)); \
+        } while (0) \
+        ((raw) == (ptr))
+
 typedef struct __ckpt_hdr_t     ckpt_hdr_t;
 typedef struct __mem_rgn_t      mem_rgn_t;
 typedef struct __reg_ctx_t      reg_ctx_t;
@@ -145,10 +151,17 @@ struct __mem_rgn_t {
  *
  * @uc:         ucontext_t structure containing the register
  *              context of one thread
+ * @modifiers:  Mapping of register number to the register used
+ *              as a modifier (valid iff the register number
+ *              used to index the array was signed at checkpoint)
+ * @pacmap:     Bitmap to indicate which registers were PAC
+ *              signed at checkpoint, and thus need to be
+ *              re-signed before restarting
  */
 struct __reg_ctx_t {
         ucontext_t      uc;
-        int             stripped;
+        u8              modifiers[33];
+        u64             pacmap;
 };
 
 /**
@@ -178,13 +191,20 @@ struct __ckpt_hdr_t {
 #define MEM_RGN_HDR     0x1     // Header for a memory region
 #define REG_CTX_HDR     0x2     // Header for a register context
 
+#define INSTR_ADDR   0x1
+#define DATA_ADDR    0x2
+
 int mem_rgn_valid(vm_region_submap_info_data_64_t *,
                   mach_vm_address_t, mach_vm_size_t);
 int get_mem_rgns(mem_rgn_t *);
+
 int write_data(int, void *, size_t);
 int write_ckpt(ckpt_hdr_t *, int);
+
+void ckpt_handler(int);
+
+int pac_modifier(mcontext_t, u64, u64, u8, u8 *);
 void pac_strip(reg_ctx_t *);
 void pac_resign(reg_ctx_t *);
-void ckpt_handler(int);
 
 #endif // #ifndef CKPT_H
