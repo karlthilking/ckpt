@@ -10,6 +10,7 @@
 #include <pthread.h>
 #include <ucontext.h>
 #include <signal.h>
+#include <assert.h>
 #include "../include/ckpt.h"
 
 typedef uint64_t u64;
@@ -50,25 +51,33 @@ void framewalk(u64 *fp)
         }
 
         for (int i = 0; i < 4; i++) {
-                u64 prev_fp = *fp;
-                u64 prev_lr = *(fp + 1);
-                u64 prev_sp = (u64)(fp - 2);
+                u64 prev_fp  = *fp;
+                u64 *prev_lr = fp + 1;
+                u64 prev_sp  = (u64)(fp + 2);
 
-                if (!PACSIGNED(prev_lr, va_mask)) {
-                        printf("lr:\t\t%llu\n", prev_lr);
+                if (!PACSIGNED(*prev_lr, va_mask)) {
+                        printf("lr:\t\t%llu\n", *prev_lr);
                 } else {
-                        printf("signed lr:\t%llu\n", prev_lr);
-                        XPACI(prev_lr);
-                        printf("stripped lr:\t%llu\n", prev_lr);
+                        printf("signed lr:\t%llu\n", *prev_lr);
+                        XPACI(*prev_lr);
+                        printf("stripped lr:\t%llu\n", *prev_lr);
+                        assert(!PACSIGNED(*prev_lr, va_mask));
+                        PACIB(*prev_lr, prev_sp);
+                        printf("re-signed lr:\t%llu\n", *prev_lr);
                 }
+                
+                if (prev_fp == 0 || prev_fp <= (u64)fp)
+                        break;
 
                 fp = (u64 *)prev_fp;
         }
         
-        pthread_mutex_lock(&mtx);
-        done = 1;
-        pthread_cond_signal(&cond);
-        pthread_mutex_unlock(&mtx);
+        if (!done) {
+                pthread_mutex_lock(&mtx);
+                done = 1;
+                pthread_cond_signal(&cond);
+                pthread_mutex_unlock(&mtx);
+        }
 }
 
 void f3()
