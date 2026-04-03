@@ -10,10 +10,13 @@
 #include <unistd.h>
 #include "../include/ckpt.h"
 
-/* Globals */
-__attribute__((visibility("hidden"))) u32 vabits;
-__attribute__((visibility("hidden"))) u64 vamask;
-
+/**
+ * Globals
+ * @va_bits: Size of the virtual address space
+ * @va_mask: Mask of unused bits in a typical virtual address
+ */
+__attribute__((visibility("hidden"))) u32 va_bits;
+__attribute__((visibility("hidden"))) u64 va_mask;
 
 /**
  * mem_rgn_valid: Determine if a given memory region should
@@ -28,40 +31,63 @@ int mem_rgn_valid(vm_region_submap_info_data_64_t *info,
                   mach_vm_address_t addr, mach_vm_size_t size)
 {
         /**
-         * A page with no permissions is likely a guard page
-         * or zero page, do not checkpoint
+         * Avoid checkpointing the following memory regions:
+         * commpage:
+         * pagezero: 
+         *  Sentinel zero page with no access permissions
+         * dyld shared cache:
+         *  kernel-managed cache for system libraries mapped by
+         *  kernel into each process
          */
-        if ((info->protection == VM_PROT_NONE) ||
-            !(info->protection & VM_PROT_READ))
+        if (COMMPAGE(addr, size) || PAGEZERO(addr, size) ||
+            DYLD_SH_CH(addr, size))
                 return 0;
         
         /**
-         * If the region address falls within the dyld shared
-         * cache, it should not be checkpointed
+         * Skip checkpointing any guard pages, i.e. memory regions
+         * that are not accessible by the current process
          */
-        if (addr >= SHARED_REGION_BASE_ARM64 &&
-            addr < SHARED_REGION_BASE_ARM64 +
-                   SHARED_REGION_SIZE_ARM64) {
+        if (info->prot == VM_PROT_NONE)
                 return 0;
-        }
-        
-        /**
-         * Do not checkpoint guard pages and shared pmap
-         */
-        switch (info->user_tag) {
-        case VM_MEMORY_GUARD:
-        case VM_MEMORY_SHARED_PMAP:
-                return 0;
-        default:
-                break;
-        }
 
-        /**
-         * Skip checkpointing shared regions that this process
-         * does have write permissions to
-         */
+        switch (info->tag) {
+                case VM_MEMORY_MALLOC:
+                case VM_MEMORY_MALLOC_NANO:
+                case VM_MEMORY_MALLOC_TINY:
+                case VM_MEMORY_MALLOC_SMALL:
+                case VM_MEMORY_MALLOC_LARGE:
+                case VM_MEMORY_MALLOC_LARGE_REUSABLE:
+                case VM_MEMORY_MALLOC_LARGE_REUSED:
+                        /* Heap guard page */
+                        if (info->prot == VM_PROT_NONE)
+                                return 0;
+                        return 1;
+                case VM_MEMORY_REALLOC:
+                        /* kernel memory */
+                        return 0;
+                case VM_MEMORY_STACK:
+                        /* Stack guard page */
+                        if (info->prot == VM_PROT_NONE)
+                                return 0;
+                        return 1;
+                case VM_MEMORY_GUARD:
+                        /* Regular guard page */
+                        return 0;
+                case VM_MEMORY_DYLD:
+                case VM_MEMORY_DYLD_MALLOC:
+                case VM_MEMORY_DYLIB:
+                        /* dyld shared cache region */
+                        return 0;
+                case VM_MEMORY_SHARED_PMAP:
+                        /* commpage */
+                        return 0;
+                default:
+                        break;
+        }
+        
+        /* Skip shared, read-only memory regions */
         if ((info->share_mode & SM_SHARED) &&
-            !(info->protection & VM_PROT_WRITE))
+            (info->prot == VM_PROT_READ))
                 return 0;
 
         return 1;
@@ -102,14 +128,8 @@ int get_mem_rgns(mem_rgn_t *rgns)
                         &count
                 );
 
-                if (kr == KERN_INVALID_ADDRESS)
-                         break;
-                else if (kr != KERN_SUCCESS) {
-                        fprintf(stderr,
-                                "mach_vm_region_recurse: %s\n",
-                                mach_error_string(kr));
+                if (kr)
                         break;
-                }
                 
                 /**
                  * Skip over memory regions which should not
@@ -118,7 +138,9 @@ int get_mem_rgns(mem_rgn_t *rgns)
                 if (!mem_rgn_valid(&info, addr, size)) {
                         addr += size;
                         continue;
-                } else if (info.is_submap) {
+                }
+                
+                if (info.is_submap) {
                         depth += 1;
                         continue;
                 }
@@ -150,14 +172,8 @@ int write_data(int fd, void *data, size_t size)
         size_t  bytes = 0;
         ssize_t rc;
 
-        while (bytes < size) {
+        for (bytes = 0; bytes < size && rc != -1; bytes += rc)
                 rc = write(fd, data + bytes, size - bytes);
-                if (rc < 0) {
-                        perror("write");
-                        return -1;
-                }
-                bytes += rc;
-        }
 
         return (bytes == size) ? 0 : -1;
 }
@@ -165,14 +181,22 @@ int write_data(int fd, void *data, size_t size)
 /**
  * write_ckpt:  Write the checkpoint file to disk
  *
- * @hdrs:       The checkpoint headers to write to the file
- * @nr_hdrs:    The number of checkpoint headers to write
+ * @nr_hdrs:    The number of total checkpoint headers with
+ *              corresponding data to write to the checkpoint file
+ * @hdrs:       Checkpoint headers describing the data saved in the
+ *              checkpoint file
+ * @rgns:       Memory regions to save in the checkpoint file
+ * @ctx:        Register context to save to the checkpoint file
+ * @frames:     Call frame information for any call frames that
+ *              were found to contain PAC signatures
  * return:      Returns -1 on failure, 0 on success
  */
-int write_ckpt(ckpt_hdr_t *hdrs, int nr_hdrs)
+int write_ckpt(int nr_hdrs, ckpt_hdr_t *hdrs, mem_rgn_t *rgns,
+               reg_ctx_t *ctx, callframe_t *frames)
 {
         int  fd, rc;
         char buf[128];
+        int nr_rgns = 0, nr_ctxs = 0, nr_frames = 0;
 
         snprintf(buf, sizeof(buf), "%d-ckpt.dat", getpid());
 
@@ -181,148 +205,140 @@ int write_ckpt(ckpt_hdr_t *hdrs, int nr_hdrs)
                 return -1;
         }
         
+        void    *data   = NULL;
+        size_t  size    = 0;
         for (int i = 0; i < nr_hdrs; i++) {
-                /* Write the checkpoint header */
-                rc = write_data(fd,
-                                hdrs + i,
-                                sizeof(ckpt_hdr_t));
-                if (rc < 0)
+                /* Write the checkpoint header itself */
+                data = (void *)(hdrs + i);
+                size = sizeof(ckpt_hdr_t);
+                if (write_data(fd, data, size) < 0)
                         return -1;
-                
-                void    *data = NULL;
-                size_t  size  = 0;
 
-                if (hdrs[i].type == REG_CTX_HDR) {
-                        mcontext_t mc;
-                        mc = hdrs[i].ctx.uc.uc_mcontext;
-                        data = (void *)mc;
-                        size = sizeof(*mc);
-                } else if (hdrs[i].type == MEM_RGN_HDR) {
-                        assert(hdrs[i].rgn.prot & VM_PROT_READ);
-                        data = (void *)hdrs[i].rgn.start;
-                        size = hdrs[i].rgn.size;
+                switch (hdrs[i]) {
+                case MEM_RGN_DATA:
+                        /**
+                         * Write mem_rgn_t data as well as the
+                         * actual contents of the memory region
+                         */
+                        data = (void *)(rgns + nr_rgns);
+                        size = sizeof(mem_rgn_t);
+                        if (write_data(fd, data, size) < 0)
+                                return -1;
+                        data = (void *)(rgns[nr_rgns].start);
+                        size = (size_t)rgns[nr_rgns].size;
+                        if (write_data(fd, data, size) < 0)
+                                return -1;
+                        nr_rgns++;
+                        break;
+                case REG_CTX_DATA:
+                        /**
+                         * Write register context data, including
+                         * register values and information about
+                         * PAC signatures
+                         */
+                        data = (void *)(ctxs + nr_ctxs);
+                        size = sizeof(reg_ctx_t);
+                        if (write_data(fd, data, size) < 0)
+                                return -1;
+                        nr_ctxs++;
+                        break;
+                case CALLFRAME_DATA:
+                        /**
+                         * Write data for a call frame on the
+                         * program stack that contained one or
+                         * more PAC signed pointers
+                         */
+                        data = (void *)(frames + nr_frames);
+                        size = sizeof(callframe_t);
+                        if (write_data(fd, data, size) < 0)
+                                return -1;
+                        nr_frames++;
+                        break;
+                default:
+                        assert(0 && "unreachable");
                 }
-        
-                rc = write_data(fd, data, size);
-                if (rc < 0)
-                        return -1;
         }
 
+        assert(nr_rgns + nr_ctxs + nr_frames == nr_hdrs);
         return 0;
 }
 
-int pac_modifier(mcontext_t mc, u64 pac, u64 raw,
-                 u8 type, u8 *ret)
-{
-        if (type == INSTR_ADDR) {
-                for (int i = 0; i < 29; i++) {
-                        PACIB(raw, mc->__ss.__x[i]);
-                        if (raw == pac) {
-                                *ret = i;
-                                return 0;
-                        }
-                        XPACI(raw);
-                }
-                PACIB(raw, mc->__ss.__fp);
-                if (raw == pac) {
-                        *ret = 29;
-                        return 0;
-                }
-                XPACI(raw);
-                PACIB(raw, mc->__ss.__lr);
-                if (raw == pac) {
-                        *ret = 30;
-                        return 0;
-                }
-                XPACI(raw);
-                PACIB(raw, mc->__ss.__sp);
-                if (raw == pac) {
-                        *ret = 31;
-                        return 0;
-                }
-                XPACI(raw);
-                PACIB(raw, mc->__ss.__pc);
-                if (raw == pac) {
-                        *ret = 32;
-                        return 0;
-                }
-                XPACI(raw);
-        } else if (type == DATA_ADDR) {
-                for (int i = 0; i < 29; i++) {
-                        PACDB(raw, mc->__ss.__x[i]);
-                        if (raw == pac) {
-                                *ret = i;
-                                return 0;
-                        }
-                        XPACD(raw);
-                }
-                PACDB(raw, mc->__ss.__fp);
-                if (raw == pac) {
-                        *ret = 29;
-                        return 0;
-                }
-                XPACD(raw);
-                PACDB(raw, mc->__ss.__lr);
-                if (raw == pac) {
-                        *ret = 30;
-                        return 0;
-                }
-                XPACD(raw);
-                PACDB(raw, mc->__ss.__sp);
-                if (raw == pac) {
-                        *ret = 31;
-                        return 0;
-                }
-                XPACD(raw);
-                PACDB(raw, mc->__ss.__pc);
-                if (raw == pac) {
-                        *ret = 32;
-                        return 0;
-                }
-                XPACD(raw);
-        }
-        
-        return -1;
-}
-
-/**
- * pac_strip:   Remove the PAC signature from each pointer in
- *              a ucontext_t structure, using the virtual
- *              address space size to determine if the pointer
- *              is signed, i.e. if (ptr & addr_high_bits) ->
- *              the pointer is signed.
- *
- * @ctx:        The saved register context to stripped pointer
- *              authentication signatures from
- */
-void pac_strip(reg_ctx_t *ctx)
+void strip_regs(reg_ctx_t *ctx)
 {
         mcontext_t mc = ctx->uc.uc_mcontext;
-        
-        if (PACSIGNED(mc->__ss.__lr, vamask)) {
+
+        if (PACSIGNED(mc->__ss.__lr, va_mask)) {
+                u64 old         = mc->__ss.__lr;
+                u64 expected    = mc->__ss.__lr;
+                /**
+                 * Strip and re-sign link register to ensure that
+                 * the original pacib instruction used to sign
+                 * the link register used the stack pointer as a
+                 * modifier
+                 */
+                XPACI(expected);
+                PACIB(expected, mc->__ss.__sp);
+                assert(expected == old);
+                
+                /**
+                 * Now strip link register, record that the link
+                 * register was signed, and that the modifier used
+                 * for signing was the stack pointer
+                 */
                 XPACI(mc->__ss.__lr);
-                ctx->pacmap |= (UINT64_C(1) << 30);
+                ctx->modifiers[LR] = SP;
+                ctx->pac_bitmap |= (1ULL << LR);
         }
 }
 
-/**
- * pac_resign:  Re-sign pointers that were previously signed
- *              before stripping the PAC at checkpoint time to
- *              ensure authentication does not fail after
- *              returning.
- *
- * @ctx:        The restored register context potentially
- *              containing register that should be re-signed
- */
-void pac_resign(reg_ctx_t *ctx)
+int strip_frames(callframe_t *frames, u64 *fp)
 {
-        mcontext_t mc = ctx->uc.uc_mcontext;
+        u64 prev_fp, *prev_lr, prev_sp; 
+        int depth;
 
-        if (!(ctx->pacmap & (UINT64_C(1) << 30)))
-                return;
+        for (depth = 0;; depth++) {
+                prev_fp = *fp;
+                prev_lr = fp + 1;
+                prev_sp = (u64)(fp + 2);
 
-        PACIB(mc->__ss.__lr, mc->__ss.__sp);
-        assert(PACSIGNED(mc->__ss.__lr, vamask));
+                if (!PACSIGNED(*prev_lr, va_mask))
+                        continue;
+                
+                u64 old         = *prev_lr;
+                u64 expected    = *prev_lr;
+
+                /**
+                 * Strip and re-sign the link register in the
+                 * current call frame, making sure that it was
+                 * originally signed with the stack pointer
+                 */
+                XPACI(expected);
+                PACIB(expected, prev_sp);
+                assert(expected == old);
+                
+                /**
+                 * Now strip the actual link register and the
+                 * information about the current call frame
+                 */
+                XPACI(*prev_lr);
+                frames[depth].fp = prev_fp;
+                frames[depth].lr = *prev_lr;
+                
+                /**
+                 * Indicate that the link register was signed
+                 * with the IB key and the stack pointer as a
+                 * modifier
+                 */
+                frames[depth].metadata  = (SP << 3) |
+                                          (PACIB_KEY << 1) | 1;
+
+                if (prev_fp == 0 || prev_fp <= (u64)fp)
+                        break;
+
+                fp = (u64 *)prev_fp;
+        }
+
+        return depth;
 }
 
 void ckpt_handler(int sig)
@@ -340,25 +356,44 @@ void ckpt_handler(int sig)
 
         mem_rgn_t       rgns[MAX_MEM_RGNS];
         ckpt_hdr_t      hdrs[MAX_CKPT_HDRS];
-
-        int nr_rgns = get_mem_rgns(rgns);
-        for (int i = 0; i < nr_rgns; i++) {
-                hdrs[i].rgn  = rgns[i];
-                hdrs[i].type = MEM_RGN_HDR;
-        }
+        callframe_t     frames[MAX_CALL_FRAMES];
+        reg_ctx_t       ctx;
         
-        hdrs[nr_rgns].ctx.uc    = uc;
-        hdrs[nr_rgns].type      = REG_CTX_HDR;
-
         /**
-         * Strip any signed pointers saved in the register
+         * Mark each checkpoint header up to the number of memory
+         * regions saved as a header for a memory region
+         */
+        int nr_rgns = get_mem_rgns(rgns);
+        for (int i = 0; i < nr_rgns; i++)
+                hdrs[i] = MEM_RGN_DATA;
+        
+        /**
+         * Mark the next checkpoint header as a register context
+         * and store the ucontext_t data to the saved register
          * context
          */
-        pac_strip(&hdrs[nr_rgns].ctx);
-
-        int nr_hdrs = nr_rgns + 1;
-        if (write_ckpt(hdrs, nr_hdrs) < 0)
-                fprintf(stderr, "Failed to write checkpoint\n");
+        hdrs[nr_rgns]   = REG_CTX_DATA;
+        ctx.uc          = uc;
+        ctx.pac_bitmap  = 0;
+        memset(ctx.modifiers, 0, sizeof(ctx.modifiers));
+        
+        /**
+         * Strip PAC signatures from signed registers and store
+         * information about which registers were signed
+         */
+        strip_regs(&ctx);
+        
+        /**
+         * Now walk each frame record on the stack and strip any
+         * PAC signed pointers, and save information about modified
+         * frame records
+         */
+        u64 *fp = (u64 *)ctx.uc.uc_mcontext->__ss.__fp;
+        int nr_frames = strip_frames(frames, fp);
+        
+        int nr_hdrs = nr_rgns + nr_frames + 1;
+        if (write_ckpt(nr_hdrs, hdrs, rgns, &ctx, frames) < 0)
+                fprintf(stderr, "Failed to write checkpoint file");
 }
 
 void __attribute__((constructor)) setup()
@@ -368,10 +403,10 @@ void __attribute__((constructor)) setup()
         int rc;
 
         rc = sysctlbyname("machdep.virtual_address_size",
-                           &vabits, &size, NULL, 0);
+                           &va_bits, &size, NULL, 0);
         
         if (rc != -1) {
-                vamask = ~((UINT64_C(1) << vabits) - 1);
+                va_mask = ~((1ULL << va_bits) - 1);
                 return;
         }
 
@@ -379,16 +414,14 @@ void __attribute__((constructor)) setup()
                            &vabits, &size, NULL, 0);
         
         if (rc != -1) {
-                vamask = ~((UINT64_C(1) << vabits) - 1);
+                va_mask = ~((1ULL << va_bits) - 1);
                 return;
         }
         
-        fprintf(stderr, "The virtual address space size could "
-                        "not be determined: %s\n. Assuming "
-                        "a 48 bit virtual address space",
-                        strerror(errno));
+        fprintf(stderr, "Virtual address size could not be found. "
+                        "Assuming a 48 it virtual address space.");
         
-        vamask = ~((UINT64_C(1) << vabits) - 1);
+        va_mask = ~((1ULL << 48) - 1);
 }
 
 void __attribute__((destructor)) cleanup()

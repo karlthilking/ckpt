@@ -1,5 +1,5 @@
-#ifndef CKPT_H
-#define CKPT_H
+#ifndef __CKPT_H__
+#define __CKPT_H__
 #define _XOPEN_SOURCE
 #include <stdlib.h>
 #include <stdint.h>
@@ -11,6 +11,7 @@
 #include <mach/shared_region.h>
 #include <mach-o/dyld.h>
 
+/* Integer types */
 typedef int8_t          i8;
 typedef uint8_t         u8;
 typedef int16_t         i16;
@@ -20,120 +21,23 @@ typedef uint32_t        u32;
 typedef int64_t         i64;
 typedef uint64_t        u64;
 
-/**
- * Strip PAC from high bits of pointer holding an instruction
- * address signed with either the IA or IB key.
- */
-#define XPACI(ptr) \
-        do { \
-                __asm__ __volatile__ ( \
-                        "xpaci %0" \
-                        : "+r" (ptr) \
-                        : \
-                        : "memory" \
-                ); \
-        } while (0)
+/* Checkpoint types */
+typedef struct  __mem_rgn_t     mem_rgn_t;
+typedef struct  __reg_ctx_t     reg_ctx_t;
+typedef struct  __callframe_t   callframe_t;
+typedef enum    __ckpt_hdr_t    ckpt_hdr_t;
 
 /**
- * Strip PAC from high bits of pointer holding a data address
- * signed with either the DA or DB key.
- */
-#define XPACD(ptr) \
-        do { \
-                __asm__ __volatile__ ( \
-                        "xpacd %0" \
-                        : "+r" (ptr) \
-                        : \
-                        : "memory" \
-                ); \
-        } while (0)
-
-/**
- * Re-sign pointer holding an instruction address using the
- * instruction A key and a selected modifier.
- */
-#define PACIA(ptr, modifier) \
-        do { \
-                __asm__ __volatile__ ( \
-                        "pacia %0, %1" \
-                        : "+r" (ptr) \
-                        : "r"  (modifier) \
-                        : "memory" \
-                ); \
-        } while (0)
-
-/**
- * Re-sign pointer holding an instruction address using the
- * instruction B key and a selected modifier.
- */
-#define PACIB(ptr, modifier) \
-        do { \
-                __asm__ __volatile__ ( \
-                        "pacib %0, %1" \
-                        : "+r" (ptr) \
-                        : "r"  (modifier) \
-                        : "memory" \
-                ); \
-        } while (0)
-
-/**
- * Re-sign pointer holding a data address using the data B key
- * and a selected modifier.
- */
-#define PACDA(ptr, modifier) \
-        do { \
-                __asm__ __volatile__ ( \
-                        "pacda %0, %1" \
-                        : "+r" (ptr) \
-                        : "r"  (modifier) \
-                        : "memory" \
-                ); \
-        } while (0)
-
-/**
- * Re-sign pointer holding a data address using the data B key
- * and a selected modifier.
- */
-#define PACDB(ptr, modifier) \
-        do { \
-                __asm__ __volatile__ ( \
-                        "pacdb %0, %1" \
-                        : "+r" (ptr) \
-                        : "r"  (modifier) \
-                        : "memory" \
-                ); \
-        } while (0)
-
-/**
- * Determine if a pointer was signed using PAC based on the
- * size of the virtual address space. The mask should contain
- * the unused high bits for the given virtual address space.
- * If the number of bits used for a virtual address space was
- * not determined accurately however, the result of this macro
- * should be a suggestion rather that the ground truth.
- */
-#define PACSIGNED(ptr, mask) ((ptr) & (mask))
-
-#define PACMOD_I(ptr, raw, mod) \
-        do { \
-                PACIB((raw), (mod)); \
-        } while (0) \
-        ((raw) == (ptr))
-
-typedef struct __ckpt_hdr_t     ckpt_hdr_t;
-typedef struct __mem_rgn_t      mem_rgn_t;
-typedef struct __reg_ctx_t      reg_ctx_t;
-
-/**
- * mem_rgn_t:   Structure representing a memory region 
- *              encountered in the virtual address space
+ * mem_rgn_t:   Representation of a memory region in the process's
+ *              virtual address space
  *
  * @start:      Start address of the memory region
  * @end:        End address of the memory region
  * @size:       Size of the memory region
  * @prot:       Protections of the memory region
  * @max_prot:   Maximum protections of the memory region
- * @tag:        
+ * @mode:       Shared or private
+ * @tag:        Type of memory region
  */
 struct __mem_rgn_t {
         mach_vm_address_t       start;
@@ -146,65 +50,192 @@ struct __mem_rgn_t {
 };
 
 /**
- * reg_ctx_t:   Register context describing execution of a single
- *              thread before checkpointing.
+ * Mach/MacOS related virtual address space constants for regions
+ * that should not be saved during checkpoint
+ * COMMPAGE
+ * PAGEZERO
+ * DYLD SHARED CACHE
+ */
+#define COMMPAGE_BASE           0x0000000FFFFFC000ULL
+#define COMMPAGE_END            0x0000001000000000ULL
+#define COMMPAGE(addr, size)    (((addr) >= COMMPAGE_BASE) && \
+                                 ((addr) + (size) < COMMPAGE_END))
+
+#define PAGEZERO_BASE           0x0
+#define PAGEZERO_END            0x100000000ULL
+#define PAGEZERO(addr, size)    (((addr) >= PAGEZERO_BASE) && \
+                                 ((addr) + (size) < PAGEZERO_END))
+
+#define DLYD_SH_CH_BASE        SHARED_REGION_BASE_ARM64
+#define DYLD_SH_CH_END         (SHARED_REGION_BASE_ARM64 + \
+                                SHARED_REGION_SIZE_ARM64)
+#define DYLD_SH_CH(addr, size) (((addr) >= DYLD_SH_CH_BASE) && \
+                                ((addr) + (size) < DYLD_SH_CH_END))
+
+/**
+ * callframe_t: Representation of a call frame saved on the
+ *              process's stack
  *
- * @uc:         ucontext_t structure containing the register
- *              context of one thread
- * @modifiers:  Mapping of register number to the register used
- *              as a modifier (valid iff the register number
- *              used to index the array was signed at checkpoint)
- * @pacmap:     Bitmap to indicate which registers were PAC
- *              signed at checkpoint, and thus need to be
- *              re-signed before restarting
+ * @fp:         Saved frame pointer in the frame record that
+ *              indicates the address of the previous frame record
+ * @lr:         Saved link register in the frame record
+ * @metadata:   Metadata indicating if registers in the frame
+ *              record were signed and how
+ * Structure of the saved metadata:
+ * +------------------------+-----+------------+
+ * | modifier/discriminator | key | was_signed |
+ * +------------------------+-----+------------+
+ */
+struct __callframe_t {
+        u64             fp;
+        u64             lr;
+        u16             metadata;
+};
+
+/* Bit masks for each portion of the metadata field */
+#define FR_SIGN_MASK    (1)
+#define FR_KEY_MASK     (((1ULL << 3) - 1) ^ 1)
+#define FR_MOD_MASK     (~(FR_KEY_MASK | FR_SIGN_MASK))
+
+/* Macros to extract each subfield from a callframe's metadata */
+#define FR_SIGNED(cf)   (((cf.metadata) & FR_SIGN_MASK))
+#define FR_KEY(cf)      (((cf.metadata) & FR_KEY_MASK) >> 1)
+#define FR_MOD(cf)      (((cf.metadata) & FR_MOD_MASK) >> 3)
+
+/**
+ * reg_ctx_t:   Representation of a executing register context
+ * 
+ * @uc:         ucontext_t structure containing the values of all
+ *              registers in the register context
+ * @modifiers:  Array of modifiers that were used to sign any
+ *              register, iff the given register was signed
+ * @pac_bitmap: Bitmap indicating which registers are PAC-signed
  */
 struct __reg_ctx_t {
         ucontext_t      uc;
         u8              modifiers[33];
-        u64             pacmap;
+        u64             pac_bitmap;
 };
 
-/**
- * ckpt_hdr_t:  Structure representing a single checkpoint header
- *              to be serialized to a checkpoint file. One header
- *              either proceeds a memory region or a register
- *              context.
- * 
- * @rgn:        Memory region associated with this header, if it
- *              is a header for a memory region
- * @ctx:        The register context saved after this header, iff
- *              this is a header for a register context
- * @type:       The type of header, either for a memory region or
- *              a register context
+/** 
+ * ckpt_hdr_t:  Header that is present before each saved segment of
+ *              data in a checkpoint file, indicating the type of
+ *              data following any header
  */
-struct __ckpt_hdr_t {
-        union {
-                mem_rgn_t       rgn;
-                reg_ctx_t       ctx;
-        };
-        int     type;
+enum __ckpt_hdr_t {
+        MEM_RGN_DATA    = 0,
+        REG_CTX_DATA    = 1,
+        CALLFRAME_DATA  = 2
 };
 
 #define MAX_MEM_RGNS    100
 #define MAX_CKPT_HDRS   100
+#define MAX_CALL_FRAMES 100
 
-#define MEM_RGN_HDR     0x1     // Header for a memory region
-#define REG_CTX_HDR     0x2     // Header for a register context
-
-#define INSTR_ADDR   0x1
-#define DATA_ADDR    0x2
-
+/* Functions for enumerating and obtaining memory regions */
 int mem_rgn_valid(vm_region_submap_info_data_64_t *,
                   mach_vm_address_t, mach_vm_size_t);
 int get_mem_rgns(mem_rgn_t *);
 
+/* Functions for reading and writing checkpoint file data */
 int write_data(int, void *, size_t);
-int write_ckpt(ckpt_hdr_t *, int);
+int write_ckpt(int, ckpt_hdr_t *, mem_rgn_t *,
+               reg_ctx_t *, callframe_t *);
 
-void ckpt_handler(int);
+int read_data(int, void *, size_t);
+int read_ckpt(ckpt_hdr_t *, int);
 
-int pac_modifier(mcontext_t, u64, u64, u8, u8 *);
-void pac_strip(reg_ctx_t *);
-void pac_resign(reg_ctx_t *);
+/* Handle PAC signatures for register context */
+void strip_regs(reg_ctx_t *);
+void resign_regs(reg_ctx_t *);
 
-#endif // #ifndef CKPT_H
+/* Handle PAC signatures in call stack */
+void strip_frames(callframe_t *, u64, u64);
+void resign_frames(callframe_t *, u64, u64);
+
+/* Number of general purpose registers on arm64 */
+#define NGPREGS 29
+
+/* arm64 gp registers and fp, lr, sp, pc */
+enum {
+        X0, X1, X2, X3, X4, X5, X6, X7, X8, X9, X10, X11,
+        X12, X13, X14, X15, X16, X17, X18, X19, X20, X21,
+        X22, X23, X24, X25, X26, X27, X28, FP, LR, SP, PC
+};
+
+/**
+ * Note: It is suggested that A keys are intended to be
+ * process-independent (not unique per-process) and B keys are
+ * process-dependent (unique per-process), but this may not be a
+ * reliable assumption to make.
+ *
+ * https://stackoverflow.com/questions/78288651
+ */
+enum {
+        PAC_IAKEY,      /* Instruction A key */
+        PAC_IBKEY,      /* Instruction B key */
+        PAC_DAKEY,      /* Data A key */
+        PAC_DBKEY,      /* Data B key */
+        PAC_GAKEY       /* Generic key */
+};
+
+/**
+ * Determine if a pointer was signed using a mask to select the
+ * unused high bits for a given virtual address size.
+ *
+ * Bit 55 should not be set in a PAC signed pointer as it should
+ * be left to determine between low and high addresses; i.e.
+ * 0x000... vs 0xFFF...
+ */
+#define PACSIGNED(ptr, mask)    (((ptr) & (mask)) && \
+                                !((ptr) & (1ULL << 55)))
+
+/* Strip PAC from a pointer with an instruction address */
+#define XPACI(ptr) \
+        do { \
+                __asm__ __volatile__ ( \
+                        "xpaci %0":"+r"(ptr)::"memory" \
+                ); \
+        } while (0)
+
+/* Strip PAC from pointer with a data address */
+#define XPACD(ptr) \
+        do { \
+                __asm__ __volatile__ ( \
+                        "xpacd %0":"+r"(ptr)::"memory" \
+                ); \
+        } while (0)
+
+/* Sign pointer using instruction A key and a modifier */
+#define PACIA(ptr, mod) \
+        do { \
+                __asm__ __volatile__ ( \
+                        "pacia %0,%1":"+r"(ptr):"r"(mod):"memory" \
+                ); \
+        } while (0)
+
+/* Sign pointer using instruction B key and a modifier */
+#define PACIB(ptr, mod) \
+        do { \
+                __asm__ __volatile__ ( \
+                        "pacib %0,%1":"+r"(ptr):"r"(mod):"memory" \
+                ); \
+        } while (0)
+
+/* Sign pointer using data A key and a chosen modifier */
+#define PACDA(ptr, mod) \
+        do { \
+                __asm__ __volatile__ ( \
+                        "pacda %0,%1":"+r"(ptr):"r"(mod):"memory" \
+                ); \
+        } while (0)
+
+/* Sign pointer using data B key and a chosen modifier */
+#define PACDB(ptr, mod) \
+        do { \
+                __asm__ __volatile__ ( \
+                        "pacdb %0,%1":"+r"(ptr):"r"(mod):"memory" \
+                ); \
+        } while (0)
+
+#endif // __CKPT_H__
