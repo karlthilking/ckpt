@@ -1,0 +1,50 @@
+what works:
+    - checkpointing a program with ./ckpt <executable>
+    - reading a checkpoint image file (always named ckpt.dat)
+      with ./readckpt ckpt.dat
+    - restarting from a checkpoint image file with ./restart ckpt.dat
+
+brief description of each source file's responsibilities:
+    ckpt.c: 
+        - preloads libckpt.so with setenv("LD_PRELOAD", ...)
+        - calls execvp() to execute the given program
+    libckpt.c:
+        - uses a constructor function to register a signal handler for  
+          SIGUSR2; the signal handler (sig_handler) also registers another
+          signal handler (sig_handler2) to allow for multi-restart
+        - saves and restores the fs register to avoid detection of stack
+          smashing
+        - saves all info from /proc/self/maps
+        - saves current context obtained from getcontext()
+        - writes (uses write()) all checkpoint data to a file named "ckpt.dat" 
+            - the format used is header1, data1, header2, data2, ... where
+              a header is a ckpt_header_t and the data is the raw bytes from
+              those memory segments
+            - the last header, data pair is a header with is_reg_context = 1,
+              and the following data is the ucontext_t data from calling
+              getcontext()
+    readckpt.c:
+        - reads each checkpoint header (defined as ckpt_header_t) from the
+          checkpoint image file
+        - prints out start and end address, permissions, filename, whether or 
+          not it is a context from getcontext(), and data size for each 
+          checkpoint header 
+        - prints out all general registers that were saved in the ucontext_t
+          from calling getcontext()
+    restart.c
+        - grows the stack with a recursive function with 1000 iterations
+        - reads every checkpoint header and checkpoint data segment from the
+          checkpoint image file
+        - mmap's all memory segments in the checkpoint image file and restores
+          the corresponding data to each memory segment
+        - calls setcontext() to restore the hardware registers 
+
+makefile usage:
+    - make build: builds all executables as well as libckpt.so
+    - make clean: removes all executables, libckpt.so and ckpt.dat
+    - make check: checkpoint and restarts a program (./matrix)
+
+note:
+    - make check only checkpoints and restarts once; to test multiple 
+      checkpoint and restarts (which should work) you can repeatedly 
+      use ./restart ckpt.dat, sending a SIGUSR2 to checkpoint
