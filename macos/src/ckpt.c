@@ -13,8 +13,8 @@ int main(int argc, char *argv[])
                 exit(1);
         }
         
-        if (setenv("DYLD_INSERT_LIBRARIES",
-                    "./libckpt.dylib", 1) < 0)
+        if (setenv("DYLD_INSERT_LIBRARIES", 
+                   "./libckpt.dylib", 1) < 0)
                 err(EXIT_FAILURE, "setenv");
         
         printf("Executing %s, pid: %d\n", argv[1], getpid());

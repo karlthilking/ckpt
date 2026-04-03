@@ -47,10 +47,10 @@ int mem_rgn_valid(vm_region_submap_info_data_64_t *info,
          * Skip checkpointing any guard pages, i.e. memory regions
          * that are not accessible by the current process
          */
-        if (info->prot == VM_PROT_NONE)
+        if (info->protection == VM_PROT_NONE)
                 return 0;
 
-        switch (info->tag) {
+        switch (info->user_tag) {
                 case VM_MEMORY_MALLOC:
                 case VM_MEMORY_MALLOC_NANO:
                 case VM_MEMORY_MALLOC_TINY:
@@ -59,7 +59,7 @@ int mem_rgn_valid(vm_region_submap_info_data_64_t *info,
                 case VM_MEMORY_MALLOC_LARGE_REUSABLE:
                 case VM_MEMORY_MALLOC_LARGE_REUSED:
                         /* Heap guard page */
-                        if (info->prot == VM_PROT_NONE)
+                        if (info->protection == VM_PROT_NONE)
                                 return 0;
                         return 1;
                 case VM_MEMORY_REALLOC:
@@ -67,7 +67,7 @@ int mem_rgn_valid(vm_region_submap_info_data_64_t *info,
                         return 0;
                 case VM_MEMORY_STACK:
                         /* Stack guard page */
-                        if (info->prot == VM_PROT_NONE)
+                        if (info->protection == VM_PROT_NONE)
                                 return 0;
                         return 1;
                 case VM_MEMORY_GUARD:
@@ -87,7 +87,7 @@ int mem_rgn_valid(vm_region_submap_info_data_64_t *info,
         
         /* Skip shared, read-only memory regions */
         if ((info->share_mode & SM_SHARED) &&
-            (info->prot == VM_PROT_READ))
+            (info->protection == VM_PROT_READ))
                 return 0;
 
         return 1;
@@ -236,7 +236,7 @@ int write_ckpt(int nr_hdrs, ckpt_hdr_t *hdrs, mem_rgn_t *rgns,
                          * register values and information about
                          * PAC signatures
                          */
-                        data = (void *)(ctxs + nr_ctxs);
+                        data = (void *)(ctx + nr_ctxs);
                         size = sizeof(reg_ctx_t);
                         if (write_data(fd, data, size) < 0)
                                 return -1;
@@ -291,18 +291,48 @@ void strip_regs(reg_ctx_t *ctx)
         }
 }
 
+/**
+ * strip_frames: Walk each frame record on the stack and 
+ *               strip PAC signature from any saved link
+ *               registers that were previously signed
+ *              
+ * @frames:      Array of callframe_t structures to record 
+ *               information about each frame record encountered
+ *               on the stack
+ * @fp:          Frame pointer value at the time getcontext() was
+ *               originally called for checkpointing
+ * @return:      Returns the number of saved call frames, or -1
+ *               on error
+ */
 int strip_frames(callframe_t *frames, u64 *fp)
 {
         u64 prev_fp, *prev_lr, prev_sp; 
         int depth;
 
         for (depth = 0;; depth++) {
-                prev_fp = *fp;
-                prev_lr = fp + 1;
-                prev_sp = (u64)(fp + 2);
+                if (depth >= MAX_CALL_FRAMES) {
+                        fprintf(stderr,
+                                "Call frame depth exceeded the "
+                                "maximum capacity when walking "
+                                "the frames");
+                        return -1;
+                }
 
-                if (!PACSIGNED(*prev_lr, va_mask))
+                prev_fp = *fp;           // previous frame pointer
+                prev_lr = fp + 1;        // lr of current frame
+                prev_sp = (u64)(fp + 2); // sp at function entry
+                
+                /**
+                 * If the link register in the current frame was
+                 * not signed, mark that is did not contain a
+                 * signature and continue to the next frame
+                 */
+                if (!PACSIGNED(*prev_lr, va_mask)) {
+                        frames[depth].fp        = prev_fp;
+                        frames[depth].lr        = *prev_lr;
+                        frames[depth].metadata  = 0;
                         continue;
+                }
                 
                 u64 old         = *prev_lr;
                 u64 expected    = *prev_lr;
@@ -330,11 +360,11 @@ int strip_frames(callframe_t *frames, u64 *fp)
                  * modifier
                  */
                 frames[depth].metadata  = (SP << 3) |
-                                          (PACIB_KEY << 1) | 1;
+                                          (PAC_IBKEY << 1) | 1;
 
                 if (prev_fp == 0 || prev_fp <= (u64)fp)
                         break;
-
+                
                 fp = (u64 *)prev_fp;
         }
 
@@ -411,7 +441,7 @@ void __attribute__((constructor)) setup()
         }
 
         rc = sysctlbyname("machdep.cpu.address_bits.virtual",
-                           &vabits, &size, NULL, 0);
+                           &va_bits, &size, NULL, 0);
         
         if (rc != -1) {
                 va_mask = ~((1ULL << va_bits) - 1);
