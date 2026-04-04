@@ -301,6 +301,14 @@ int write_ckpt(int nr_hdrs, int nr_rgns,
         return 0;
 }
 
+/**
+ * strip_regs:  Strip PAC signatures from saved register context
+ * @ctx:        Register context to strip PAC signed pointers
+ *              from
+ * Note:        This function only handles a PAC-signed link
+ *              register for now but should/can be generalized to
+ *              handle any signatures
+ */
 void strip_regs(reg_ctx_t *ctx)
 {
         mcontext_t mc = ctx->uc.uc_mcontext;
@@ -326,6 +334,21 @@ void strip_regs(reg_ctx_t *ctx)
                 XPACI(mc->__ss.__lr);
                 ctx->modifiers[LR] = SP;
                 ctx->pac_bitmap |= (1ULL << LR);
+        }
+}
+
+void resign_regs(reg_ctx_t *ctx)
+{
+        mcontext_t mc = ctx->uc.uc_mcontext;
+        
+        if (ctx->pac_bitmap & (1ULL << LR)) {
+                if (ctx->modifiers[LR] == SP)
+                        PACIB(mc->__ss.__lr, mc->__ss.__sp);
+                else {
+                        assert(0 && "Link register was not signed "
+                                    "using the stack pointer as a "
+                                    "modifier");
+                }
         }
 }
 
@@ -402,6 +425,49 @@ int strip_frames(callframe_t *frames, u64 *fp)
         return nr_frames;
 }
 
+void resign_frames(callframe_t *frames, int nr_frames, u64 *fp)
+{
+        u64 prev_fp, *prev_lr, prev_sp;
+
+        for (int ix = 0; ix < nr_frames; ix++) {
+                prev_fp = fp[0];
+                while (prev_fp != frames[ix].fp) {
+                        fp = (u64 *)prev_fp;
+                        if ((u64)fp == 0) {
+                                fprintf(stderr,
+                                        "Next frame is invalid but "
+                                        "there are still frames "
+                                        "that need to be re-signed. "
+                                        "(%d/%d) frames re-signed "
+                                        "before failure. Current "
+                                        "frame address: %llu.\n",
+                                        ix, nr_frames, (u64)fp);
+                                abort();
+                        }
+                        prev_fp = fp[0];
+                }
+
+                prev_lr = fp + 1;
+                prev_sp = (u64)(fp + 2);
+                
+                assert(*prev_lr == frames[ix].lr);
+                assert(FR_SIGNED(frames[ix]));
+                assert(FR_KEY(frames[ix]) == PAC_IBKEY);
+                assert(FR_MOD(frames[ix]) == SP);
+
+                PACIB(*prev_lr, prev_sp);
+                
+                if (prev_fp == 0 || prev_fp <= (u64)fp) {
+                        assert((ix == nr_frames - 1) &&
+                               "Next frame is invalid but there "
+                               "are still frames that need to be "
+                               "re-signed\n");
+                        break;
+                }
+                fp = (u64 *)prev_fp;
+        }
+}
+
 void ckpt_handler(int sig)
 {
         static int is_restart;
@@ -464,7 +530,14 @@ void ckpt_handler(int sig)
                         "[Error] Failed to write "
                         "checkpoint file\n");
         }
-
+        
+        /**
+         * Now re-sign all pointers that were stripped before
+         * being written to the checkpoint file to restore the
+         * expected signatures when returning to the user program 
+         */
+        resign_frames(frames, nr_frames, fp);
+        printf("Finished writing checkpoint file\n");
 }
 
 void __attribute__((constructor)) setup()

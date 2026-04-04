@@ -172,10 +172,12 @@ void resign_regs(reg_ctx_t *);
 
 /* Handle PAC signatures in call stack */
 int strip_frames(callframe_t *, u64 *);
-void resign_frames(callframe_t *, u64 *);
+void resign_frames(callframe_t *, int, u64 *);
 
 /* Number of general purpose registers on arm64 */
 #define NGPREGS 29
+/* Number of total registers (excluding simd, neon, fp, etc.) */
+#define NREGS   33
 
 /* arm64 gp registers and fp, lr, sp, pc */
 enum {
