@@ -146,9 +146,9 @@ enum __ckpt_hdr_t {
         CALLFRAME_DATA  = 2
 };
 
-#define MAX_MEM_RGNS    100
-#define MAX_CKPT_HDRS   100
-#define MAX_CALL_FRAMES 1024
+#define MAX_MEM_RGNS    128
+#define MAX_CKPT_HDRS   256
+#define MAX_CALL_FRAMES 128
 
 /* Functions for enumerating and obtaining memory regions */
 int mem_rgn_valid(vm_region_submap_info_data_64_t *,
@@ -162,7 +162,7 @@ int write_ckpt(int, int, int, int,
                reg_ctx_t *, callframe_t *);
 
 int read_data(int, void *, size_t);
-int read_ckpt(int, int, int, int,
+int read_ckpt(int, int, int, int, int,
               ckpt_hdr_t *, mem_rgn_t *,
               reg_ctx_t *, callframe_t *);
 

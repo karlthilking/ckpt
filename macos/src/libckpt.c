@@ -1,3 +1,4 @@
+/* libckpt.c */
 #define _XOPEN_SOURCE
 #include <stdio.h>
 #include <string.h>
@@ -170,7 +171,7 @@ int get_mem_rgns(mem_rgn_t *rgns)
  */
 int write_data(int fd, void *data, size_t size)
 {
-        size_t  bytes = 0;
+        size_t  bytes;
         ssize_t rc;
 
         for (bytes = 0; bytes < size && rc != -1; bytes += rc)
@@ -198,12 +199,12 @@ int write_data(int fd, void *data, size_t size)
 int write_ckpt(int nr_hdrs, int nr_rgns, 
                int nr_ctxs, int nr_frames, 
                ckpt_hdr_t *hdrs, mem_rgn_t *rgns,
-               reg_ctx_t *ctx, callframe_t *frames)
+               reg_ctx_t *ctxs, callframe_t *frames)
 {
-        assert(nr_hdrs == (nr_rgns + nr_ctxs + nr_frames));
+        assert(nr_hdrs == nr_rgns + nr_ctxs + nr_frames);
 
         int  fd, rc;
-        int wr_hdrs = 0, wr_rgns = 0, wr_ctxs = 0, wr_frames = 0;
+        int  wr_hdrs = 0, wr_rgns = 0, wr_ctxs = 0, wr_frames = 0;
         char buf[128];
 
         snprintf(buf, sizeof(buf), "%d-ckpt.dat", getpid());
@@ -270,7 +271,7 @@ int write_ckpt(int nr_hdrs, int nr_rgns,
                          * including register values and 
                          * information about PAC signatures
                          */
-                        data = (void *)(ctx + wr_ctxs);
+                        data = (void *)(ctxs + wr_ctxs);
                         size = sizeof(reg_ctx_t);
                         if (write_data(fd, data, size) < 0)
                                 return -1;
@@ -289,15 +290,12 @@ int write_ckpt(int nr_hdrs, int nr_rgns,
                         wr_frames++;
                         break;
                 default:
-                        assert(0 && "unreachable");
+                        assert(0 && "Unreachable\n");
                 }
         }
         
-        assert((wr_hdrs == nr_hdrs) &&
-               (wr_rgns == nr_rgns) && 
-               (wr_ctxs == nr_ctxs) &&
-               (wr_frames == nr_frames));
-
+        assert((wr_hdrs == nr_hdrs) && (wr_rgns == nr_rgns) && 
+               (wr_ctxs == nr_ctxs) && (wr_frames == nr_frames));
         return 0;
 }
 
@@ -418,7 +416,6 @@ int strip_frames(callframe_t *frames, u64 *fp)
                 
                 if (prev_fp == 0 || prev_fp <= (u64)fp)
                         break;
-                
                 fp = (u64 *)prev_fp;
         }
 
@@ -485,24 +482,28 @@ void ckpt_handler(int sig)
         ckpt_hdr_t      hdrs[MAX_CKPT_HDRS];
         callframe_t     frames[MAX_CALL_FRAMES];
         reg_ctx_t       ctx;
+        int             nr_hdrs, nr_rgns, nr_ctxs, nr_frames;
         
+        nr_hdrs = 0;
         /**
          * Mark each checkpoint header up to the number of memory
          * regions saved as a header for a memory region
          */
-        int nr_rgns = get_mem_rgns(rgns);
+        nr_rgns = get_mem_rgns(rgns);
         for (int i = 0; i < nr_rgns; i++)
                 hdrs[i] = MEM_RGN_DATA;
+        nr_hdrs += nr_rgns;
         
         /**
          * Mark the next checkpoint header as a register context
          * and store the ucontext_t data to the saved register
          * context
          */
-        hdrs[nr_rgns]   = REG_CTX_DATA;
+        hdrs[nr_hdrs]   = REG_CTX_DATA;
         ctx.uc          = uc;
         ctx.pac_bitmap  = 0;
-        memset(ctx.modifiers, 0, sizeof(ctx.modifiers));
+        nr_ctxs         = 1;
+        nr_hdrs         += nr_ctxs;
         
         /**
          * Strip PAC signatures from signed registers and store
@@ -515,14 +516,14 @@ void ckpt_handler(int sig)
          * PAC signed pointers, and save information about modified
          * frame records
          */
-        u64 *fp = (u64 *)ctx.uc.uc_mcontext->__ss.__fp;
-        int nr_frames = strip_frames(frames, fp);
-        int nr_hdrs = nr_rgns + nr_frames + 1;
+        u64 *fp   = (u64 *)ctx.uc.uc_mcontext->__ss.__fp;
+        nr_frames = strip_frames(frames, fp);
+        nr_hdrs  += nr_frames;
         
-        for (int i = nr_rgns + 1; i < nr_hdrs; i++)
+        for (int i = nr_rgns + nr_ctxs; i < nr_hdrs; i++)
                 hdrs[i] = CALLFRAME_DATA;
 
-        int rc = write_ckpt(nr_hdrs, nr_rgns, 1, nr_frames,
+        int rc = write_ckpt(nr_hdrs, nr_rgns, nr_ctxs, nr_frames,
                             hdrs, rgns, &ctx, frames);
         
         if (rc < 0) {
