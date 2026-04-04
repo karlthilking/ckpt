@@ -22,10 +22,11 @@ typedef int64_t         i64;
 typedef uint64_t        u64;
 
 /* Checkpoint types */
-typedef struct  __mem_rgn_t     mem_rgn_t;
-typedef struct  __reg_ctx_t     reg_ctx_t;
-typedef struct  __callframe_t   callframe_t;
-typedef enum    __ckpt_hdr_t    ckpt_hdr_t;
+typedef struct  __mem_rgn_t             mem_rgn_t;
+typedef struct  __reg_ctx_t             reg_ctx_t;
+typedef struct  __callframe_t           callframe_t;
+typedef struct  __ckpt_metadata_t       ckpt_metadata_t;
+typedef enum    __ckpt_hdr_t            ckpt_hdr_t;
 
 /**
  * mem_rgn_t:   Representation of a memory region in the process's
@@ -66,7 +67,7 @@ struct __mem_rgn_t {
 #define PAGEZERO(addr, size)    (((addr) >= PAGEZERO_BASE) && \
                                  ((addr) + (size) < PAGEZERO_END))
 
-#define DLYD_SH_CH_BASE        SHARED_REGION_BASE_ARM64
+#define DYLD_SH_CH_BASE        SHARED_REGION_BASE_ARM64
 #define DYLD_SH_CH_END         (SHARED_REGION_BASE_ARM64 + \
                                 SHARED_REGION_SIZE_ARM64)
 #define DYLD_SH_CH(addr, size) (((addr) >= DYLD_SH_CH_BASE) && \
@@ -117,6 +118,23 @@ struct __reg_ctx_t {
         u64             pac_bitmap;
 };
 
+/**
+ * ckpt_metadata_t: Metadata written to the start of a checkpoint
+ *                  file describing the expected contents when
+ *                  reading the checkpoint image
+ * 
+ * @nr_hdrs:        Total number of checkpoint headers
+ * @nr_rgns:        Total number of memory regions
+ * @nr_ctxs:        Total number of register contexts
+ * @nr_frames:      Total number of annotated callframes
+ */
+struct __ckpt_metadata_t {
+        u32 nr_hdrs;
+        u32 nr_rgns;
+        u32 nr_ctxs;
+        u32 nr_frames;
+};
+
 /** 
  * ckpt_hdr_t:  Header that is present before each saved segment of
  *              data in a checkpoint file, indicating the type of
@@ -130,7 +148,7 @@ enum __ckpt_hdr_t {
 
 #define MAX_MEM_RGNS    100
 #define MAX_CKPT_HDRS   100
-#define MAX_CALL_FRAMES 100
+#define MAX_CALL_FRAMES 1024
 
 /* Functions for enumerating and obtaining memory regions */
 int mem_rgn_valid(vm_region_submap_info_data_64_t *,
@@ -139,19 +157,22 @@ int get_mem_rgns(mem_rgn_t *);
 
 /* Functions for reading and writing checkpoint file data */
 int write_data(int, void *, size_t);
-int write_ckpt(int, ckpt_hdr_t *, mem_rgn_t *,
+int write_ckpt(int, int, int, int,
+               ckpt_hdr_t *, mem_rgn_t *,
                reg_ctx_t *, callframe_t *);
 
 int read_data(int, void *, size_t);
-int read_ckpt(ckpt_hdr_t *, int);
+int read_ckpt(int, int, int, int,
+              ckpt_hdr_t *, mem_rgn_t *,
+              reg_ctx_t *, callframe_t *);
 
 /* Handle PAC signatures for register context */
 void strip_regs(reg_ctx_t *);
 void resign_regs(reg_ctx_t *);
 
 /* Handle PAC signatures in call stack */
-void strip_frames(callframe_t *, u64, u64);
-void resign_frames(callframe_t *, u64, u64);
+int strip_frames(callframe_t *, u64 *);
+void resign_frames(callframe_t *, u64 *);
 
 /* Number of general purpose registers on arm64 */
 #define NGPREGS 29

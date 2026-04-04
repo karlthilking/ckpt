@@ -44,8 +44,9 @@ int mem_rgn_valid(vm_region_submap_info_data_64_t *info,
                 return 0;
         
         /**
-         * Skip checkpointing any guard pages, i.e. memory regions
-         * that are not accessible by the current process
+         * Skip checkpointing any guard pages, i.e. memory 
+         * regions that are not accessible by the current 
+         * process
          */
         if (info->protection == VM_PROT_NONE)
                 return 0;
@@ -174,6 +175,9 @@ int write_data(int fd, void *data, size_t size)
 
         for (bytes = 0; bytes < size && rc != -1; bytes += rc)
                 rc = write(fd, data + bytes, size - bytes);
+        
+        if (rc < 0)
+                perror("[Error] write");
 
         return (bytes == size) ? 0 : -1;
 }
@@ -191,12 +195,16 @@ int write_data(int fd, void *data, size_t size)
  *              were found to contain PAC signatures
  * return:      Returns -1 on failure, 0 on success
  */
-int write_ckpt(int nr_hdrs, ckpt_hdr_t *hdrs, mem_rgn_t *rgns,
+int write_ckpt(int nr_hdrs, int nr_rgns, 
+               int nr_ctxs, int nr_frames, 
+               ckpt_hdr_t *hdrs, mem_rgn_t *rgns,
                reg_ctx_t *ctx, callframe_t *frames)
 {
+        assert(nr_hdrs == (nr_rgns + nr_ctxs + nr_frames));
+
         int  fd, rc;
+        int wr_hdrs = 0, wr_rgns = 0, wr_ctxs = 0, wr_frames = 0;
         char buf[128];
-        int nr_rgns = 0, nr_ctxs = 0, nr_frames = 0;
 
         snprintf(buf, sizeof(buf), "%d-ckpt.dat", getpid());
 
@@ -204,15 +212,36 @@ int write_ckpt(int nr_hdrs, ckpt_hdr_t *hdrs, mem_rgn_t *rgns,
                 perror("open");
                 return -1;
         }
-        
+
         void    *data   = NULL;
         size_t  size    = 0;
+
+        ckpt_metadata_t meta;
+        meta.nr_hdrs    = nr_hdrs;
+        meta.nr_rgns    = nr_rgns;
+        meta.nr_ctxs    = nr_ctxs;
+        meta.nr_frames  = nr_frames;
+
+        data = (void *)&meta;
+        size = sizeof(ckpt_metadata_t);
+        if (write_data(fd, data, size) < 0) {
+                fprintf(stderr, 
+                        "[Error] Failed to write checkpoint file "
+                        "metadata");
+                return -1;
+        }
+        
         for (int i = 0; i < nr_hdrs; i++) {
                 /* Write the checkpoint header itself */
                 data = (void *)(hdrs + i);
                 size = sizeof(ckpt_hdr_t);
-                if (write_data(fd, data, size) < 0)
+                if (write_data(fd, data, size) < 0) {
+                        fprintf(stderr,
+                                "[Error] Failed to write "
+                                "checkpoint header");
                         return -1;
+                }
+                wr_hdrs++;
 
                 switch (hdrs[i]) {
                 case MEM_RGN_DATA:
@@ -220,27 +249,32 @@ int write_ckpt(int nr_hdrs, ckpt_hdr_t *hdrs, mem_rgn_t *rgns,
                          * Write mem_rgn_t data as well as the
                          * actual contents of the memory region
                          */
-                        data = (void *)(rgns + nr_rgns);
+                        data = (void *)(rgns + wr_rgns);
                         size = sizeof(mem_rgn_t);
                         if (write_data(fd, data, size) < 0)
                                 return -1;
-                        data = (void *)(rgns[nr_rgns].start);
-                        size = (size_t)rgns[nr_rgns].size;
-                        if (write_data(fd, data, size) < 0)
+                        data = (void *)(rgns[wr_rgns].start);
+                        size = (size_t)rgns[wr_rgns].size;
+                        if (write_data(fd, data, size) < 0) {
+                                fprintf(stderr,
+                                        "[Error] Failed to write "
+                                        "memory region to "
+                                        "checkpoint file\n");
                                 return -1;
-                        nr_rgns++;
+                        }
+                        wr_rgns++;
                         break;
                 case REG_CTX_DATA:
                         /**
-                         * Write register context data, including
-                         * register values and information about
-                         * PAC signatures
+                         * Write register context data, 
+                         * including register values and 
+                         * information about PAC signatures
                          */
-                        data = (void *)(ctx + nr_ctxs);
+                        data = (void *)(ctx + wr_ctxs);
                         size = sizeof(reg_ctx_t);
                         if (write_data(fd, data, size) < 0)
                                 return -1;
-                        nr_ctxs++;
+                        wr_ctxs++;
                         break;
                 case CALLFRAME_DATA:
                         /**
@@ -248,18 +282,22 @@ int write_ckpt(int nr_hdrs, ckpt_hdr_t *hdrs, mem_rgn_t *rgns,
                          * program stack that contained one or
                          * more PAC signed pointers
                          */
-                        data = (void *)(frames + nr_frames);
+                        data = (void *)(frames + wr_frames);
                         size = sizeof(callframe_t);
                         if (write_data(fd, data, size) < 0)
                                 return -1;
-                        nr_frames++;
+                        wr_frames++;
                         break;
                 default:
                         assert(0 && "unreachable");
                 }
         }
+        
+        assert((wr_hdrs == nr_hdrs) &&
+               (wr_rgns == nr_rgns) && 
+               (wr_ctxs == nr_ctxs) &&
+               (wr_frames == nr_frames));
 
-        assert(nr_rgns + nr_ctxs + nr_frames == nr_hdrs);
         return 0;
 }
 
@@ -306,21 +344,13 @@ void strip_regs(reg_ctx_t *ctx)
  */
 int strip_frames(callframe_t *frames, u64 *fp)
 {
-        u64 prev_fp, *prev_lr, prev_sp; 
-        int depth;
-
-        for (depth = 0;; depth++) {
-                if (depth >= MAX_CALL_FRAMES) {
-                        fprintf(stderr,
-                                "Call frame depth exceeded the "
-                                "maximum capacity when walking "
-                                "the frames");
-                        return -1;
-                }
-
-                prev_fp = *fp;           // previous frame pointer
-                prev_lr = fp + 1;        // lr of current frame
-                prev_sp = (u64)(fp + 2); // sp at function entry
+        u64 prev_fp, *prev_lr, prev_sp;
+        int nr_frames = 0;
+        
+        for (;;) {
+                prev_fp = fp[0];
+                prev_lr = fp + 1;
+                prev_sp = (u64)(fp + 2);
                 
                 /**
                  * If the link register in the current frame was
@@ -328,9 +358,9 @@ int strip_frames(callframe_t *frames, u64 *fp)
                  * signature and continue to the next frame
                  */
                 if (!PACSIGNED(*prev_lr, va_mask)) {
-                        frames[depth].fp        = prev_fp;
-                        frames[depth].lr        = *prev_lr;
-                        frames[depth].metadata  = 0;
+                        if (prev_fp == 0 || prev_fp <= (u64)fp)
+                                break;
+                        fp = (u64 *)prev_fp;
                         continue;
                 }
                 
@@ -351,24 +381,25 @@ int strip_frames(callframe_t *frames, u64 *fp)
                  * information about the current call frame
                  */
                 XPACI(*prev_lr);
-                frames[depth].fp = prev_fp;
-                frames[depth].lr = *prev_lr;
+                frames[nr_frames].fp = prev_fp;
+                frames[nr_frames].lr = *prev_lr;
                 
                 /**
                  * Indicate that the link register was signed
                  * with the IB key and the stack pointer as a
                  * modifier
                  */
-                frames[depth].metadata  = (SP << 3) |
-                                          (PAC_IBKEY << 1) | 1;
-
+                frames[nr_frames].metadata = (SP << 3) |
+                                             (PAC_IBKEY << 1) | 1;
+                nr_frames++;
+                
                 if (prev_fp == 0 || prev_fp <= (u64)fp)
                         break;
                 
                 fp = (u64 *)prev_fp;
         }
 
-        return depth;
+        return nr_frames;
 }
 
 void ckpt_handler(int sig)
@@ -420,10 +451,20 @@ void ckpt_handler(int sig)
          */
         u64 *fp = (u64 *)ctx.uc.uc_mcontext->__ss.__fp;
         int nr_frames = strip_frames(frames, fp);
-        
         int nr_hdrs = nr_rgns + nr_frames + 1;
-        if (write_ckpt(nr_hdrs, hdrs, rgns, &ctx, frames) < 0)
-                fprintf(stderr, "Failed to write checkpoint file");
+        
+        for (int i = nr_rgns + 1; i < nr_hdrs; i++)
+                hdrs[i] = CALLFRAME_DATA;
+
+        int rc = write_ckpt(nr_hdrs, nr_rgns, 1, nr_frames,
+                            hdrs, rgns, &ctx, frames);
+        
+        if (rc < 0) {
+                fprintf(stderr,
+                        "[Error] Failed to write "
+                        "checkpoint file\n");
+        }
+
 }
 
 void __attribute__((constructor)) setup()
