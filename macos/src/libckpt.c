@@ -211,8 +211,9 @@ int write_ckpt(int nr_hdrs, int nr_rgns,
         char buf[128];
 
         snprintf(buf, sizeof(buf), "%d-ckpt.dat", getpid());
+        fd = open(buf, O_CREAT | O_WRONLY | O_TRUNC, S_IRUSR);
 
-        if ((fd = open(buf, O_CREAT | O_WRONLY, S_IRUSR)) < 0) {
+        if (fd < 0) {
                 perror("open");
                 return -1;
         }
@@ -476,6 +477,7 @@ void ckpt_handler(int sig)
         is_restart = 0;
         getcontext(&uc);
         
+        signal(SIGUSR2, ckpt_handler_backup);
         if (is_restart) {
                 /**
                  * Re-sign registers and saved frame records
@@ -559,6 +561,11 @@ void ckpt_handler(int sig)
          */
         resign_frames(frames, nr_frames, fp);
         printf("Finished writing checkpoint file\n");
+}
+
+void ckpt_handler_backup(int sig)
+{
+        ckpt_handler(sig);
 }
 
 void __attribute__((constructor)) setup()
