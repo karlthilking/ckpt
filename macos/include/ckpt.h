@@ -50,6 +50,16 @@ struct __mem_rgn_t {
         u32                     tag;
 };
 
+/* Check if virtual address is aligned to a page size boundary */
+#define PG_ALIGNED(addr, pgsz) \
+        (!((addr) & ((pgsz) - 1)))
+/* Round down a virtual address to a page size aligned address */
+#define PG_ALIGN_DN(addr, pgsz) \
+        ((addr) & ~((pgsz) - 1))
+/* Round up virtual memory segment size to multiple of page size */
+#define PG_ALIGN_UP(size, pgsz) \
+        (((size) + (pgsz) - 1) & ~((pgsz) - 1))
+
 /**
  * Mach/MacOS related virtual address space constants for regions
  * that should not be saved during checkpoint

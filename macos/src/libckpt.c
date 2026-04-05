@@ -57,41 +57,44 @@ int mem_rgn_valid(vm_region_submap_info_data_64_t *info,
                 case VM_MEMORY_MALLOC_NANO:
                 case VM_MEMORY_MALLOC_TINY:
                 case VM_MEMORY_MALLOC_SMALL:
+                case VM_MEMORY_MALLOC_MEDIUM:
                 case VM_MEMORY_MALLOC_LARGE:
+                case VM_MEMORY_MALLOC_HUGE:
                 case VM_MEMORY_MALLOC_LARGE_REUSABLE:
                 case VM_MEMORY_MALLOC_LARGE_REUSED:
-                        /* Heap guard page */
-                        if (info->protection == VM_PROT_NONE)
-                                return 0;
+                        /* Heap data, allocation metadata, etc. */
+                        assert(info->protection ||
+                               info->max_protection);
                         return 1;
                 case VM_MEMORY_REALLOC:
                         /* kernel memory */
                         return 0;
                 case VM_MEMORY_STACK:
-                        /* Stack guard page */
-                        if (info->protection == VM_PROT_NONE)
-                                return 0;
+                        assert(info->protection || 
+                               info->max_protection);
                         return 1;
                 case VM_MEMORY_GUARD:
                         /* Regular guard page */
                         return 0;
                 case VM_MEMORY_DYLD:
                 case VM_MEMORY_DYLD_MALLOC:
-                case VM_MEMORY_DYLIB:
-                        /* dyld shared cache region */
+                        /* Dynamic loader memory */
                         return 0;
                 case VM_MEMORY_SHARED_PMAP:
                         /* commpage */
                         return 0;
+                case VM_MEMORY_DYLIB:
+                        /* Dynamic library text, data, etc. */
+                        return 1;
                 default:
                         break;
         }
-        
-        /* Skip shared, read-only memory regions */
-        if ((info->share_mode & SM_SHARED) &&
-            (info->protection == VM_PROT_READ))
-                return 0;
 
+        if (info->protection == VM_PROT_READ &&
+            (info->share_mode == SM_SHARED ||
+             info->share_mode == SM_TRUESHARED))
+                return 0;
+        
         return 1;
 }
 
@@ -130,7 +133,7 @@ int get_mem_rgns(mem_rgn_t *rgns)
                         &count
                 );
 
-                if (kr)
+                if (kr != KERN_SUCCESS)
                         break;
                 
                 /**
@@ -143,7 +146,7 @@ int get_mem_rgns(mem_rgn_t *rgns)
                 }
                 
                 if (info.is_submap) {
-                        depth += 1;
+                        depth++;
                         continue;
                 }
                 
@@ -467,16 +470,33 @@ void resign_frames(callframe_t *frames, int nr_frames, u64 *fp)
 
 void ckpt_handler(int sig)
 {
-        static int is_restart;
-        ucontext_t uc;
-
+        static int      is_restart;
+        ucontext_t      uc;
+        
         is_restart = 0;
         getcontext(&uc);
-
-        if (is_restart)
+        
+        if (is_restart) {
+                /**
+                 * Re-sign registers and saved frame records
+                 * before returning to restored user program
+                 */
                 return;
+        }
         
         is_restart = 1;
+        
+        /** 
+         * If getcontext() did not save the program counter, set
+         * pc to the link register address that saved by getcontext
+         * which points to the instruction directly after getcontext
+         */
+        if (uc.uc_mcontext->__ss.__pc == 0) {
+                uc.uc_mcontext->__ss.__pc = 
+                        uc.uc_mcontext->__ss.__lr;
+                if (PACSIGNED(uc.uc_mcontext->__ss.__pc, va_mask))
+                        XPACI(uc.uc_mcontext->__ss.__pc);
+        }
 
         mem_rgn_t       rgns[MAX_MEM_RGNS];
         ckpt_hdr_t      hdrs[MAX_CKPT_HDRS];
