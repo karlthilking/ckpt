@@ -207,7 +207,7 @@ int write_ckpt(int nr_hdrs, int nr_rgns,
 {
         assert(nr_hdrs == nr_rgns + nr_ctxs + nr_frames);
 
-        int  fd, rc;
+        int  fd;
         int  wr_hdrs = 0, wr_rgns = 0, wr_ctxs = 0, wr_frames = 0;
         char buf[128];
 
@@ -472,24 +472,12 @@ void resign_frames(callframe_t *frames, int nr_frames, u64 *fp)
 
 void ckpt_handler(int sig, siginfo_t *info, void *ucontext)
 {
-        static int      is_restart;
         ucontext_t      uc;
         
-        is_restart = 0;
-        uc = *(ucontext_t *)ucontext;
-        
-        if (is_restart) {
-                /**
-                 * Re-sign registers and saved frame records
-                 * before returning to restored user program
-                 */
-                return;
-        }
-        
-        is_restart = 1;
+        uc              = *(ucontext_t *)ucontext;
         
         /* Make sure ucontext_t was populated with program counter */
-        assert(uc.uc_mcontext->__ss.__pc != 0);
+        assert(uc.uc_mcontext->__ss.__pc);
 
         mem_rgn_t       rgns[MAX_MEM_RGNS];
         ckpt_hdr_t      hdrs[MAX_CKPT_HDRS];

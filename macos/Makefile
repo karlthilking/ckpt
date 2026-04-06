@@ -1,9 +1,9 @@
+CC=clang
+CFLAGS=-Wall -g3 -O0
+
 SRC     = ./src
 INCLUDE = ./include
 TEST    = ./test
-
-CC=clang
-CFLAGS=-g3 -O0
 
 build: libckpt.dylib ckpt count restart printckpt
 
@@ -16,7 +16,7 @@ restart: $(SRC)/restart.c
 	$(CC) $(CFLAGS) \
 		-Wl,-segaddr,__TEXT,$(TEXT_ADDR) \
 		-Wl,-segaddr,__DATA,$(DATA_ADDR) \
-		-DDEBUG -o $@ $<
+		-o $@ $<
 
 %: $(SRC)/%.c
 	$(CC) $(CFLAGS) -o $@ $<

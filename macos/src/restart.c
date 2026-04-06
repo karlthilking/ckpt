@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <fcntl.h>
+#include <dlfcn.h>
 #include <assert.h>
 #include <unistd.h>
 #include <err.h>
@@ -34,7 +35,7 @@ int restore_mem_rgn(int fd, mem_rgn_t *r)
 {
         void    *addr   = (void *)r->start;
         size_t  len     = (size_t)r->size;
-        int     prot = 0, flags = 0;
+        int     prot    = 0;
         
         prot |= (r->prot & VM_PROT_READ)     ? PROT_READ  : PROT_NONE;
         prot |= (r->prot & VM_PROT_WRITE)    ? PROT_WRITE : PROT_NONE;
@@ -90,6 +91,7 @@ int read_ckpt(int fd, int nr_hdrs, int nr_rgns,
 
         int     rd_hdrs, rd_rgns, rd_ctxs, rd_frames;
         void    *data;
+        size_t  size;
         
         rd_hdrs = rd_rgns = rd_ctxs = rd_frames = 0;
         for (int i = 0; i < nr_hdrs; i++) {
@@ -111,12 +113,15 @@ int read_ckpt(int fd, int nr_hdrs, int nr_rgns,
                         data = (void *)(ctxs + rd_ctxs);
                         if (read_data(fd, data, sizeof(reg_ctx_t)) < 0)
                                 return -1;
-                        ctxs[rd_ctxs].uc.uc_mcontext = &ctxs[rd_ctxs].mc;
+                        memcpy(((char *)&ctxs[rd_ctxs].uc + 0x40),
+                               (void *)&ctxs[rd_ctxs].mc,
+                               sizeof(struct __darwin_mcontext64));
                         rd_ctxs++;
                         break;
                 case CALLFRAME_DATA:
                         data = (void *)(frames + rd_frames);
-                        if (read_data(fd, data, sizeof(callframe_t)) < 0)
+                        size = sizeof(callframe_t);
+                        if (read_data(fd, data, size) < 0)
                                 return -1;
                         rd_frames++;
                         break;
@@ -164,7 +169,7 @@ void resign_frames(callframe_t *frames, int nr_frames, u64 *fp)
 
 void resign_regs(reg_ctx_t *ctx)
 {
-        mcontext_t mc = &ctx->mc;
+        mcontext_t mc = ctx->uc.uc_mcontext;
 
         if (ctx->pac_bitmap & (1ULL << LR)) {
                 if (ctx->modifiers[LR] != SP) {
@@ -209,12 +214,10 @@ void restart(int fd, int depth)
                 if (rc < 0)
                         exit(EXIT_FAILURE);
                 
-                assert(ctxs[0].uc.uc_mcontext == &ctxs[0].mc);
-
-                u64 *fp = (u64 *)ctxs[0].mc.__ss.__fp;
+                u64 *fp = (u64 *)ctxs[0].uc.uc_mcontext->__ss.__fp;
                 resign_frames(frames, meta.nr_frames, fp);
                 resign_regs(&ctxs[0]);
-
+                
                 if (setcontext(&ctxs[0].uc) < 0)
                         err(EXIT_FAILURE, "setcontext");
         }
@@ -233,7 +236,6 @@ int main(int argc, char *argv[])
         
         printf("Restarting from %s (pid=%d)\n",
                argv[1], getpid());
-        raise(SIGSTOP);
 
         restart(fd, 2048);
 }
