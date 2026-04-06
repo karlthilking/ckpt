@@ -1,28 +1,28 @@
-CC=clang
-CFLAGS=-g3 -O0
-
-SOURCE  = ./src
+SRC     = ./src
 INCLUDE = ./include
 TEST    = ./test
 
-build: libckpt.dylib ckpt restart readckpt count
+CC=clang
+CFLAGS=-g3 -O0
 
-%.dylib: $(SOURCE)/%.c
-	$(CC) $(CFLAGS) -dynamiclib -o $@ $<
+build: libckpt.dylib ckpt count restart printckpt
 
-restart: $(SOURCE)/restart.c
+%.dylib: $(SRC)/%.c
+	$(CC) $(CFLAGS) -I$(INCLUDE)/ckpt.h -fPIC -dynamiclib -o $@ $<
+
+TEXT_ADDR = 0x300000000
+DATA_ADDR = 0x300800000
+restart: $(SRC)/restart.c
 	$(CC) $(CFLAGS) \
-                -Wl,-segaddr,__TEXT,0x200000000 \
-                -Wl,-segaddr,__DATA,0x200800000 \
-                -Wl,-segaddr,__DATA_CONST,0x200900000 \
-                -Wl,-segaddr,__LINKEDIT,0x200A00000 \
-                -o $@ $<
+		-Wl,-segaddr,__TEXT,$(TEXT_ADDR) \
+		-Wl,-segaddr,__DATA,$(DATA_ADDR) \
+		-DDEBUG -o $@ $<
 
-%: $(SOURCE)/%.c
+%: $(SRC)/%.c
 	$(CC) $(CFLAGS) -o $@ $<
 
 %: $(TEST)/%.c
-	$(CC) $(CFLAGS) -o $@ $<
+	$(CC) -g3 -O0 -o $@ $<
 
 clean:
-	rm -rf *.dSYM *.dylib ckpt restart readckpt count 
+	rm -rf *.dSYM *.dylib *.o *.dat ckpt count printckpt restart

@@ -3,6 +3,7 @@
 #define _XOPEN_SOURCE
 #include <stdlib.h>
 #include <stdint.h>
+#include <signal.h>
 #include <sys/types.h>
 #include <ucontext.h>
 #include <mach/mach.h>
@@ -124,11 +125,12 @@ struct __callframe_t {
  * @pac_bitmap: Bitmap indicating which registers are PAC-signed
  */
 struct __reg_ctx_t {
-        ucontext_t      uc;
-        u8              modifiers[33];
-        u64             pac_bitmap;
+        ucontext_t                      uc;
+        struct __darwin_mcontext64      mc;
+        u8                              modifiers[33];
+        u64                             pac_bitmap;
 };
-
+        
 /**
  * ckpt_metadata_t: Metadata written to the start of a checkpoint
  *                  file describing the expected contents when
@@ -172,8 +174,7 @@ int write_ckpt(int, int, int, int,
                ckpt_hdr_t *, mem_rgn_t *,
                reg_ctx_t *, callframe_t *);
 
-void ckpt_handler(int);
-void ckpt_handler_backup(int);
+void ckpt_handler(int, siginfo_t *, void *);
 
 /* Handle PAC signatures for register context */
 void strip_regs(reg_ctx_t *);
@@ -269,5 +270,16 @@ enum {
                         "pacdb %0,%1":"+r"(ptr):"r"(mod):"memory" \
                 ); \
         } while (0)
+
+/* Try to authenticate pointer with instruction B key and modifier */
+#define AUTIB(ptr, mod) \
+        do { \
+                __asm__ __volatile__ ( \
+                        "autib %0,%1":"+r"(ptr):"r"(mod):"memory" \
+                ); \
+        } while (0)
+
+/* Check if pointer authentication failed (bit 62 is set) */
+#define AUTHFAIL(ptr)   (((ptr) >> 62) & 1)
 
 #endif // __CKPT_H__

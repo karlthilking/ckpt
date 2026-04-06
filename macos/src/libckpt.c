@@ -18,6 +18,7 @@
  */
 __attribute__((visibility("hidden"))) u32 va_bits;
 __attribute__((visibility("hidden"))) u64 va_mask;
+__attribute__((visibility("hidden"))) struct sigaction sa;
 
 /**
  * mem_rgn_valid: Determine if a given memory region should
@@ -313,7 +314,7 @@ int write_ckpt(int nr_hdrs, int nr_rgns,
  */
 void strip_regs(reg_ctx_t *ctx)
 {
-        mcontext_t mc = ctx->uc.uc_mcontext;
+        mcontext_t mc = &ctx->mc;
 
         if (PACSIGNED(mc->__ss.__lr, va_mask)) {
                 u64 old         = mc->__ss.__lr;
@@ -341,12 +342,12 @@ void strip_regs(reg_ctx_t *ctx)
 
 void resign_regs(reg_ctx_t *ctx)
 {
-        mcontext_t mc = ctx->uc.uc_mcontext;
+        mcontext_t mc = &ctx->mc;
         
         if (ctx->pac_bitmap & (1ULL << LR)) {
-                if (ctx->modifiers[LR] == SP)
+                if (ctx->modifiers[LR] == SP) {
                         PACIB(mc->__ss.__lr, mc->__ss.__sp);
-                else {
+                } else {
                         assert(0 && "Link register was not signed "
                                     "using the stack pointer as a "
                                     "modifier");
@@ -469,15 +470,14 @@ void resign_frames(callframe_t *frames, int nr_frames, u64 *fp)
         }
 }
 
-void ckpt_handler(int sig)
+void ckpt_handler(int sig, siginfo_t *info, void *ucontext)
 {
         static int      is_restart;
         ucontext_t      uc;
         
         is_restart = 0;
-        getcontext(&uc);
+        uc = *(ucontext_t *)ucontext;
         
-        signal(SIGUSR2, ckpt_handler_backup);
         if (is_restart) {
                 /**
                  * Re-sign registers and saved frame records
@@ -488,17 +488,8 @@ void ckpt_handler(int sig)
         
         is_restart = 1;
         
-        /** 
-         * If getcontext() did not save the program counter, set
-         * pc to the link register address that saved by getcontext
-         * which points to the instruction directly after getcontext
-         */
-        if (uc.uc_mcontext->__ss.__pc == 0) {
-                uc.uc_mcontext->__ss.__pc = 
-                        uc.uc_mcontext->__ss.__lr;
-                if (PACSIGNED(uc.uc_mcontext->__ss.__pc, va_mask))
-                        XPACI(uc.uc_mcontext->__ss.__pc);
-        }
+        /* Make sure ucontext_t was populated with program counter */
+        assert(uc.uc_mcontext->__ss.__pc != 0);
 
         mem_rgn_t       rgns[MAX_MEM_RGNS];
         ckpt_hdr_t      hdrs[MAX_CKPT_HDRS];
@@ -521,11 +512,13 @@ void ckpt_handler(int sig)
          * and store the ucontext_t data to the saved register
          * context
          */
-        hdrs[nr_hdrs]   = REG_CTX_DATA;
-        ctx.uc          = uc;
-        ctx.pac_bitmap  = 0;
-        nr_ctxs         = 1;
-        nr_hdrs         += nr_ctxs;
+        hdrs[nr_hdrs]           = REG_CTX_DATA;
+        ctx.uc                  = uc;
+        ctx.mc                  = *uc.uc_mcontext;
+        ctx.uc.uc_mcontext      = &ctx.mc;
+        ctx.pac_bitmap          = 0;
+        nr_ctxs                 = 1;
+        nr_hdrs                 += nr_ctxs;
         
         /**
          * Strip PAC signatures from signed registers and store
@@ -563,20 +556,18 @@ void ckpt_handler(int sig)
         printf("Finished writing checkpoint file\n");
 }
 
-void ckpt_handler_backup(int sig)
-{
-        ckpt_handler(sig);
-}
-
 void __attribute__((constructor)) setup()
 {
-        signal(SIGUSR2, ckpt_handler);
+        sa.sa_sigaction = ckpt_handler;
+        sa.sa_flags     = SA_SIGINFO;
+        sigemptyset(&sa.sa_mask);
+        sigaction(SIGUSR2, &sa, NULL);
+
         size_t size;
         int rc;
 
         rc = sysctlbyname("machdep.virtual_address_size",
                            &va_bits, &size, NULL, 0);
-        
         if (rc != -1) {
                 va_mask = ~((1ULL << va_bits) - 1);
                 return;
@@ -584,7 +575,6 @@ void __attribute__((constructor)) setup()
 
         rc = sysctlbyname("machdep.cpu.address_bits.virtual",
                            &va_bits, &size, NULL, 0);
-        
         if (rc != -1) {
                 va_mask = ~((1ULL << va_bits) - 1);
                 return;

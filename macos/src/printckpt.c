@@ -64,6 +64,7 @@ int read_ckpt(int fd, int nr_hdrs, int nr_rgns,
                         size = sizeof(reg_ctx_t);
                         if (read_data(fd, data, size) < 0)
                                 return -1;
+                        ctxs[rd_ctxs].uc.uc_mcontext = &ctxs[rd_ctxs].mc;
                         rd_ctxs++;
                         break;
                 case CALLFRAME_DATA:
@@ -80,39 +81,6 @@ int read_ckpt(int fd, int nr_hdrs, int nr_rgns,
 
         assert((rd_hdrs == nr_hdrs) && (rd_rgns == nr_rgns) &&
                (rd_ctxs == nr_ctxs) && (rd_frames == nr_frames));
-        return 0;
-}
-
-int restore_mem_rgn(int fd, off_t offset, mem_rgn_t *r)
-{
-        void    *addr   = (void *)r->start;
-        size_t  len     = (size_t)r->size;
-
-        addr = mmap(addr,
-                    len,
-                    PROT_READ | PROT_WRITE,
-                    MAP_ANONYMOUS | MAP_PRIVATE | MAP_FIXED,
-                    -1, 0);
-        if (addr == MAP_FAILED) {
-                perror("mmap");
-                return -1;
-        } else if (addr != (void *)r->start) {
-                fprintf(stderr,
-                        "mmap(...,MAP_FIXED,...)\n"
-                        "Desired: %llu\nActual: %llu\n",
-                        (u64)r->start, (u64)addr);
-                return -1;
-        }
-        
-        if (lseek(fd, 0, SEEK_CUR) != offset &&
-            lseek(fd, offset, SEEK_SET) < 0) {
-                perror("lseek");
-                return -1;
-        }
-
-        if (read_data(fd, addr, len) < 0)
-                return -1;
-        
         return 0;
 }
 
@@ -161,7 +129,7 @@ void print_mem_rgn(mem_rgn_t *r)
         prot_str(r->prot, max_prot);
         share_mode_str(r->mode, share_mode);
 
-        printf("%llx-%llx\t%zu\t%s/%s\tSM=%s\n",
+        printf("%llu-%llu\t%zu\t%s/%s\tSM=%s\n",
                r->start, r->end, (size_t)r->size,
                cur_prot, max_prot, share_mode);
 }
@@ -236,42 +204,6 @@ void recursive(int fd, int levels)
                                hdrs, rgns, ctxs, frames);
                 if (rc < 0)
                         exit(EXIT_FAILURE);
-
-                /**
-                 * Restore region where mcontext_t in ucontext_t is
-                 * stored in order to print the register contents
-                 * saved in the ucontext_t struct
-                 */
-                mach_vm_address_t       start, end;
-                int                     pos = -1;
-                off_t                   offset;
-                size_t                  step;
-
-                start = (mach_vm_address_t)ctxs[0].uc.uc_mcontext;
-                end = start + sizeof(mcontext_t);
-                
-                if ((offset = lseek(fd, sizeof(ckpt_metadata_t),
-                                    SEEK_SET)) < 0)
-                        err(EXIT_FAILURE, "lseek");
-        
-                /**
-                 * Move file offset to position of memory region where
-                 * the mcontext_t data resides
-                 */
-                step = sizeof(ckpt_hdr_t) + sizeof(mem_rgn_t);
-                for (int i = 0; i < meta.nr_rgns; i++) {
-                        if (start >= rgns[i].start &&
-                            end < rgns[i].end) {
-                                offset += step;
-                                pos = i;
-                                break;
-                        }
-                        offset += (step + rgns[i].size);
-                }
-                assert(pos != -1);
-
-                if (restore_mem_rgn(fd, offset, &rgns[pos]) < 0)
-                        exit(EXIT_FAILURE);
                 
                 print_ckpt(meta.nr_rgns, 
                            meta.nr_ctxs,
@@ -283,7 +215,7 @@ void recursive(int fd, int levels)
 int main(int argc, char *argv[])
 {
         if (argc < 2) {
-                fprintf(stderr, "Usage: ./readckpt [ckpt-file]\n");
+                fprintf(stderr, "Usage: ./printckpt [ckpt-file]\n");
                 exit(EXIT_FAILURE);
         }
 
