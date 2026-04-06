@@ -166,18 +166,11 @@ int mem_rgn_valid(vm_region_submap_info_data_64_t *,
                   mach_vm_address_t, mach_vm_size_t);
 int get_mem_rgns(mem_rgn_t *);
 
-int restore_mem_rgn(int, off_t, mem_rgn_t *);
-
 /* Functions for reading and writing checkpoint file data */
 int write_data(int, void *, size_t);
 int write_ckpt(int, int, int, int,
                ckpt_hdr_t *, mem_rgn_t *,
                reg_ctx_t *, callframe_t *);
-
-int read_data(int, void *, size_t);
-int read_ckpt(int, int, int, int, int,
-              ckpt_hdr_t *, mem_rgn_t *,
-              reg_ctx_t *, callframe_t *);
 
 void ckpt_handler(int);
 void ckpt_handler_backup(int);
