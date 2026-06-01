@@ -20,13 +20,12 @@ static struct thread_list               thread_list;
 
 static int              threads_expected;
 static int              threads_arrived;
-static unsigned long    ckpt_epoch      = 0u;
+static ulong64          ckpt_epoch      = 0u;
 static pthread_cond_t   cond_arrived    = PTHREAD_COND_INITIALIZER;
 static pthread_cond_t   cond_released   = PTHREAD_COND_INITIALIZER;
 static pthread_mutex_t  ckpt_mtx        = PTHREAD_MUTEX_INITIALIZER;
 
-__attribute__((constructor(101)))
-void thread_list_init(void)
+__constructor void thread_list_init(void)
 {
         uintptr_t ckpt_thread_ready = 0;
         
@@ -65,8 +64,7 @@ void thread_list_init(void)
         pthread_mutex_unlock(&ckpt_thread.lock);
 }
 
-__attribute__((destructor))
-void thread_list_destroy(void)
+__destructor void thread_list_destroy(void)
 {
         struct thread_info      *th, *next;
         int                     killed, total;
@@ -79,7 +77,8 @@ void thread_list_destroy(void)
         while (!ckpt_thread.exiting) {
                 pthread_cond_wait(&ckpt_thread.cond, &ckpt_thread.lock);
         }
-
+        
+        assert(pthread_join(ckpt_thread.self, NULL) == 0);
         pthread_mutex_unlock(&ckpt_mtx);
         pthread_mutex_unlock(&ckpt_thread.lock);
         
@@ -92,9 +91,9 @@ void thread_list_destroy(void)
 
                 for (th = thread_list.head; th; th = next) {
                         next = th->next;
-                        if (th == myself)
+                        if (th == myself) {
                                 continue;
-                        else if (pthread_kill(th->self, 0) == ESRCH) {
+                        } else if (pthread_kill(th->self, 0) == ESRCH) {
                                 killed++;
                                 thread_reap(th);
                         }
@@ -277,10 +276,14 @@ void ckpt_thread_wait(void)
         sigemptyset(&set);
         sigaddset(&set, SIGUSR2);
         sigaddset(&set, SIGTERM);
-        
-        while ((err = sigwait(&set, &sig)) != 0 || sig != SIGUSR2) {
-                if (err == 0 && sig == SIGTERM)
+
+        while (sig != SIGUSR2) {
+                err = sigwait(&set, &sig);
+                if (unlikely(err != 0)) {
+                        fprintf(stderr, "sigwait: %s\n", strerror(err));
+                } else if (sig == SIGTERM) {
                         ckpt_thread_exit();
+                }
         }
 }
 
@@ -356,62 +359,79 @@ void *ckpt_thread_work(void *arg)
  * or confirmed to have exited. Thus, a rescan will be necessary before
  * the suspend_threads phase can complete.
  */
-int scan_threads(int *nthreads)
+bool scan_threads(u32 *thread_count)
 {
         struct thread_info      *th, *next;
-        int                     rescan, err;
-        
-        rescan = 0;
-        *nthreads = 0;
+        int                     err;
+        u32                     count = 0;
+        bool                    rescan = false;
+
         for (th = thread_list.head; th; th = next) {
                 next = th->next;
-        
-                if (th->exiting || th->state == ST_CKPT_THREAD)
-                        continue;
 
+                if (th->exiting) {
+                        continue;
+                } else if (unlikely(th->state == ST_CKPT_THREAD)) {
+                        continue;
+                }
+        
                 if (th->state == ST_RUNNING &&
                     thread_state_cas(th, ST_RUNNING, ST_SIGNALED)) {
                         err = pthread_kill(th->self, SIGUSR1);
-                        if (err != 0) {
-                                assert(err == ESRCH);
+                        
+                        if (err == ESRCH) {
                                 thread_reap(th);
                                 continue;
+                        } else if (unlikely(err != 0)) {
+                                fprintf(stderr, "pthread_kill: %s\n",
+                                        strerror(err));
                         }
-                        rescan = 1;
+                        
+                        rescan = true;
                 } else if (th->state == ST_SIGNALED) {
                         err = pthread_kill(th->self, 0);
-                        if (err != 0) {
-                                assert(err == ESRCH);
+
+                        if (err == ESRCH) {
                                 thread_reap(th);
                                 continue;
+                        } else if (unlikely(err != 0)) {
+                                fprintf(stderr, "pthread_kill: %s\n",
+                                        strerror(err));
                         }
-                        rescan = 1;
+
+                        rescan = true;
                 } else if (th->state == ST_SUSPENDED ||
                            th->state == ST_SUSPINPROG) {
-                        ++(*nthreads);
+                        count++;
                 } else if (th->state == ST_THREAD_CREATE ||
-                           th->state == ST_THREAD_JOIN)
-                        rescan = 1;
+                           th->state == ST_THREAD_JOIN) {
+                        rescan = true;
+                }
         }
-
+        
+        *thread_count = count;
         return rescan;
 }
 
 void suspend_threads(void)
 {
-        int nthreads, rescan;
+        u32 thread_count;
         
         pthread_mutex_lock(&ckpt_mtx);
         thread_list_acquire();
-        while ((rescan = scan_threads(&nthreads)))
+
+        while (scan_threads(&thread_count)) {
                 usleep(10);
+        }
+
         thread_list_release();
 
-        /* Wait for all threads to reach barrier */
         threads_arrived = 0;
-        threads_expected = nthreads;
-        while (threads_arrived != threads_expected)
+        threads_expected = thread_count;
+        while (threads_arrived != threads_expected) {
                 pthread_cond_wait(&cond_arrived, &ckpt_mtx);
+        }
+
         pthread_mutex_unlock(&ckpt_mtx);
 }
 
@@ -427,10 +447,7 @@ void restore_threads(void)
 {
         int                     err;
         struct thread_info      *th;
-        pthread_attr_t          attr;
-        void                    *stack;
-        
-        pthread_attr_init(&attr);
+
         thread_list_acquire();
         pthread_mutex_lock(&ckpt_mtx);
 
@@ -438,13 +455,10 @@ void restore_threads(void)
         threads_expected = 0;
 
         for (th = thread_list.head; th; th = th->next) {
-                stack = th->stackaddr - th->stacksize;
-                pthread_attr_setstack(&attr, stack, th->stacksize);
-        
                 assert(!th->exiting);
                 th->state = ST_RUNNING;
 
-                err = pthread_create(&th->self, &attr, thread_restart, th);
+                err = pthread_create(&th->self, NULL, thread_restart, th);
                 if (err != 0) {
                         fprintf(stderr, "pthread_create: %s\n",
                                 strerror(err));
@@ -454,12 +468,12 @@ void restore_threads(void)
                 threads_expected++;
         }
 
-        while (threads_arrived != threads_expected)
+        while (threads_arrived != threads_expected) {
                 pthread_cond_wait(&cond_arrived, &ckpt_mtx);
+        }
         
         thread_list_release();
         pthread_mutex_unlock(&ckpt_mtx);
-        pthread_attr_destroy(&attr);
 }
 
 void wait_for_exiting_threads(void)
@@ -497,11 +511,13 @@ void thread_barrier(void)
         epoch = ckpt_epoch;
         threads_arrived++;
         
-        if (threads_arrived == threads_expected)
+        if (threads_arrived == threads_expected) {
                 pthread_cond_signal(&cond_arrived);
+        }
 
-        while (epoch == ckpt_epoch)
+        while (epoch == ckpt_epoch) {
                 pthread_cond_wait(&cond_released, &ckpt_mtx);
+        }
 
         pthread_mutex_unlock(&ckpt_mtx);
 }
@@ -509,19 +525,20 @@ void thread_barrier(void)
 void thread_sighandler(int sig, siginfo_t *info, void *uctx)
 {
         assert(myself != NULL);
-        if (myself->state == ST_CKPT_THREAD)
+        if (unlikely(myself->state == ST_CKPT_THREAD)) {
                 return;
-        
+        }
+
         if (!thread_state_cas(myself, ST_SIGNALED, ST_SUSPINPROG)) {
                 /**
-                 * Prevent user threads from entering signal handler
-                 * more than once
+                 * Prevent user threads from entering the signal handler
+                 * more than once. A user thread should only be here
+                 * if in state ST_SIGNALED (set by the checkpoint thread).
                  */
                 return;
         }
         
         /* Save state and transition to suspended */
-        // thread_save_stack();
         thread_save_tls();
         thread_save_sig_state();
         thread_save_context((ucontext_t *)uctx);
@@ -566,7 +583,7 @@ void *thread_restart(void *thread)
         thread_barrier();
         thread_restore_context();
 
-        __builtin_unreachable();
+        unreachable();
 }
 
 void thread_save_stack(void)
@@ -586,6 +603,11 @@ void thread_save_tls(void)
         );
 }
 
+/**
+ * thread_restore_tls:
+ *  TPIDRRO_EL0 can not be written to directly. Instead, restore tsd 
+ *  slots 125-209 and 256-767 for thread locals.
+ */
 void thread_restore_tls(void)
 {
         /* Zero cleanup handler is pthread struct */
@@ -625,7 +647,7 @@ void thread_save_context(ucontext_t *ucp)
         myself->uc.uc_mcontext = (mcontext_t)&myself->uc.__mcontext_data;
 }
 
-void thread_restore_context(void)
+__noreturn void thread_restore_context(void)
 {
         u64 fp;
         
@@ -642,7 +664,7 @@ void thread_restore_context(void)
                 pthread_exit(NULL);
         }
         
-        __builtin_unreachable();
+        unreachable();
 }
 
 void thread_save_sig_state(void)

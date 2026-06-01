@@ -7,6 +7,7 @@
 #include <ucontext.h>
 #include <pthread.h>
 #include <signal.h>
+#include "types.h"
 
 typedef enum thread_state {
         ST_NULL,
@@ -77,7 +78,7 @@ void    ckpt_thread_exit(void);
 void    ckpt_thread_wait(void);
 void    *ckpt_thread_work(void *);
 
-int     scan_threads(int *);
+bool    scan_threads(u32 *);
 void    suspend_threads(void);
 void    resume_threads(void);
 void    restore_threads(void);
