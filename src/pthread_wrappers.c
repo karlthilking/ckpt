@@ -59,7 +59,7 @@ int __pthread_join_hook(pthread_t p, void **value_ptr)
         assert(pthread_mutex_unlock(&th->lock) == 0);
 
         if (value_ptr) {
-                value_ptr = th->exit_value;
+                *value_ptr = th->exit_value;
         }
 
         return 0;
