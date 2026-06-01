@@ -14,8 +14,7 @@
 #include "vm_region.h"
 #include "shared_cache.h"
 
-__attribute__((noinline, noreturn))
-void restart(int fd)
+__noreturn noinline void restart(int fd)
 {
         int                     retval;
         u64                     fp;
@@ -23,8 +22,9 @@ void restart(int fd)
 
         retval = ckpt_vm_mark_regions();
         if (retval < 0 || readall(fd, &meta, sizeof(meta)) < 0 ||
-            shared_cache_check(&meta.shared_cache_info) < 0)
+            shared_cache_check(&meta.shared_cache_info) < 0) {
                 exit(EXIT_FAILURE);
+        }
 
         ckpt_header_t           headers[meta.nr_headers];
         ckpt_vm_region_t        regions[meta.nr_regions];
@@ -39,28 +39,31 @@ void restart(int fd)
         }
         
         fp = get_ucontext_fp(&ctx);
-        if (PTRAUTH_SIGNED(fp))
+        if (PTRAUTH_SIGNED(fp)) {
                 XPACD(fp);
+        }
+
         pac_resign_frames((u64 *)fp);
-        
         pac_patch_context(&ctx);
-        if (setcontext(&ctx) < 0)
-                err(EXIT_FAILURE, "setcontext()");
+
+        if (setcontext(&ctx) < 0) {
+                err(EXIT_FAILURE, "setcontext");
+        }
         
         abort();
 }
 
 /**
  * jump:
+ * Allocate
  *  Jump to a temporary stack and initiate the restart.
  */
-__attribute__((noreturn))
-void jump(int fd)
+__noreturn void jump(int fd)
 {
         kern_return_t           ret;
         void                    *sp;
         mach_vm_address_t       addr = 0x320000000;
-        const mach_vm_size_t    size = 1024 * 1024; // 1 MB
+        const mach_vm_size_t    size = 1024 * 1024;
         
         /**
          * Make VM object purgable and associate VM_REGION_RESTART_STACK
@@ -73,11 +76,11 @@ void jump(int fd)
                           MEMORY_OBJECT_NULL, 0, FALSE, VM_PROT_DEFAULT,
                           VM_PROT_ALL, VM_INHERIT_NONE);
 
-        if (ret != KERN_SUCCESS)
+        if (ret != KERN_SUCCESS) {
                 errx(EXIT_FAILURE, "mach_vm_map: %s\n",
                      mach_error_string(ret));
+        }
         
-        /* New stack pointer */
         sp = (void *)(addr + size);
         
         /* Switch to temporary stack and call restart function */
@@ -90,11 +93,10 @@ void jump(int fd)
                   [restart] "r" (restart)
         );
 
-        __builtin_unreachable();
+        unreachable();
 }
 
-__attribute__((noreturn))
-int main(int argc, char **argv)
+__noreturn int main(int argc, char **argv)
 {
         int fd;
 
@@ -107,5 +109,5 @@ int main(int argc, char **argv)
         printf("Restarting from %s (pid=%d)\n", argv[1], getpid());
         jump(fd);
 
-        __builtin_unreachable();
+        unreachable();
 }
