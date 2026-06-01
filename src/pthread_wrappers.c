@@ -62,7 +62,6 @@ int __pthread_join_hook(pthread_t p, void **value_ptr)
                 value_ptr = th->exit_value;
         }
 
-        assert(pthread_mutex_unlock(&th->lock) == 0);
         return 0;
 
 invalid:
