@@ -1,10 +1,21 @@
 /* signal_wrappers.h */
 #ifndef __SIGNAL_WRAPPERS_H__
 #define __SIGNAL_WRAPPERS_H__
+#define _XOPEN_SOURCE
 #include <signal.h>
+#include <ucontext.h>
 #include "inject.h"
+#include "types.h"
 
 typedef void (*sig_t)(int);
+
+struct __real_sigaction {
+        union __sigaction_u     __sigaction_u;
+        bool                    sa_siginfo;
+};
+
+void __internal_sigreturn(ucontext_t *);
+void __internal_sigtramp(int, siginfo_t *, void *);
 
 void sig_state_save(void);
 void sig_state_restore(void);
