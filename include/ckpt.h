@@ -39,12 +39,12 @@ typedef enum ckpt_header {
 
 #define MAX_CKPT_HEADERS        (512)
 #define MAX_CKPT_VM_REGIONS     (128)
-#define MAX_CKPT_CONTEXTS       (1) // only single-threaded for now
+#define MAX_CKPT_CONTEXTS       (1)
 
-/* Checkpoint handler to run on SIGUSR2 */
-void ckpt_handler(int, siginfo_t *, void *);
+void precheckpoint(void);
+void postrestart(void);
+void docheckpoint(ucontext_t *);
 
-/* Constructor to setup signal handler */
 __attribute__((constructor))
 void setup(void);
 

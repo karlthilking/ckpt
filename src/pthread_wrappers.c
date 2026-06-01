@@ -4,6 +4,7 @@
 #include <assert.h>
 #include <time.h>
 #include <errno.h>
+#include <stdlib.h>
 #include "time_wrappers.h"
 #include "pthread_wrappers.h"
 #include "thread_info.h"
@@ -21,52 +22,57 @@ int __pthread_create_hook(pthread_t *thread, const pthread_attr_t *attr,
         self    = thread_self();
         new     = thread_init(start_routine, arg);
 
-        thread_state_cas(self, ST_RUNNING, ST_THREAD_CREATE);
+        assert(thread_state_cas(self, ST_RUNNING, ST_THREAD_CREATE));
         retval = pthread_create(thread, attr, thread_start, new);
-        thread_state_cas(self, ST_THREAD_CREATE, ST_RUNNING);
+        assert(thread_state_cas(self, ST_THREAD_CREATE, ST_RUNNING));
 
         return retval;
 }
 
-/**
- * __pthread_join_hook:
- *  Poll thread with pthread_cond_timedwait to prevent having a user
- *  thread block in pthread_join. If a checkpoint is sent while a user
- *  thread is blocked in pthread join, the pthread_t descriptor will
- *  be stale upon restart.
- */
-int __pthread_join_hook(pthread_t thread, void **value_ptr)
+int __pthread_join_hook(pthread_t p, void **value_ptr)
 {
-        int                     err;
-        struct timespec         ts;
-        struct thread_info      *th;
-
-again:
-        if ((th = thread_list_find(thread)) == NULL) {
-                if ((err = pthread_kill(thread, 0)) != 0)
-                        return (err == ESRCH) ? ESRCH : EINVAL;
-                goto again;
-        }
+        int                     err = 0;
+        struct thread_info      *th, *self;
         
-        pthread_mutex_lock(&th->lock);
-        do {
-                clock_gettime(CLOCK_REALTIME, &ts);
-                ts.tv_nsec += 100 * NSEC_PER_MSEC;
-                if (ts.tv_nsec >= NSEC_PER_SEC) {
-                        ts.tv_nsec -= NSEC_PER_SEC;
-                        ts.tv_sec += 1;
+        self = thread_self();
+        assert(thread_state_cas(self, ST_RUNNING, ST_THREAD_JOIN));
+
+        while ((th = thread_list_find(p)) == NULL) {
+                if ((err = pthread_kill(p, 0)) != 0) {
+                        err = (err == ESRCH) ? ESRCH : EINVAL;
+                        goto invalid;
                 }
+                usleep(10);
+        }
+        assert(thread_state_cas(self, ST_THREAD_JOIN, ST_RUNNING));
 
-                err = pthread_cond_timedwait(&th->cond, &th->lock, &ts);
-        } while (err == ETIMEDOUT);
-        pthread_mutex_unlock(&th->lock);
+        assert(pthread_mutex_lock(&th->lock) == 0);
+        while (!th->exiting) {
+                err = pthread_cond_wait(&th->cond, &th->lock);
+                if (err) {
+                        pthread_mutex_unlock(&th->lock);
+                        if (pthread_kill(th->self, 0) == ESRCH)
+                                return ESRCH;
+                        return EINVAL;
+                }
+        }
+        assert(pthread_mutex_unlock(&th->lock) == 0);
 
-        return pthread_join(th->self, value_ptr);
+        if (value_ptr) {
+                value_ptr = th->exit_value;
+        }
+
+        assert(pthread_mutex_unlock(&th->lock) == 0);
+        return 0;
+
+invalid:
+        assert(thread_state_cas(self, ST_THREAD_JOIN, ST_RUNNING));
+        return err;
 }
 
 void __pthread_exit_hook(void *value_ptr)
 {
-        thread_exit();
+        thread_exit(value_ptr);
         pthread_exit(value_ptr);
 }
 
@@ -90,7 +96,7 @@ void __pthread_cookie()
          *
          * pthread_xor_cookie = slot ^ signed_ptr
          */
-        self            = tls - PTHREAD_SELF_TLS_OFFSET;
+        self            = tls + PTHREAD_SELF_TLS_OFFSET;
         slot            = *(uintptr_t *)self;
         signed_ptr      = self;
 
@@ -117,7 +123,7 @@ void __pthread_slot_fixup()
          * new_ptr      = pac_strip_and_resign(old_ptr)
          * slot_ptr[0]  = new_ptr ^ pthread_xor_cookie
          */
-        slot_ptr        = (uintptr_t *)(tls - PTHREAD_SELF_TLS_OFFSET);
+        slot_ptr        = (uintptr_t *)(tls + PTHREAD_SELF_TLS_OFFSET);
         old_ptr         = pthread_xor_cookie ^ slot_ptr[0];
 
         new_ptr = old_ptr;

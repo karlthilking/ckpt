@@ -3,6 +3,7 @@
 #define __CKPT_THREAD_INFO_H__
 #define _XOPEN_SOURCE
 #include <stdatomic.h>
+#include <stdbool.h>
 #include <ucontext.h>
 #include <pthread.h>
 #include <signal.h>
@@ -15,6 +16,7 @@ typedef enum thread_state {
         ST_SUSPENDED,
         ST_CKPT_THREAD,
         ST_THREAD_CREATE,
+        ST_THREAD_JOIN
 } thread_state;
 
 struct thread_list {
@@ -26,7 +28,11 @@ struct thread_info {
         pthread_t               self;
         void                    *(*fn)(void *);
         void                    *arg;
+        void                    *stackaddr;
+        size_t                  stacksize;
+
         int                     exiting;
+        void                    *exit_value;
         
         _Atomic thread_state    state;
         ucontext_t              uc;
@@ -40,13 +46,16 @@ struct thread_info {
         struct thread_info      *prev;
 };
 
-static inline int thread_state_cas(struct thread_info *th,
-                                   thread_state expected, 
-                                   thread_state desired)
+static inline bool thread_state_cas(struct thread_info *th,
+                                    thread_state expected,
+                                    thread_state desired)
 {
         return atomic_compare_exchange_strong(&th->state, 
                                               &expected, desired);
 }
+
+extern void     *pthread_get_stackaddr_np(pthread_t);
+extern size_t   pthread_get_stacksize_np(pthread_t);
 
 __attribute__((constructor(101)))
 void thread_list_init(void);
@@ -61,9 +70,10 @@ void                    thread_list_add(void);
 
 struct thread_info      *thread_init(void *(*)(void *), void *);
 void                    thread_reap(struct thread_info *);
-void                    thread_exit(void);
+void                    thread_exit(void *);
 struct thread_info      *thread_self(void);
 
+void    ckpt_thread_exit(void);
 void    ckpt_thread_wait(void);
 void    *ckpt_thread_work(void *);
 
@@ -78,7 +88,9 @@ void    thread_sighandler(int, siginfo_t *, void *);
 void    *thread_start(void *);
 void    *thread_restart(void *);
 
+void    thread_save_stack(void);
 void    thread_save_tls(void);
+void    thread_restore_tls(void);
 void    thread_save_context(ucontext_t *);
 void    thread_restore_context(void);
 void    thread_save_sig_state(void);
