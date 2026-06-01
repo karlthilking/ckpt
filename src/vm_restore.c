@@ -26,7 +26,8 @@ int ckpt_vm_mark_regions()
                         addr += size;
                         continue;
                 } else if (PAGEZERO(addr, size) ||
-                           DYLD_SHARED_CACHE_REGION(addr, size)) {
+                           DYLD_SHARED_CACHE_REGION(addr, size) ||
+                           VM_REGION_SHARED(&info)) {
                         addr += size;
                         continue;
                 }
