@@ -31,40 +31,55 @@ int __pthread_create_hook(pthread_t *thread, const pthread_attr_t *attr,
 
 int __pthread_join_hook(pthread_t p, void **value_ptr)
 {
-        int                     err = 0;
-        struct thread_info      *th, *self;
-        
-        self = thread_self();
-        assert(thread_state_cas(self, ST_RUNNING, ST_THREAD_JOIN));
+        int                     err = 0, tries = 0;
+        struct thread_info      *self, *th = NULL;
+        struct timespec         rqtp, rmtp;
 
+        self = thread_self();
+        rqtp.tv_sec = 0;
+        rqtp.tv_nsec = 100 * NSEC_PER_MSEC;
+
+        assert(thread_state_cas(self, ST_RUNNING, ST_THREAD_JOIN));
         while ((th = thread_list_find(p)) == NULL) {
                 if ((err = pthread_kill(p, 0)) != 0) {
                         err = (err == ESRCH) ? ESRCH : EINVAL;
-                        goto invalid;
+                        goto bad;
                 }
-                usleep(10);
+
+                tries++;
+                if (tries >= 1000) {
+                        err = ESRCH;
+                        goto bad;
+                }
+        
+                err = __nanosleep_hook(&rqtp, &rmtp);
+                while (err != 0 && errno == EINTR) {
+                        rqtp.tv_sec = rmtp.tv_sec;
+                        rqtp.tv_nsec = rmtp.tv_nsec;
+                        err = __nanosleep_hook(&rqtp, &rmtp);
+                }
         }
         assert(thread_state_cas(self, ST_THREAD_JOIN, ST_RUNNING));
-
+        
         assert(pthread_mutex_lock(&th->lock) == 0);
         while (!th->exiting) {
                 err = pthread_cond_wait(&th->cond, &th->lock);
                 if (err) {
                         pthread_mutex_unlock(&th->lock);
-                        if (pthread_kill(th->self, 0) == ESRCH)
+                        if (pthread_kill(th->self, 0) == ESRCH) {
                                 return ESRCH;
+                        }
                         return EINVAL;
                 }
         }
         assert(pthread_mutex_unlock(&th->lock) == 0);
-
+        
         if (value_ptr) {
                 *value_ptr = th->exit_value;
         }
 
         return 0;
-
-invalid:
+bad:
         assert(thread_state_cas(self, ST_THREAD_JOIN, ST_RUNNING));
         return err;
 }
