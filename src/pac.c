@@ -7,6 +7,28 @@
 #include "types.h"
 #include "pac.h"
 
+static __always_inline u64 *first_signed_frame(u64 *fp)
+{
+        for (; fp != NULL; fp = (u64 *)fp[0]) {
+                if (PTRAUTH_SIGNED(fp[1])) {
+                        return fp;
+                }
+        }
+
+        return NULL;
+}
+
+static __always_inline u64 *next_signed_frame(u64 *fp)
+{
+        for (fp = (u64 *)fp[0]; fp != NULL; fp = (u64 *)fp[0]) {
+                if (PTRAUTH_SIGNED(fp[1])) {
+                        return fp;
+                }
+        }
+
+        return NULL;
+}
+
 /**
  * pac_patch_ucontext:
  *  Patch ucontext pointer that was delivered in signal
@@ -48,8 +70,10 @@ void pac_patch_context(ckpt_context_t *ctx)
          * will access the register context through
          * __mcontext_data.
          */
-        memcpy(&ctx->__mcontext_data, ctx->uc_mcontext,
-               sizeof(ctx->__mcontext_data));
+        if (ctx->uc_mcontext != (mcontext_t)&ctx->__mcontext_data) {
+                memmove(&ctx->__mcontext_data, ctx->uc_mcontext,
+                        sizeof(ctx->__mcontext_data));
+        }
 }
 
 void pac_resign_frames(u64 *fp)
