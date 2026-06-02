@@ -47,7 +47,7 @@ int __pthread_join_hook(pthread_t p, void **value_ptr)
                 }
 
                 tries++;
-                if (tries >= 30) {
+                if (tries >= 35) {
                         err = ESRCH;
                         goto bad;
                 }
