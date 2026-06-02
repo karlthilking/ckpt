@@ -16,22 +16,25 @@
 # define POSIX_SPAWN_DISABLE_ASLR 0x0100
 #endif
 
+extern void interactive(void);
+
 void getpath(const char *file, char *out)
 {
         char    buf[PATH_MAX], path[PATH_MAX];
         u32     bufsize = PATH_MAX;
         
-        if (_NSGetExecutablePath(buf, &bufsize) < 0)
+        if (_NSGetExecutablePath(buf, &bufsize) < 0) {
                 err(EXIT_FAILURE, "_NSGetExecutablePath");
-        else if (realpath(buf, path) == NULL)
+        } else if (realpath(buf, path) == NULL) {
                 err(EXIT_FAILURE, "realpath(%s, ...)", buf);
+        }
 
         strncpy(out, path, strlen(path) + 1);
         strncpy(strstr(strstr(out, "macos"), "ckpt"),
                 file, strlen(file) + 1);
 }
 
-void print(char *ckptfile)
+__noreturn void print(char *ckptfile)
 {
         char *argv[3], printckpt_path[PATH_MAX];
 
@@ -41,24 +44,30 @@ void print(char *ckptfile)
         argv[1] = ckptfile;
         argv[2] = NULL;
 
-        if (execvp(argv[0], argv) < 0)
+        if (execvp(argv[0], argv) < 0) {
                 err(EXIT_FAILURE, "execvp(%s, ...)", argv[0]);
+        }
+
+        unreachable();
 }
 
-void checkpoint(char **argv)
+__noreturn void checkpoint(char **argv)
 {
         char libckpt_path[PATH_MAX];
 
         getpath("libckpt.dylib", libckpt_path);
         printf("Executing %s (pid=%d)\n", argv[0], getpid());
 
-        if (setenv("DYLD_INSERT_LIBRARIES", libckpt_path, 1) < 0)
+        if (setenv("DYLD_INSERT_LIBRARIES", libckpt_path, 1) < 0) {
                 err(EXIT_FAILURE, "setenv");
-        else if (execvp(argv[0], argv) < 0)
-                err(EXIT_FAILURE, "execvp");
+        } else if (execvp(argv[0], argv) < 0) {
+                err(EXIT_FAILURE, "execvp(%s, ...)", argv[0]);
+        }
+
+        unreachable();
 }
 
-void restart(char *ckptfile)
+__noreturn void restart(char *ckptfile)
 {
         int                     retval;
         short                   flags;
@@ -79,19 +88,23 @@ void restart(char *ckptfile)
          * restart text and data segments are not slid
          */
         flags = POSIX_SPAWN_DISABLE_ASLR | POSIX_SPAWN_SETEXEC;
-        if (posix_spawnattr_setflags(&attr, flags) < 0)
+        retval = posix_spawnattr_setflags(&attr, flags);
+        if (retval < 0) {
                 err(EXIT_FAILURE, "posix_spawnattr_setflags");
+        }
         
         retval = posix_spawn(&pid, restart_path, NULL,
                              &attr, argv, environ);
         if (retval < 0) {
                 posix_spawnattr_destroy(&attr);
-                err(EXIT_FAILURE, "posix_spawn");
+                err(EXIT_FAILURE, "posix_spawn(..., %s, ...)",
+                    restart_path);
         }
+
+        unreachable();
 }
 
-__attribute__((noreturn))
-void usage()
+void usage(void)
 {
         fprintf(stderr,
 "OVERVIEW: MacOS Checkpoint-Restart\n\n"
@@ -99,15 +112,19 @@ void usage()
 "OPTIONS:\n"
 "  -p <file>            Print checkpoint file contents\n"
 "  -c <binary> <args>   Execute binary injected with libckpt.dylib\n"
-"  -r <file>            Restart from saved checkpoint file\n\n");
+"  -r <file>            Restart from saved checkpoint file\n"
+"  -i                   Launch interactive mode\n\n");
 
         exit(EXIT_FAILURE);
 }
 
 int main(int argc, char *argv[])
 {
-        if (argc < 3)
+        if (argc < 2) {
                 usage();
+        } else if (argc == 2 && strncmp(argv[1], "-i", 2) == 0) {
+                interactive();
+        }
         
         switch (getopt(argc, argv, "c:r:p:")) {
         case 'c':

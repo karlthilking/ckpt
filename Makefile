@@ -45,6 +45,9 @@ $(BUILD)/restart: $(RESTART_SOURCES) | $(BUILD)
 	-Wl,-segaddr,__LINKEDIT,$(__LINKEDIT) 	\
 	-o $@ $^
 
+$(BUILD)/ckpt: $(SRC)/ckpt.c $(SRC)/ckptrepl.c | $(BUILD)
+	$(CC) $(CFLAGS) -I$(INCLUDE) -o $@ $^
+
 $(BUILD)/%: $(SRC)/%.c | $(BUILD)
 	$(CC) $(CFLAGS) -I$(INCLUDE) -o $@ $<
 
