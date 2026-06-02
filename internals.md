@@ -710,17 +710,17 @@ return address will be protected by emitting a `pacibsp` before a
 function's prologue, and a `retab` instruction after the epilogue.
 Additionally, `C` function pointers will be signed with `paciza`
 instruction, and branched to with the `blraaz` instruction. For a
-complete guide how macOS compilers enforce pointer authentication, see
+complete guide on how macOS compilers enforce pointer authentication, see
 [clang/llvm ptrauth](https://clang.llvm.org/docs/PointerAuthentication.html#non-triviality-from-address-diversity). Note that macOS ships with
 Apple's own fork of `clang`, but the standard for PAC enforced by Apple's
-clang reflects the implementation described in the LLVM's document.
+`clang` reflects the implementation described in LLVM's document.
 
 A more difficult issue for checkpoint-restart is encountered when system
 libraries use pointer authentication in their source code. This is
 trivially implemented by using the `__ptrauth` qualifier and other 
 instrinsics that are available in `<ptrauth.h>`. The difficulty imposed
 by libraries using PAC is that the standards and conventions that they
-use are completely flexible. Whereas Apple's `clang` uses deterministic
+use are entirely flexible. Whereas Apple's `clang` uses deterministic
 and predictable PAC conventions, system library implementers can use
 pointer authentication however it may fit their needs. Thus, it is
 infeasible for a checkpoint-restart library to know exactly which 
@@ -733,9 +733,9 @@ still impose one of the greatest limitations for checkpoint-restart on
 macOS. For more on limitations and considerations, see §6.
 
 ### 5.2 PAC Observations
-It is important to state certain subtleties about the functionality of
-PAC in the context of checkpoint-restart, in order to provide more
-context.
+The following section is provided to make certain subtleties about PAC
+more concrete. Specifically, PAC will be discussed in the context of
+transparent checkpoint-restart.
 
 First, it is important to distinguish exactly how PAC instructions
 behave when executing both arm64 and arm64e binaries. As opposed to what
@@ -1089,10 +1089,10 @@ slot_ptr[0]      = new_ptr ^ xor_cookie
 ### 6. Limitations and Future Work
 
 # Appendix: macOS for Linux Users
-The following appendix is intended for Linux systems programmers as a brief 
-guide on macOS/Darwin concepts. This is not a comprehensive overview of macOS 
-and the Darwin kernel, but rather short reference on specific topics that
-are relevant to checkpoint-restart on macOS.
+The following appendix is intended for Linux systems programmers as a 
+brief guide on macOS/Darwin concepts. This is not a comprehensive overview 
+on macOS or the Darwin kernel, but rather, a brief reference for specific
+topics that are relevant to checkpoint-restart on macOS.
 
 ## A.1 The Darwin Kernel: XNU, BSD, Mach
 The Darwin kernel has a hybrid architecture that combines the Mach
@@ -1116,15 +1116,20 @@ macOS's binary format is Mach-O.
 - **Mach-O Segments** - A segment is a contiguous range of virtual 
   addresses. Examples include `__TEXT`, `__DATA`, `__LINKEDIT`, and
   `__PAGEZERO`. A section is a fine-grained subset of one segment.
-  Examples of section are the following: `__TEXT,__text`, `__DATA,__bss`,
-  and `__DATA,__interpose`.
-- **`__DATA,__interpose`** - a particularly important section in the
-  context of checkpoint-restart. This section contains entries that are
-  pairs of `(replacement, original)`. Each entry instructs `dyld` to 
-  re-bind calls to `original` to go to `replacement`. This section allows
-  one to interpose function calls without needing `LD_PRELOAD`, and
-  without neeeding `dlsym` with `RTLD_NEXT` to find the real function
-  definition.
+  Examples of a section include `__TEXT,__text`, `__DATA,__bss`, and
+  `__DATA,__interpose`.
+
+- **`__DATA,__interpose`** - `__DATA,__interpose` is a particularly
+  important section in the context of checkpoint-restart. This section
+  contains pairs of `(replacement_fn, original_fn)`, allowing
+  `replacement_fn` to interpose `original_fn`. `dyld` will re-bind calls
+  to the original function to instead go the the interposer. Thus,
+  this section allows one to interpose function calls without
+  preloading (`LD_PRELOAD`/`DYLD_INSERT_LIBRARIES`). It also foregos
+  the need to use `dlsym` with `RTLD_NEXT`. If a hook function wants to
+  call the original function, it can simply use the original's function
+  symbol because `replacement_fn` does not need to use the same symbol
+  as the original function.
 
 ## A.4 Loaders and Shared Objects
 | Linux | macOS |
