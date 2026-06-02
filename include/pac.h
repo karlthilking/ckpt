@@ -273,26 +273,6 @@
         for (__fp = first_signed_frame(__fp); __fp != NULL; \
              __fp = next_signed_frame(__fp))
 
-// static inline u64 *first_signed_frame(u64 *fp)
-// {
-//         for (; fp != NULL; fp = (u64 *)fp[0]) {
-//                 if (PTRAUTH_SIGNED(fp[1]))
-//                         return fp;
-//         }
-// 
-//         return NULL;
-// }
-// 
-// static inline u64 *next_signed_frame(u64 *fp)
-// {
-//         for (fp = (u64 *)fp[0]; fp != NULL; fp = (u64 *)fp[0]) {
-//                 if (PTRAUTH_SIGNED(fp[1]))
-//                         return fp;
-//         }
-// 
-//         return NULL;
-// }
-
 typedef ucontext_t ckpt_context_t;
 
 void pac_patch_context(ckpt_context_t *);
