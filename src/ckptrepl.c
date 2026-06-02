@@ -5,6 +5,7 @@
 #include <unistd.h>
 #include <err.h>
 #include <assert.h>
+#include <signal.h>
 #include "types.h"
 
 static const char *helpmsg =
@@ -37,6 +38,8 @@ extern void print(char *);
 extern void checkpoint(char **);
 extern void restart(char *);
 
+static pid_t child = -1;
+
 void interactive_usage(void)
 {
         dprintf(STDERR_FILENO, "\n%s\n", helpmsg);
@@ -55,6 +58,16 @@ void restartcmd_usage(void)
 void printcmd_usage(void)
 {
         dprintf(STDERR_FILENO, "\n%s\n", print_helpmsg);
+}
+
+void interrupt(int sig)
+{
+        if (sig != SIGINT || child == -1) {
+                return;
+        }
+        
+        printf("\n");
+        kill(child, SIGINT);
 }
 
 void getargv(char *argstr, char **argv)
@@ -92,9 +105,26 @@ void ckptcmd(char *cmd)
         
         argv = malloc(sizeof(char *) * 20);
         getargv(cmd, argv);
-        checkpoint(argv);
+        
+        child = fork();
+        switch (child) {
+        case -1:
+                warn("fork");
+                break;
+        case 0:
+                signal(SIGINT, SIG_DFL);
+                checkpoint(argv);
+                unreachable();
+        default:
+                break;
+        }
+        
+        for (int i = 0; argv[i] != NULL; i++) {
+                free(argv[i]);
+        }
 
-        unreachable();
+        free(argv);
+        waitpid(child, NULL, 0);
 }
 
 void restartcmd(char *cmd)
@@ -108,9 +138,21 @@ void restartcmd(char *cmd)
         }
 
         ckptfile = cmd + 2;
-        restart(ckptfile);
+        
+        child = fork();
+        switch (child) {
+        case -1:
+                warn("fork");
+                break;
+        case 0:
+                signal(SIGINT, SIG_DFL);
+                restart(ckptfile);
+                unreachable();
+        default:
+                break;
+        }
 
-        unreachable();
+        waitpid(child, NULL, 0);
 }
 
 void printcmd(char *cmd)
@@ -124,16 +166,30 @@ void printcmd(char *cmd)
         }
 
         ckptfile = cmd + 2;
-        print(ckptfile);
-
-        unreachable();
+        
+        child = fork();
+        switch (child) {
+        case -1:
+                warn("fork");
+                break;
+        case 0:
+                signal(SIGINT, SIG_DFL);
+                print(ckptfile);
+                unreachable();
+        default:
+                break;
+        }
+        
+        waitpid(child, NULL, 0);
 }
 
 void interactive(void)
 {
         char buf[1024];
         
+        signal(SIGINT, interrupt);
         bzero(buf, sizeof(buf));
+
         for (;;) {
                 printf("(ckpt) ");
                 fflush(stdout);
