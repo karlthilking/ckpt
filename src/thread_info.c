@@ -35,12 +35,12 @@ __constructor void thread_list_init(void)
         thread_list.head = malloc(sizeof(struct thread_info));
         assert(thread_list.head != NULL);
         
-        myself                  = thread_list.head;
-        myself->self            = pthread_self();
-        myself->state           = ST_RUNNING;
-        myself->next            = NULL;
-        myself->prev            = NULL;
-        myself->exiting         = 0;
+        myself          = thread_list.head;
+        myself->self    = pthread_self();
+        myself->state   = ST_RUNNING;
+        myself->next    = NULL;
+        myself->prev    = NULL;
+        myself->exiting = false;
 
         pthread_mutex_init(&myself->lock, NULL);
         pthread_cond_init(&myself->cond, NULL);
@@ -201,7 +201,7 @@ struct thread_info *thread_init(void *(*fn)(void *), void *arg)
 
         new->fn         = fn;
         new->arg        = arg;
-        new->exiting    = 0;
+        new->exiting    = false;
         new->state      = ST_RUNNING;
         new->next       = NULL;
         new->prev       = NULL;
@@ -241,7 +241,7 @@ void thread_exit(void *exit_value)
         assert(myself != NULL);
         pthread_mutex_lock(&myself->lock);
 
-        myself->exiting = 1;
+        myself->exiting = true;
         myself->exit_value = exit_value;
 
         pthread_cond_signal(&myself->cond);
@@ -259,7 +259,7 @@ void ckpt_thread_exit(void)
         assert(myself == &ckpt_thread);
         pthread_mutex_lock(&myself->lock);
         
-        myself->exiting = 1;
+        myself->exiting = true;
         myself->exit_value = NULL;
         
         pthread_cond_signal(&myself->cond);
@@ -459,7 +459,7 @@ void restore_threads(void)
                 th->state = ST_RUNNING;
 
                 err = pthread_create(&th->self, NULL, thread_restart, th);
-                if (err != 0) {
+                if (unlikely(err != 0)) {
                         fprintf(stderr, "pthread_create: %s\n",
                                 strerror(err));
                         exit(EXIT_FAILURE);
@@ -485,14 +485,17 @@ void wait_for_exiting_threads(void)
         do {
                 killed  = 0;
                 exiting = 0;
+                
                 for (th = thread_list.head; th; th = next) {
                         next = th->next;
-                        if (th->exiting) {
-                                exiting++;
-                                if (pthread_kill(th->self, 0) == ESRCH) {
-                                        killed++;
-                                        thread_reap(th);
-                                }
+                        if (!th->exiting) {
+                                continue;
+                        }
+
+                        exiting++;
+                        if (pthread_kill(th->self, 0) == ESRCH) {
+                                killed++;
+                                thread_reap(th);
                         }
                 }
 
@@ -558,8 +561,8 @@ void *thread_start(void *thread)
          * newly allocated thread struct, and initialize pthread_t
          * field.
          */
-        myself                  = (struct thread_info *)thread;
-        myself->self            = pthread_self();
+        myself          = (struct thread_info *)thread;
+        myself->self    = pthread_self();
         
         thread_list_add();
         retval = myself->fn(myself->arg);
@@ -584,12 +587,6 @@ void *thread_restart(void *thread)
         thread_restore_context();
 
         unreachable();
-}
-
-void thread_save_stack(void)
-{
-        myself->stackaddr = pthread_get_stackaddr_np(myself->self);
-        myself->stacksize = pthread_get_stacksize_np(myself->self);
 }
 
 void thread_save_tls(void)
@@ -652,8 +649,9 @@ __noreturn void thread_restore_context(void)
         u64 fp;
         
         fp = get_ucontext_fp(&myself->uc);
-        if (PTRAUTH_SIGNED(fp))
+        if (PTRAUTH_SIGNED(fp)) {
                 XPACD(fp);
+        }
 
         pac_resign_frames((u64 *)fp);
         pac_patch_context(&myself->uc);

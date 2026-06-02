@@ -1,49 +1,59 @@
 ARCH    ?= arm64
 CC      := clang
-CFLAGS  := -Wall -Wno-deprecated-declarations -g3 -O0 -arch $(ARCH)
+CFLAGS  := -std=c17 -Wall -Wno-deprecated-declarations \
+           -g3 -O0 -arch $(ARCH)
 
 SRC     := ./src
 TEST    := ./test
 INCLUDE := ./include
+BUILD   := ./build
+
+LIBCKPT_WRAPPERS := $(SRC)/time_wrappers.c $(SRC)/exit_wrappers.c \
+                    $(SRC)/pthread_wrappers.c $(SRC)/file_wrappers.c \
+                    $(SRC)/signal_wrappers.c
 
 LIBCKPT_SOURCES := $(SRC)/libckpt.c $(SRC)/pac.c $(SRC)/vm_common.c \
                    $(SRC)/vm_checkpoint.c $(SRC)/writeckpt.c \
-                   $(SRC)/time_wrappers.c $(SRC)/shared_cache.c \
-                   $(SRC)/exit_wrappers.c $(SRC)/pthread_wrappers.c \
-                   $(SRC)/file_wrappers.c
-
+                   $(SRC)/shared_cache.c $(SRC)/thread_info.c \
+                   $(LIBCKPT_WRAPPERS)
+                   
 RESTART_SOURCES := $(SRC)/restart.c $(SRC)/pac.c $(SRC)/vm_common.c \
                    $(SRC)/vm_restore.c $(SRC)/readckpt.c \
                    $(SRC)/shared_cache.c
 
-TESTS           := count funcptr det
-BINARIES        := ckpt printckpt $(TESTS)
-ALL             := $(BINARIES) restart libckpt.dylib
+TESTS           := $(BUILD)/test/02_thread_id
 
-build: $(ALL)
+BINARIES        := $(BUILD)/ckpt $(BUILD)/printckpt $(TESTS)
+ALL             := $(BINARIES) $(BUILD)/restart $(BUILD)/libckpt.dylib
 
-libckpt.dylib: $(LIBCKPT_SOURCES)
+all: $(ALL)
+
+$(BUILD):
+	mkdir -p $@
+	mkdir $(BUILD)/test
+
+$(BUILD)/libckpt.dylib: $(LIBCKPT_SOURCES) | $(BUILD)
 	$(CC) $(CFLAGS) -I$(INCLUDE) -dynamiclib -fPIC -o $@ $^
 
 __TEXT          := 0x300000000
 __DATA          := 0x300004000
 __LINKEDIT      := 0x300008000
-restart: $(RESTART_SOURCES)
+$(BUILD)/restart: $(RESTART_SOURCES) | $(BUILD)
 	$(CC) $(CFLAGS) -I$(INCLUDE)  		\
 	-Wl,-segaddr,__TEXT,$(__TEXT) 		\
 	-Wl,-segaddr,__DATA,$(__DATA) 		\
 	-Wl,-segaddr,__LINKEDIT,$(__LINKEDIT) 	\
 	-o $@ $^
 
-%: $(SRC)/%.c
+$(BUILD)/%: $(SRC)/%.c | $(BUILD)
 	$(CC) $(CFLAGS) -I$(INCLUDE) -o $@ $<
 
-%: $(TEST)/%.c
+$(BUILD)/test/%: $(TEST)/%.c | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ $<
 
-%: $(TEST)/%.cpp
+$(BUILD)/test/%: $(TEST)/%.cpp | $(BUILD)
 	clang++ -std=c++20 $(CFLAGS) -o $@ $<
 
 clean:
-	rm -f $(ALL)
+	rm -rf build/
 	rm -rf *.dSYM *.dylib *.o *.dat

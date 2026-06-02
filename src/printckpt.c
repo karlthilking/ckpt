@@ -12,6 +12,13 @@
 #include "pac.h"
 #include "vm_region.h"
 
+#define KILOBYTES(__bytes) \
+        (((float)(__bytes)) / 1024.0f)
+#define MEGABYTES(__bytes) \
+        (KILOBYTES((__bytes)) / 1024.0f)
+#define GIGABYTES(__bytes) \
+        (MEGABYTES((__bytes)) / 1024.0f)
+
 const char *vm_inherit_string(const ckpt_vm_region_t *region)
 {
         static_assert(VM_INHERIT_COPY == VM_INHERIT_DEFAULT &&
@@ -99,7 +106,7 @@ const char *vm_user_tag_string(const ckpt_vm_region_t *region)
         case VM_MEMORY_RESTART_STACK:
                 return "VM_MEMORY_RESTART_STACK";
         default:
-                return "";
+                return "NIL";
         }
 }
 
@@ -158,20 +165,26 @@ int readckpt(int fd, const ckpt_metadata_t *meta, ckpt_header_t *headers,
 
 void print_vm_regions(const ckpt_vm_region_t *regions, u32 nr_rgns)
 {
-        const ckpt_vm_region_t *rgn;
+        const ckpt_vm_region_t  *rgn;
+        size_t                  nbyte = 0;
+
+        for (rgn = regions; rgn < regions + nr_rgns; rgn++)
+                nbyte += rgn->size;
+
 
 printf(
-"********************* Checkpointed Memory Regions *********************\n"
+"********************* CHECKPOINTED MEMORY REGIONS *********************\n"
+"TOTAL MEMORY SAVED: %.2fMB (%zu bytes)\n\n", MEGABYTES(nbyte), nbyte
 );
         for (rgn = regions; rgn < regions + nr_rgns; rgn++) {
-                printf("Memory Region #%d:\n"
-                       "        start=%p\n"
-                       "          end=%p\n"
-                       "         size=%zu\n"
-                       "         prot=%s/%s\n"
-                       "   share mode=%s\n"
-                       "     user tag=%s\n"
-                       "  inheritance=%s\n",
+                printf("\tMEMORY REGION #%d:\n"
+                       "\t        START=%p\n"
+                       "\t          END=%p\n"
+                       "\t         SIZE=%zu\n"
+                       "\t         PROT=%s/%s\n"
+                       "\t   SHARE MODE=%s\n"
+                       "\t     USER TAG=%s\n"
+                       "\t  INHERITANCE=%s\n",
                        (int)(rgn - regions), rgn->start, rgn->end, 
                        rgn->size, VM_PROT_STRING(rgn->prot),
                        VM_PROT_STRING(rgn->max_prot),
@@ -190,12 +203,12 @@ void print_contexts(ckpt_context_t *contexts, u32 nr_contexts)
         ckpt_context_t  *ctx;
         mcontext_t      mctx;
 printf(
-"********************* Checkpointed Thread Contexts ********************\n"
+"********************* CHECKPOINTED USER CONTEXTS ***********************\n"
 );
 
         for (ctx = contexts; ctx < contexts + nr_contexts; ctx++) {
                 mctx = (mcontext_t)&ctx->__mcontext_data;
-                printf("Thread Context #%d:\n", (int)(ctx - contexts));
+                printf("USER CONTEXT #%d:\n", (int)(ctx - contexts));
                 
                 /* General purpose registers */
                 for (u32 i = 19; i <= 28; i++)

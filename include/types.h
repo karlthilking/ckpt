@@ -43,12 +43,13 @@ typedef ucontext_t              ckpt_context_t;
         __builtin_unreachable();        \
 } while (0)
 
-#define __noreturn        __attribute__((noreturn))
-#define __constructor   __attribute__((constructor))
-#define __destructor    __attribute__((destructor))
-#define __interpose     __attribute__((section("__DATA,__interpose")))
+#define __noreturn              __attribute__((noreturn))
+#define __constructor           __attribute__((constructor))
+#define __destructor            __attribute__((destructor))
 
-#define noinline        __attribute__((noinline))
-#define __always_inline inline __attribute__((__always_inline__))
+#define noinline                __attribute__((noinline))
+#define __always_inline         inline __attribute__((always_inline))
+
+#define __interpose     __attribute__((section("__DATA,__interpose")))
 
 #endif // __TYPE_H__

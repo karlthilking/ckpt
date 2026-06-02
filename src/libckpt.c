@@ -77,8 +77,7 @@ void docheckpoint(ucontext_t *uctx)
  *  checkpoint thread, then enable thread_handler to run
  *  on SIGUSR1 for user threads.
  */
-__attribute__((constructor))
-void setup()
+__constructor void setup()
 {
         struct sigaction        sa;
         sigset_t                set;
@@ -94,8 +93,7 @@ void setup()
         sigaction(SIGUSR1, &sa, NULL);
 }
 
-__attribute__((destructor))
-void cleanup()
+__destructor void cleanup()
 {
         return;
 }

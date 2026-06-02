@@ -29,10 +29,8 @@ struct thread_info {
         pthread_t               self;
         void                    *(*fn)(void *);
         void                    *arg;
-        void                    *stackaddr;
-        size_t                  stacksize;
 
-        int                     exiting;
+        bool                    exiting;
         void                    *exit_value;
         
         _Atomic thread_state    state;
@@ -51,19 +49,15 @@ static inline bool thread_state_cas(struct thread_info *th,
                                     thread_state expected,
                                     thread_state desired)
 {
-        return atomic_compare_exchange_strong(&th->state, 
+        return atomic_compare_exchange_strong(&th->state,
                                               &expected, desired);
 }
 
 extern void     *pthread_get_stackaddr_np(pthread_t);
 extern size_t   pthread_get_stacksize_np(pthread_t);
 
-__attribute__((constructor(101)))
-void thread_list_init(void);
-
-__attribute__((destructor))
-void thread_list_destroy(void);
-
+__constructor void      thread_list_init(void);
+__destructor void       thread_list_destroy(void);
 void                    thread_list_acquire(void);
 void                    thread_list_release(void);
 struct thread_info      *thread_list_find(pthread_t);
@@ -89,7 +83,6 @@ void    thread_sighandler(int, siginfo_t *, void *);
 void    *thread_start(void *);
 void    *thread_restart(void *);
 
-void    thread_save_stack(void);
 void    thread_save_tls(void);
 void    thread_restore_tls(void);
 void    thread_save_context(ucontext_t *);
