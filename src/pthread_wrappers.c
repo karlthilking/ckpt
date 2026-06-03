@@ -18,13 +18,14 @@ int __pthread_create_hook(pthread_t *p, const pthread_attr_t *attr,
         struct thread_info      *new, *self;
         uintptr_t               ptr;
          
-        self    = thread_self();
-        new     = thread_init(start_routine, arg);
+        self = thread_self();
+        new = thread_init(start_routine, arg);
 
         assert(thread_state_cas(self, ST_RUNNING, ST_THREAD_CREATE));
         
         retval = pthread_create(p, attr, thread_start, new);
         if (retval != 0) {
+                free(new);
                 return retval;
         }
 
@@ -43,8 +44,8 @@ int __pthread_create_hook(pthread_t *p, const pthread_attr_t *attr,
          * be validated without being dereferenced.
          */
         ptr = ((uintptr_t)new | PTHREAD_MAGIC);
-
         *p = (pthread_t)ptr;
+
         return retval;
 }
 
