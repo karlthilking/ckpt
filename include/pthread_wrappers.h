@@ -4,40 +4,54 @@
 #include <pthread.h>
 #include "inject.h"
 
-#define PTHREAD_SELF_DISCRIMINATOR      0x5b9
+#define PTHREAD_SELF_DISCRIMINATOR      0x5B9ULL
 #define PTHREAD_SELF_TLS_OFFSET         -224
 
-#define _PTHREAD_STRUCT_DIRECT_THREADID_OFFSET          -8
-// #define _PTHREAD_STRUCT_DIRECT_TSD_OFFSET               224
-// #define _PTHREAD_STRUCT_DIRECT_STACKADDR_OFFSET         -48
-// #define _PTHREAD_STRUCT_DIRECT_STACKBOTTOM_OFFSET       -40
-// 
-// #define _PTHREAD_SIG                                    0x54485244
-// #define _PTHREAD_MUTEX_SIG                              0x4D555458
-// #define _PTHREAD_COND_SIG_pristine                      0x434F4E44
-// #define _PTHREAD_COND_SIG_psynch                        0x434F4E45
-// #define _PTHREAD_COND_SIG_ulock                         0x434F4E46
-// 
-// #define PTHREAD_T_OFFSET                                (12*1024)
-// 
-// #define _EXTERNAL_POSIX_THREAD_KEYS_MAX                 512
-// #define _INTERNAL_POSIX_THREAD_KEYS_MAX                 256
-// #define _INTERNAL_POSIX_THREAD_KEYS_END                 768
+#define PTHREAD_MAGIC                   0x7770000000000000ULL
+#define PTHREAD_TAG_MASK                0xFFF0000000000000ULL
 
-extern int      pthread_create(pthread_t *, const pthread_attr_t *,
-                               void *(*)(void *), void *);
-extern void     pthread_exit(void *);
-extern int      pthread_join(pthread_t, void **);
+extern void     *pthread_get_stackaddr_np(pthread_t);
+extern size_t   pthread_get_stacksize_np(pthread_t);
 
 void    __pthread_cookie(void);
 void    __pthread_slot_fixup(void);
-int     __pthread_create_hook(pthread_t *, const pthread_attr_t *,
-                              void *(*)(void *), void *);
-int     __pthread_join_hook(pthread_t, void **);
-void    __pthread_exit_hook(void *);
+
+int __pthread_create_hook(pthread_t *, const pthread_attr_t *, 
+                          void *(*)(void *), void *);
+int             __pthread_join_hook(pthread_t, void **);
+void            __pthread_exit_hook(void *);
+pthread_t       __pthread_self_hook(void);
+int             __pthread_equal_hook(pthread_t, pthread_t);
+int             __pthread_kill_hook(pthread_t, int);
+int             __pthread_detach_hook(pthread_t);
+int             __pthread_sigmask_hook(int, const sigset_t *, sigset_t *);
+int             __pthread_setschedparam_hook(pthread_t, int, 
+                                             const struct sched_param *);
+int             __pthread_getschedparam_hook(pthread_t, int *, 
+                                             struct sched_param *);
+void            *__pthread_get_stackaddr_np_hook(pthread_t);
+size_t          __pthread_get_stacksize_np_hook(pthread_t);
+
+/**
+ * pthread_detach, pthread_threadid_np, pthread_sigmask, pthread_sigqueue,
+ * pthread_setname_np, pthread_getname_np, pthread_setschedparam,
+ * pthread_getschedparam, pthread_setschedprio, pthread_get_stackaddr_np,
+ * pthread_get_stacksize_np, pthread_main_np, pthread_from_mach_thread_np,
+ * pthread_mach_thread_np, pthread_cancel, pthread_setcancelstate,
+ * pthread_setcanceltype, pthread_testcancel, pthread_join_np
+ */
 
 INTERPOSE(__pthread_create_hook, pthread_create);
 INTERPOSE(__pthread_join_hook, pthread_join);
 INTERPOSE(__pthread_exit_hook, pthread_exit);
+INTERPOSE(__pthread_self_hook, pthread_self);
+INTERPOSE(__pthread_equal_hook, pthread_equal);
+INTERPOSE(__pthread_kill_hook, pthread_kill);
+INTERPOSE(__pthread_detach_hook, pthread_detach);
+INTERPOSE(__pthread_sigmask_hook, pthread_sigmask);
+INTERPOSE(__pthread_setschedparam_hook, pthread_setschedparam);
+INTERPOSE(__pthread_getschedparam_hook, pthread_getschedparam);
+INTERPOSE(__pthread_get_stackaddr_np_hook, pthread_get_stackaddr_np);
+INTERPOSE(__pthread_get_stacksize_np_hook, pthread_get_stacksize_np);
 
 #endif // __PTHREAD_WRAPPERS_H__

@@ -10,7 +10,7 @@
 #include "types.h"
 
 typedef enum thread_state {
-        ST_NULL,
+        ST_EMBRYO,
         ST_RUNNING,
         ST_SIGNALED,
         ST_SUSPINPROG,

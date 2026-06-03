@@ -25,8 +25,8 @@ typedef uint64_t        u64;
 typedef unsigned char           uchar;
 typedef unsigned short          ushort;
 typedef unsigned int            uint;
-typedef unsigned long           ulong, ulong32;
-typedef unsigned long long      ullong, ulong64;
+typedef unsigned long           ulong;
+typedef unsigned long long      ullong;
 
 typedef enum    ckpt_header     ckpt_header_t;
 typedef struct  ckpt_metadata   ckpt_metadata_t;

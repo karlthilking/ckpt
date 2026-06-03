@@ -20,7 +20,7 @@ static struct thread_list               thread_list;
 
 static int              threads_expected;
 static int              threads_arrived;
-static ulong64          ckpt_epoch      = 0u;
+static ullong           ckpt_epoch      = 0u;
 static pthread_cond_t   cond_arrived    = PTHREAD_COND_INITIALIZER;
 static pthread_cond_t   cond_released   = PTHREAD_COND_INITIALIZER;
 static pthread_mutex_t  ckpt_mtx        = PTHREAD_MUTEX_INITIALIZER;
@@ -35,11 +35,11 @@ __constructor void thread_list_init(void)
         thread_list.head = malloc(sizeof(struct thread_info));
         assert(thread_list.head != NULL);
         
-        myself          = thread_list.head;
-        myself->self    = pthread_self();
-        myself->state   = ST_RUNNING;
-        myself->next    = NULL;
-        myself->prev    = NULL;
+        myself = thread_list.head;
+        myself->self = pthread_self();
+        myself->state = ST_RUNNING;
+        myself->next = NULL;
+        myself->prev = NULL;
         myself->exiting = false;
 
         pthread_mutex_init(&myself->lock, NULL);
@@ -199,12 +199,12 @@ struct thread_info *thread_init(void *(*fn)(void *), void *arg)
         new = malloc(sizeof(struct thread_info));
         assert(new != NULL);
 
-        new->fn         = fn;
-        new->arg        = arg;
-        new->exiting    = false;
-        new->state      = ST_RUNNING;
-        new->next       = NULL;
-        new->prev       = NULL;
+        new->fn = fn;
+        new->arg = arg;
+        new->exiting = false;
+        new->state = ST_EMBRYO;
+        new->next = NULL;
+        new->prev = NULL;
 
         pthread_mutex_init(&new->lock, NULL);
         pthread_cond_init(&new->cond, NULL);
@@ -456,8 +456,6 @@ void restore_threads(void)
 
         for (th = thread_list.head; th; th = th->next) {
                 assert(!th->exiting);
-                th->state = ST_RUNNING;
-
                 err = pthread_create(&th->self, NULL, thread_restart, th);
                 if (unlikely(err != 0)) {
                         fprintf(stderr, "pthread_create: %s\n",
@@ -561,10 +559,20 @@ void *thread_start(void *thread)
          * newly allocated thread struct, and initialize pthread_t
          * field.
          */
-        myself          = (struct thread_info *)thread;
-        myself->self    = pthread_self();
+        myself = (struct thread_info *)thread;
+        myself->self = pthread_self();
+        myself->state = ST_RUNNING;
         
         thread_list_add();
+        
+        /**
+         * Signal to thread that spawned this thread in __pthread_create_hook
+         * that this thread has started and added itself to the thread list.
+         */
+        pthread_mutex_lock(&myself->lock);
+        pthread_cond_signal(&myself->cond);
+        pthread_mutex_unlock(&myself->lock);
+
         retval = myself->fn(myself->arg);
         thread_exit(retval);
 
@@ -574,8 +582,9 @@ void *thread_start(void *thread)
 void *thread_restart(void *thread)
 {
         /* Reinitialize and set state to suspended */
-        myself          = (struct thread_info *)thread;
-        myself->self    = pthread_self();
+        myself = (struct thread_info *)thread;
+        myself->self = pthread_self();
+        myself->state = ST_RUNNING;
         
         /**
          * Restore signal state and wait at barrier before restoring
