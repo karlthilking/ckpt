@@ -15,6 +15,7 @@
 #include "pthread_wrappers.h"
 
 _Thread_local struct thread_info        *myself = NULL;
+static struct thread_info               *_main_thread = NULL;
 static struct thread_info               ckpt_thread;
 static struct thread_list               thread_list;
 
@@ -41,6 +42,7 @@ __constructor void thread_list_init(void)
         myself->next = NULL;
         myself->prev = NULL;
         myself->exiting = false;
+        _main_thread = myself;
 
         pthread_mutex_init(&myself->lock, NULL);
         pthread_cond_init(&myself->cond, NULL);
@@ -252,6 +254,12 @@ struct thread_info *thread_self(void)
 {
         assert(myself != NULL);
         return myself;
+}
+
+struct thread_info *main_thread(void)
+{
+        assert(_main_thread != NULL);
+        return _main_thread;
 }
 
 void ckpt_thread_exit(void)

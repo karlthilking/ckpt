@@ -221,6 +221,39 @@ size_t __pthread_get_stacksize_np_hook(pthread_t p)
         return pthread_get_stacksize_np(th->self);
 }
 
+int __pthread_cancel_hook(pthread_t p)
+{
+        struct thread_info      *th;
+        uintptr_t               ptr = (uintptr_t)p;
+
+        if ((PTHREAD_TAG_MASK & ptr) != PTHREAD_MAGIC) {
+                return ESRCH;
+        }
+
+        th = (struct thread_info *)(ptr & ~PTHREAD_TAG_MASK);
+        return pthread_cancel(th->self);
+}
+
+/**
+ * Return pthread_t of the main thread. Interpose so that the real
+ * main thread is returned and not the checkpoint thread who will be
+ * the main thread after restart.
+ */
+pthread_t __pthread_main_thread_np_hook(void)
+{
+        return (pthread_t)((uintptr_t)main_thread() | PTHREAD_MAGIC);
+}
+
+/**
+ * Return non-zero if current thead is the main thread. Needs to be
+ * interposed because the main thread after restart will be checkpoint
+ * thread which is not really true.
+ */
+int __pthread_main_np_hook(void)
+{
+        return thread_self() == main_thread();
+}
+
 static uintptr_t pthread_xor_cookie;
 
 void __pthread_cookie()

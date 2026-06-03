@@ -67,6 +67,7 @@ struct thread_info      *thread_init(void *(*)(void *), void *);
 void                    thread_reap(struct thread_info *);
 void                    thread_exit(void *);
 struct thread_info      *thread_self(void);
+struct thread_info      *main_thread(void);
 
 void    ckpt_thread_exit(void);
 void    ckpt_thread_wait(void);
