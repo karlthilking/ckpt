@@ -7,7 +7,7 @@
 #include <limits.h>
 #include "launch.h"
 
-int parse_progname(char *ckptfile, char *buf, size_t bufsize)
+int parse_program_name(char *ckptfile, char *buf, size_t bufsize)
 {
         char *start, *end, *p;
 
@@ -32,18 +32,18 @@ int parse_progname(char *ckptfile, char *buf, size_t bufsize)
         return 0;
 }
 
-char *pathstrip(char *path)
+char *strip_path(char *path)
 {
         char *s;
-        
-        if ((s = strrchr(path, '/')) != NULL) {
+
+        if ((s = strrchr(path, '/'))) {
                 return s + 1;
         }
-
+        
         return path;
 }
 
-void getpath(const char *file, char *out)
+void get_path(const char *file, char *out)
 {
         char    buf[PATH_MAX], path[PATH_MAX];
         u32     bufsize = PATH_MAX;
@@ -65,7 +65,7 @@ __noreturn void print(char *ckptfile)
 {
         char *argv[3], printckpt_path[PATH_MAX];
 
-        getpath("printckpt", printckpt_path);
+        get_path("printckpt", printckpt_path);
         
         argv[0] = printckpt_path;
         argv[1] = ckptfile;
@@ -83,13 +83,13 @@ __noreturn void checkpoint(char **argv)
         int     ret;
         char    libckpt_path[PATH_MAX], *prog;
 
-        getpath("libckpt.dylib", libckpt_path);
+        get_path("libckpt.dylib", libckpt_path);
         ret = setenv("DYLD_INSERT_LIBRARIES", libckpt_path, 1);
         if (ret < 0) {
                 err(EXIT_FAILURE, "setenv");
         }
         
-        prog = pathstrip(argv[0]);
+        prog = strip_path(argv[0]);
         ret = setenv("LIBCKPT_PROGRAM", prog, 1);
         if (ret < 0) {
                 err(EXIT_FAILURE, "setenv");
@@ -113,7 +113,7 @@ __noreturn void restart(char *ckptfile)
         posix_spawnattr_t       attr;
         char                    restart_path[PATH_MAX], *argv[3];
 
-        getpath("restart", restart_path);
+        get_path("restart", restart_path);
         posix_spawnattr_init(&attr);
 
         /**
@@ -125,7 +125,7 @@ __noreturn void restart(char *ckptfile)
         {
                 char prog[128];
                 
-                retval = parse_progname(ckptfile, prog, sizeof(prog));
+                retval = parse_program_name(ckptfile, prog, sizeof(prog));
                 if (retval < 0) {
                         fprintf(stderr, "Failed to get program name\n");
                         exit(EXIT_FAILURE);
