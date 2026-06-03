@@ -59,4 +59,4 @@ $(BUILD)/test/%: $(TEST)/%.cpp | $(BUILD)
 
 clean:
 	rm -rf build/
-	rm -rf *.dSYM *.dylib *.o *.dat
+	rm -rf *.dSYM *.dylib *.o *.ckpt *.dat

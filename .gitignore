@@ -3,6 +3,7 @@
 *.o
 *.dSYM
 *.dat
+*.ckpt
 tmp/
 test/
 build/
