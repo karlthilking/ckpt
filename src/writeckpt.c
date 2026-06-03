@@ -11,6 +11,20 @@
 #include "vm_region.h"
 #include "writeckpt.h"
 
+int ckptfilename(char *buf, size_t len)
+{
+        char *prog;
+        
+        prog = getenv("LIBCKPT_PROGRAM");
+        if (!prog) {
+                perror("getenv");
+                prog = "tmp";
+        }
+        
+        snprintf(buf, len, "%s-%ld.ckpt", prog, (long)time(NULL));
+        return 0;
+}
+
 int writeall(int fd, const void *buf, size_t size)
 {
         size_t  bytes;
@@ -65,14 +79,13 @@ int write_ckpt(const ckpt_metadata_t *meta,
                const ckpt_context_t *contexts)
 {
         int                     fd, retval;
-        char                    ckptfile[128];
+        char                    ckptfile[256];
         const ckpt_vm_region_t  *rgn    = regions;
         const ckpt_context_t    *ctx    = contexts;
-        
-        snprintf(ckptfile, sizeof(ckptfile), "%d-ckpt.dat", getpid());
-        fd = open(ckptfile, O_CREAT | O_WRONLY |
-                  O_TRUNC, S_IRUSR | S_IWUSR);
 
+        ckptfilename(ckptfile, sizeof(ckptfile));
+        fd = open(ckptfile, O_CREAT | O_EXCL | O_WRONLY, 0666);
+        
         if (fd < 0) {
                 perror("open");
                 return -1;
@@ -80,18 +93,13 @@ int write_ckpt(const ckpt_metadata_t *meta,
 
         /* Write checkpoint metadata to beginning of file */
         if (writeall(fd, meta, sizeof(*meta)) < 0) {
-                fprintf(stderr, "Error writing checkpoint metadata\n");
-                close(fd);
-                return -1;
+                goto bad;
         }
 
         for (u32 i = 0; i < meta->nr_headers; i++) {
                 retval = writeall(fd, &headers[i], sizeof(headers[i]));
                 if (retval != 0) {
-                        fprintf(stderr, 
-                                "Error writing checkpoint header\n");
-                        close(fd);
-                        return -1;
+                        goto bad;
                 }
 
                 switch (headers[i]) {
@@ -109,14 +117,15 @@ int write_ckpt(const ckpt_metadata_t *meta,
                 }
 
                 if (retval < 0) {
-                        fprintf(stderr, 
-                                "Error writing %s to checkpoint\n",
-                                CKPT_HEADER_STRING(headers[i]));
-                        close(fd);
-                        return -1;
+                        goto bad;
                 }
         }
-
+        
+        fprintf(stderr, "Wrote checkpoint to %s\n", ckptfile);
         close(fd);
         return 0;
+bad:
+        fprintf(stderr, "Failed to write checkpoint (%s)\n", ckptfile);
+        close(fd);
+        return -1;
 }

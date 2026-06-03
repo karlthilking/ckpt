@@ -33,6 +33,9 @@ typedef struct  ckpt_metadata   ckpt_metadata_t;
 typedef struct  ckpt_vm_region  ckpt_vm_region_t;
 typedef ucontext_t              ckpt_context_t;
 
+#define min(x,y) ((x) < (y) ? (x) : (y))
+#define max(x,y) ((x) > (y) ? (x) : (y))
+
 #define likely(x)       __builtin_expect(!!(x), 1)
 #define unlikely(x)     __builtin_expect(!!(x), 0)
 

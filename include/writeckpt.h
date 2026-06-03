@@ -3,6 +3,7 @@
 #define __CKPT_WRITECKPT_H__
 #define _XOPEN_SOURCE
 #include <unistd.h>
+#include <time.h>
 #include "types.h"
 
 int writeall(int, const void *, size_t);

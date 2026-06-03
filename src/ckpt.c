@@ -1,22 +1,47 @@
 /* ckpt.c */
 #include <stdlib.h>
 #include <stdio.h>
-#include <err.h>
-#include <errno.h>
-#include <unistd.h>
 #include <string.h>
-#include <spawn.h>
-#include <dlfcn.h>
-#include <assert.h>
-#include <mach-o/dyld.h>
-#include <sys/param.h>
-#include "types.h"
+#include <unistd.h>
+#include <fcntl.h>
+#include <limits.h>
+#include "launch.h"
 
-#ifndef POSIX_SPAWN_DISABLE_ASLR
-# define POSIX_SPAWN_DISABLE_ASLR 0x0100
-#endif
+int parse_progname(char *ckptfile, char *buf, size_t bufsize)
+{
+        char *start, *end, *p;
 
-extern void interactive(void);
+        if ((start = strrchr(ckptfile, '/'))) {
+                start = start + 1;
+        } else {
+                start = ckptfile;
+        }
+
+        if ((end = strstr(ckptfile, ".ckpt")) == NULL) {
+                fprintf(stderr, "Invalid checkpoint file: %s\n", ckptfile);
+                return -1;
+        }
+        
+        strncpy(buf, start, min(bufsize, end - start));
+        if ((p = strrchr(buf, '-')) == NULL) {
+                fprintf(stderr, "Invalid checkpoint file: %s\n", ckptfile);
+                return -1;
+        }
+
+        *p = '\0';
+        return 0;
+}
+
+char *pathstrip(char *path)
+{
+        char *s;
+        
+        if ((s = strrchr(path, '/')) != NULL) {
+                return s + 1;
+        }
+
+        return path;
+}
 
 void getpath(const char *file, char *out)
 {
@@ -25,7 +50,9 @@ void getpath(const char *file, char *out)
         
         if (_NSGetExecutablePath(buf, &bufsize) < 0) {
                 err(EXIT_FAILURE, "_NSGetExecutablePath");
-        } else if (realpath(buf, path) == NULL) {
+        }
+
+        if (realpath(buf, path) == NULL) {
                 err(EXIT_FAILURE, "realpath(%s, ...)", buf);
         }
 
@@ -53,14 +80,24 @@ __noreturn void print(char *ckptfile)
 
 __noreturn void checkpoint(char **argv)
 {
-        char libckpt_path[PATH_MAX];
+        int     ret;
+        char    libckpt_path[PATH_MAX], *prog;
 
         getpath("libckpt.dylib", libckpt_path);
-        printf("Executing %s (pid=%d)\n", argv[0], getpid());
-
-        if (setenv("DYLD_INSERT_LIBRARIES", libckpt_path, 1) < 0) {
+        ret = setenv("DYLD_INSERT_LIBRARIES", libckpt_path, 1);
+        if (ret < 0) {
                 err(EXIT_FAILURE, "setenv");
-        } else if (execvp(argv[0], argv) < 0) {
+        }
+        
+        prog = pathstrip(argv[0]);
+        ret = setenv("LIBCKPT_PROGRAM", prog, 1);
+        if (ret < 0) {
+                err(EXIT_FAILURE, "setenv");
+        }
+        fprintf(stderr, "Set LIBCKPT_PROGRAM=%s\n", prog);
+        
+        fprintf(stderr, "Executing %s (pid=%d)\n", argv[0], getpid());
+        if (execvp(argv[0], argv) < 0) {
                 err(EXIT_FAILURE, "execvp(%s, ...)", argv[0]);
         }
 
@@ -79,6 +116,29 @@ __noreturn void restart(char *ckptfile)
         getpath("restart", restart_path);
         posix_spawnattr_init(&attr);
 
+        /**
+         * Checkpoint File Name:
+         * <program>-<time>-<pid>.ckpt
+         * So, environment variable LIBCKPT_PROGRAM should be set to
+         * <program> before restarting.
+         */
+        {
+                char prog[128];
+                
+                retval = parse_progname(ckptfile, prog, sizeof(prog));
+                if (retval < 0) {
+                        fprintf(stderr, "Failed to get program name\n");
+                        exit(EXIT_FAILURE);
+                }
+                
+                retval = setenv("LIBCKPT_PROGRAM", prog, 1);
+                if (retval < 0) {
+                        err(EXIT_FAILURE, "setenv");
+                }
+
+                fprintf(stderr, "Set LIBCKPT_PROGRAM=%s\n", prog);
+        }
+        
         argv[0] = restart_path;
         argv[1] = ckptfile;
         argv[2] = NULL;

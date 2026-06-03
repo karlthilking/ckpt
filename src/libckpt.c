@@ -61,14 +61,7 @@ void docheckpoint(ucontext_t *uctx)
         meta.nr_contexts = 1;
         meta.nr_headers++;
 
-        if (write_ckpt(&meta, headers, regions, uctx) < 0) {
-                fprintf(stderr, "Failed to write checkpoint file "
-                                "(%d-ckpt.dat)\n", getpid());
-        } else {
-                printf("Checkpoint written to %d-ckpt.dat\n", getpid());
-        }
-
-        return;
+        write_ckpt(&meta, headers, regions, uctx);
 }       
 
 /**

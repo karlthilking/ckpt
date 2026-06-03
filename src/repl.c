@@ -1,13 +1,9 @@
 /* ckptrepl.c */
-#include <stdlib.h>
-#include <stdio.h>
-#include <string.h>
-#include <unistd.h>
-#include <err.h>
-#include <assert.h>
 #include <signal.h>
 #include <ctype.h>
-#include "types.h"
+#include <unistd.h>
+#include <stdio.h>
+#include "launch.h"
 
 static const char *helpmsg =
 "OVERVIEW: MacOS Checkpoint-Restart REPL\n\n"
@@ -49,11 +45,6 @@ enum {
         HELP            = 4,
         QUIT            = 5
 };
-
-extern void getpath(const char *, char *);
-extern void print(char *);
-extern void checkpoint(char **);
-extern void restart(char *);
 
 static pid_t child = -1;
 
