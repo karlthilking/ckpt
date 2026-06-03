@@ -32,26 +32,21 @@ int __pthread_create_hook(pthread_t *thread, const pthread_attr_t *attr,
 int __pthread_join_hook(pthread_t p, void **value_ptr)
 {
         int                     err = 0, tries = 0;
-        struct thread_info      *self, *th = NULL;
+        struct thread_info      *th = NULL;
         struct timespec         rqtp, rmtp;
 
-        self = thread_self();
         rqtp.tv_sec = 0;
         rqtp.tv_nsec = 100 * NSEC_PER_MSEC;
 
-        assert(thread_state_cas(self, ST_RUNNING, ST_THREAD_JOIN));
         while ((th = thread_list_find(p)) == NULL) {
-                if ((err = pthread_kill(p, 0)) != 0) {
-                        err = (err == ESRCH) ? ESRCH : EINVAL;
-                        goto bad;
+                tries++;
+                err = pthread_kill(p, 0);
+                if (err == ESRCH || tries >= 10) {
+                        return ESRCH;
+                } else if (err != 0) {
+                        return EINVAL;
                 }
 
-                tries++;
-                if (tries >= 35) {
-                        err = ESRCH;
-                        goto bad;
-                }
-        
                 err = __nanosleep_hook(&rqtp, &rmtp);
                 while (err != 0 && errno == EINTR) {
                         rqtp.tv_sec = rmtp.tv_sec;
@@ -59,7 +54,6 @@ int __pthread_join_hook(pthread_t p, void **value_ptr)
                         err = __nanosleep_hook(&rqtp, &rmtp);
                 }
         }
-        assert(thread_state_cas(self, ST_THREAD_JOIN, ST_RUNNING));
         
         assert(pthread_mutex_lock(&th->lock) == 0);
         while (!th->exiting) {
@@ -79,9 +73,6 @@ int __pthread_join_hook(pthread_t p, void **value_ptr)
         }
 
         return 0;
-bad:
-        assert(thread_state_cas(self, ST_THREAD_JOIN, ST_RUNNING));
-        return err;
 }
 
 void __pthread_exit_hook(void *value_ptr)
