@@ -231,7 +231,7 @@ void restartcmd(char *cmd)
         }
         
         assert(strtok(cmd, " "));
-        if ((ckptfile = strtok(cmd, " ")) == NULL) {
+        if ((ckptfile = strtok(NULL, " ")) == NULL) {
                 restartcmd_usage();
                 return;
         }
@@ -263,7 +263,7 @@ void printcmd(char *cmd)
         }
         
         assert(strtok(cmd, " "));
-        if ((ckptfile = strtok(cmd, " ")) == NULL) {
+        if ((ckptfile = strtok(NULL, " ")) == NULL) {
                 printcmd_usage();
                 return;
         }
