@@ -45,7 +45,7 @@ $(BUILD)/restart: $(RESTART_SOURCES) | $(BUILD)
 	-Wl,-segaddr,__LINKEDIT,$(__LINKEDIT) 	\
 	-o $@ $^
 
-$(BUILD)/ckpt: $(SRC)/ckpt.c $(SRC)/ckptrepl.c | $(BUILD)
+$(BUILD)/ckpt: $(SRC)/ckpt.c $(SRC)/repl.c | $(BUILD)
 	$(CC) $(CFLAGS) -I$(INCLUDE) -o $@ $^
 
 $(BUILD)/%: $(SRC)/%.c | $(BUILD)
@@ -55,7 +55,7 @@ $(BUILD)/test/%: $(TEST)/%.c | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ $<
 
 $(BUILD)/test/%: $(TEST)/%.cpp | $(BUILD)
-	clang++ -std=c++20 $(CFLAGS) -o $@ $<
+	clang++ -std=c++20 -g3 -O0 -arch $(ARCH) -o $@ $<
 
 clean:
 	rm -rf build/

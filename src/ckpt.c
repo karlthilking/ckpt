@@ -114,16 +114,19 @@ void usage(void)
 "  -c <binary> <args>   Execute binary injected with libckpt.dylib\n"
 "  -r <file>            Restart from saved checkpoint file\n"
 "  -i                   Launch interactive mode\n\n");
-
-        exit(EXIT_FAILURE);
 }
 
 int main(int argc, char *argv[])
 {
         if (argc < 2) {
                 usage();
-        } else if (argc == 2 && strncmp(argv[1], "-i", 2) == 0) {
-                interactive();
+                exit(EXIT_FAILURE);
+        } else if (argc == 2) {
+                if (strncmp(argv[1], "-i", 2) == 0) {
+                        interactive();
+                }
+                usage();
+                exit(EXIT_FAILURE);
         }
         
         switch (getopt(argc, argv, "c:r:p:")) {
