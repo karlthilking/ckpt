@@ -8,7 +8,7 @@ TEST    := ./test
 INCLUDE := ./include
 BUILD   := ./build
 
-LIBCKPT_WRAPPERS := $(SRC)/time_wrappers.c $(SRC)/exit_wrappers.c \
+LIBCKPT_WRAPPERS := $(SRC)/time_wrappers.c $(SRC)/stdlib_wrappers.c \
                     $(SRC)/pthread_wrappers.c $(SRC)/file_wrappers.c \
                     $(SRC)/signal_wrappers.c
 
