@@ -44,12 +44,22 @@ struct thread_info {
         struct thread_info      *prev;
 };
 
-static inline bool thread_state_cas(struct thread_info *th,
-                                    thread_state expected,
-                                    thread_state desired)
+static __always_inline bool thread_state_cas(struct thread_info *th,
+                                             thread_state expected,
+                                             thread_state desired)
 {
         return atomic_compare_exchange_strong(&th->state,
                                               &expected, desired);
+}
+
+static __always_inline void unsafe_enter(struct thread_info *self)
+{
+        while (!thread_state_cas(self, ST_RUNNING, ST_UNSAFE));
+}
+
+static __always_inline bool unsafe_exit(struct thread_info *self)
+{
+        return thread_state_cas(self, ST_UNSAFE, ST_RUNNING);
 }
 
 __constructor void      thread_list_init(void);

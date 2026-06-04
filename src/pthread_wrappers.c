@@ -11,23 +11,30 @@
 #include "types.h"
 #include "pac.h"
 
+static __always_inline pthread_t encode_pthread(struct thread_info *t)
+{
+        return (pthread_t)((uintptr_t)t | PTHREAD_MAGIC);
+}
+
+static __always_inline struct thread_info *decode_pthread(pthread_t p)
+{
+        return (struct thread_info *)((uintptr_t)p & ~PTHREAD_TAG_MASK);
+}
+
+static __always_inline bool validate_pthread(pthread_t p)
+{
+        return (PTHREAD_TAG_MASK & (uintptr_t)p) == PTHREAD_MAGIC;
+}
+
 int __pthread_create_hook(pthread_t *p, const pthread_attr_t *attr,
                           void *(*start_routine)(void *), void *arg)
 {
         int                     retval;
         struct thread_info      *new, *self = thread_self();
-        uintptr_t               ptr;
          
         new = thread_init(start_routine, arg);
         
-        /**
-         * If checkpoint thread compare and swaps this thread's state
-         * to ST_SIGNALED, then the cas will spin for a bit and the
-         * checkpoint signal will be sent. Otherwise, the loop will
-         * correctly fall through.
-         */
-        while (!thread_state_cas(self, ST_RUNNING, ST_UNSAFE));
-        
+        unsafe_enter(self);
         retval = pthread_create(p, attr, thread_start, new);
         if (retval != 0) {
                 free(new);
@@ -39,32 +46,32 @@ int __pthread_create_hook(pthread_t *p, const pthread_attr_t *attr,
                 pthread_cond_wait(&new->cond, &new->lock);
         }
         pthread_mutex_unlock(&new->lock);
-        assert(thread_state_cas(self, ST_UNSAFE, ST_RUNNING));
+        unsafe_exit(self);
         
         /**
-         * Set the pthread_t pointer to point libckpt's internal thread
-         * descriptor structure for this thread in order to virtualize
-         * the pthread_t. Tag the high bits of the pointer so it can
-         * be validated without being dereferenced.
+         * Set pthread_t to be an opaque pointer to a libckpt internal
+         * thread descriptor struct instead of the thread struct within
+         * libpthread. This way, pthread_t's passed into other hook
+         * functions will map to their thread struct in libckpt even
+         * after pthread_t values have changed after a restart.
+         *
+         * encode_pthread will also tag the high bits of the value
+         * so it can be validated before being dereferenced.
          */
-        ptr = ((uintptr_t)new | PTHREAD_MAGIC);
-        *p = (pthread_t)ptr;
-
+        *p = encode_pthread(new);
         return retval;
 }
 
 int __pthread_join_hook(pthread_t p, void **value_ptr)
 {
         int                     err;
-        uintptr_t               ptr = (uintptr_t)p;
         struct thread_info      *th, *self = thread_self();
         
-        if ((ptr & PTHREAD_TAG_MASK) != PTHREAD_MAGIC) {
+        if (!validate_pthread(p)) {
                 return ESRCH;
         }
-        
-        th = (struct thread_info *)(ptr & ~PTHREAD_TAG_MASK);
-        
+        th = decode_pthread(p);
+
         assert(pthread_mutex_lock(&th->lock) == 0);
         while (!th->exiting) {
                 err = pthread_cond_wait(&th->cond, &th->lock);
@@ -78,9 +85,9 @@ int __pthread_join_hook(pthread_t p, void **value_ptr)
         }
         assert(pthread_mutex_unlock(&th->lock) == 0);
         
-        while (!thread_state_cas(self, ST_RUNNING, ST_UNSAFE));
+        unsafe_enter(self);
         err = pthread_join(th->self, value_ptr);
-        assert(thread_state_cas(self, ST_UNSAFE, ST_RUNNING));
+        unsafe_exit(self);
 
         return err;
 }
@@ -93,36 +100,30 @@ void __pthread_exit_hook(void *value_ptr)
 
 pthread_t __pthread_self_hook(void)
 {
-        return (pthread_t)((uintptr_t)thread_self() | PTHREAD_MAGIC);
+        return encode_pthread(thread_self());
 }
 
 int __pthread_equal_hook(pthread_t p1, pthread_t p2)
 {
-        uintptr_t ptr1 = (uintptr_t)p1, ptr2 = (uintptr_t)p2;
-
         /**
          * Validate that the pthread_t passed into pthread_equal
-         * is a real tagged struct thread_info pointer from libckpt.
+         * is a real tagged thread_info pointer from libckpt.
          */
-        if ((PTHREAD_TAG_MASK & ptr1) != PTHREAD_MAGIC ||
-            (PTHREAD_TAG_MASK & ptr2) != PTHREAD_MAGIC) {
+        if (!validate_pthread(p1) || !validate_pthread(p2)) {
                 return 0;
         }
 
-        return ptr1 == ptr2;
+        return (uintptr_t)p1 == (uintptr_t)p2;
 }
 
 int __pthread_kill_hook(pthread_t p, int sig)
 {
         struct thread_info      *th, *self = thread_self();
-        uintptr_t               ptr = (uintptr_t)p;
         int                     err;
 
-        if ((PTHREAD_TAG_MASK & ptr) != PTHREAD_MAGIC) {
+        if (!validate_pthread(p)) {
                 return ESRCH;
         }
-
-        th = (struct thread_info *)(ptr & ~PTHREAD_TAG_MASK);
         
         if (sig == SIGUSR1 || sig == SIGUSR2) {
                 fprintf(stderr, "%s is reserved for libckpt\n",
@@ -130,15 +131,16 @@ int __pthread_kill_hook(pthread_t p, int sig)
                 return EINVAL;
         }
         
+        th = decode_pthread(p);
         /**
          * pthread_kill uses __pthread_kill internally which uses a mach 
          * port to identify the target thread, so pthread_kill is not safe 
          * to restart after a checkpoint (the mach port will be invalid 
          * by then).
          */
-        while (!thread_state_cas(self, ST_RUNNING, ST_UNSAFE));
+        unsafe_enter(self);
         err = pthread_kill(th->self, sig);
-        assert(thread_state_cas(self, ST_UNSAFE, ST_RUNNING));
+        unsafe_exit(self);
 
         return err;
 }
@@ -146,18 +148,17 @@ int __pthread_kill_hook(pthread_t p, int sig)
 int __pthread_detach_hook(pthread_t p)
 {
         struct thread_info      *th, *self = thread_self();
-        uintptr_t               ptr = (uintptr_t)p;
         int                     err;
 
-        if ((PTHREAD_TAG_MASK & ptr) != PTHREAD_MAGIC) {
+        if (!validate_pthread(p)) {
                 return ESRCH;
         }
-
-        th = (struct thread_info *)(ptr & ~PTHREAD_TAG_MASK);
         
-        while (!thread_state_cas(self, ST_RUNNING, ST_UNSAFE));
+        th = decode_pthread(p);
+        
+        unsafe_enter(self);
         err = pthread_detach(th->self);
-        assert(thread_state_cas(self, ST_UNSAFE, ST_RUNNING));
+        unsafe_exit(self);
 
         return err;
 }
@@ -204,18 +205,17 @@ int __pthread_setschedparam_hook(pthread_t p, int policy,
                                  const struct sched_param *param)
 {
         struct thread_info      *th, *self = thread_self();
-        uintptr_t               ptr = (uintptr_t)p;
         int                     err;
         
-        if ((PTHREAD_TAG_MASK & ptr) != PTHREAD_MAGIC) {
+        if (!validate_pthread(p)) {
                 return ESRCH;
         }
 
-        th = (struct thread_info *)(ptr & ~PTHREAD_TAG_MASK);
-
-        while (!thread_state_cas(self, ST_RUNNING, ST_UNSAFE));
+        th = decode_pthread(p);
+        
+        unsafe_enter(self);
         err = pthread_setschedparam(th->self, policy, param);
-        assert(thread_state_cas(self, ST_UNSAFE, ST_RUNNING));
+        unsafe_exit(self);
 
         return err;
 }
@@ -224,18 +224,17 @@ int __pthread_getschedparam_hook(pthread_t p, int *policy,
                                  struct sched_param *param)
 {
         struct thread_info      *th, *self = thread_self();
-        uintptr_t               ptr = (uintptr_t)p;
         int                     err;
 
-        if ((PTHREAD_TAG_MASK & ptr) != PTHREAD_MAGIC) {
+        if (!validate_pthread(p)) {
                 return ESRCH;
         }
 
-        th = (struct thread_info *)(ptr & ~PTHREAD_TAG_MASK);
+        th = decode_pthread(p);
         
-        while (!thread_state_cas(self, ST_RUNNING, ST_UNSAFE));
+        unsafe_enter(self);
         err = pthread_getschedparam(th->self, policy, param);
-        assert(thread_state_cas(self, ST_UNSAFE, ST_RUNNING));
+        unsafe_exit(self);
 
         return err;
 }
@@ -243,21 +242,20 @@ int __pthread_getschedparam_hook(pthread_t p, int *policy,
 void *__pthread_get_stackaddr_np_hook(pthread_t p)
 {
         struct thread_info      *th, *self = thread_self();
-        uintptr_t               ptr = (uintptr_t)p;
         void                    *retval;
 
-        if ((PTHREAD_TAG_MASK & ptr) != PTHREAD_MAGIC) {
+        if (!validate_pthread(p)) {
                 return (void *)(uintptr_t)ESRCH;
         }
-        
-        th = (struct thread_info *)(ptr & ~PTHREAD_TAG_MASK);
+
+        th = decode_pthread(p);
         if (th == self || th == main_thread()) {
                 return pthread_get_stackaddr_np(th->self);
         }
         
-        while (!thread_state_cas(self, ST_RUNNING, ST_UNSAFE));
+        unsafe_enter(self);
         retval = pthread_get_stackaddr_np(th->self);
-        assert(thread_state_cas(self, ST_UNSAFE, ST_RUNNING));
+        unsafe_exit(self);
 
         return retval;
 }
@@ -265,14 +263,13 @@ void *__pthread_get_stackaddr_np_hook(pthread_t p)
 size_t __pthread_get_stacksize_np_hook(pthread_t p)
 {
         struct thread_info      *th, *self = thread_self();
-        uintptr_t               ptr = (uintptr_t)p;
         size_t                  retval;
 
-        if ((PTHREAD_TAG_MASK & ptr) != PTHREAD_MAGIC) {
+        if (!validate_pthread(p)) {
                 return (size_t)ESRCH;
         }
 
-        th = (struct thread_info *)(ptr & ~PTHREAD_TAG_MASK);
+        th = decode_pthread(p);
         if (th == self || th == main_thread()) {
                 /**
                  * pthread_get_stacksize_np won't grab the internal
@@ -282,10 +279,10 @@ size_t __pthread_get_stacksize_np_hook(pthread_t p)
                  */
                 return pthread_get_stacksize_np(th->self);
         }
-
-        while (!thread_state_cas(self, ST_RUNNING, ST_UNSAFE));
+        
+        unsafe_enter(self);
         retval = pthread_get_stacksize_np(th->self);
-        assert(thread_state_cas(self, ST_UNSAFE, ST_RUNNING));
+        unsafe_exit(self);
         
         return retval;
 }
@@ -293,18 +290,17 @@ size_t __pthread_get_stacksize_np_hook(pthread_t p)
 int __pthread_cancel_hook(pthread_t p)
 {
         struct thread_info      *th, *self = thread_self();
-        uintptr_t               ptr = (uintptr_t)p;
         int                     err;
 
-        if ((PTHREAD_TAG_MASK & ptr) != PTHREAD_MAGIC) {
+        if (!validate_pthread(p)) {
                 return ESRCH;
         }
 
-        th = (struct thread_info *)(ptr & ~PTHREAD_TAG_MASK);
-
-        while (!thread_state_cas(self, ST_RUNNING, ST_UNSAFE));
+        th = decode_pthread(p);
+        
+        unsafe_enter(self);
         err = pthread_cancel(th->self);
-        assert(thread_state_cas(self, ST_UNSAFE, ST_RUNNING));
+        unsafe_exit(self);
 
         return err;
 }
@@ -316,7 +312,7 @@ int __pthread_cancel_hook(pthread_t p)
  */
 pthread_t __pthread_main_thread_np_hook(void)
 {
-        return (pthread_t)((uintptr_t)main_thread() | PTHREAD_MAGIC);
+        return encode_pthread(main_thread());
 }
 
 /**

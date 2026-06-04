@@ -331,8 +331,9 @@ void *ckpt_thread_work(void *arg)
                 thread_restore_tls();
                 thread_restore_sig_state();
                 postrestart();
-
+                
                 restore_threads();
+                set_ckpt_state(LIBCKPT_RUNNING);
                 resume_threads();
         }
         
@@ -343,12 +344,14 @@ void *ckpt_thread_work(void *arg)
                 thread_save_tls();
                 thread_save_sig_state();
 
+                set_ckpt_state(LIBCKPT_CKPTINPROG);
                 suspend_threads();
                 wait_for_exiting_threads();
 
                 precheckpoint();
                 docheckpoint(&myself->uc);
-
+                
+                set_ckpt_state(LIBCKPT_RUNNING);
                 resume_threads();
         }
 
