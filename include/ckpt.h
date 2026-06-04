@@ -41,6 +41,15 @@ typedef enum ckpt_header {
 #define MAX_CKPT_VM_REGIONS     (128)
 #define MAX_CKPT_CONTEXTS       (1)
 
+typedef enum ckpt_state {
+        LIBCKPT_UNINITIALIZED,
+        LIBCKPT_RUNNING,
+        LIBCKPT_CKPTINPROG
+} ckpt_state;
+
+ckpt_state      get_ckpt_state(void);
+void            set_ckpt_state(ckpt_state);
+
 void precheckpoint(void);
 void postrestart(void);
 void docheckpoint(ucontext_t *);

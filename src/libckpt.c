@@ -17,7 +17,17 @@
 #include "signal_wrappers.h"
 #include "thread_info.h"
 
-extern uintptr_t __stack_chk_guard;
+static _Atomic ckpt_state libckpt_state = LIBCKPT_UNINITIALIZED;
+
+ckpt_state get_ckpt_state(void)
+{
+        return atomic_load(&libckpt_state);
+}
+
+void set_ckpt_state(ckpt_state new)
+{
+        atomic_store(&libckpt_state, new);
+}
 
 void precheckpoint(void)
 {
@@ -54,8 +64,9 @@ void docheckpoint(ucontext_t *uctx)
 
         meta.nr_regions = ckpt_vm_save_regions(regions);
         meta.nr_headers += meta.nr_regions;
-        for (u32 i = 0; i < meta.nr_regions; i++)
+        for (u32 i = 0; i < meta.nr_regions; i++) {
                 headers[i] = CKPT_VM_REGION_HEADER;
+        }
         
         headers[meta.nr_headers] = CKPT_CONTEXT_HEADER;
         meta.nr_contexts = 1;
@@ -81,9 +92,11 @@ __constructor void setup()
         sigprocmask(SIG_BLOCK, &set, NULL);
         
         sigfillset(&sa.sa_mask);
-        sa.sa_flags     = SA_SIGINFO | SA_RESTART;
+        sa.sa_flags = SA_SIGINFO | SA_RESTART;
         sa.sa_sigaction = thread_sighandler;
         sigaction(SIGUSR1, &sa, NULL);
+
+        set_ckpt_state(LIBCKPT_RUNNING);
 }
 
 __destructor void cleanup()
