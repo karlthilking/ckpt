@@ -10,10 +10,10 @@
 #include <assert.h>
 #include <unistd.h>
 #include "types.h"
+#include "ckpt.h"
 #include "file_wrappers.h"
 
-static struct fd_state  fd_table[MAXFILES];
-static atomic_int       fd_table_ready = 0;
+static struct fd_state fd_table[MAXFILES];
 
 void fd_backing_save(int fd)
 {
@@ -39,16 +39,18 @@ void fd_backing_save(int fd)
         if ((retval = fcntl(fd, F_GETFL)) < 0) {
                 perror("fcntl(..., F_GETFL)");
                 return;
-        } else
+        } else {
                 backing->flags |= (retval & (O_APPEND | O_NONBLOCK));
+        }
 
         if ((retval = fcntl(fd, F_GETFD)) < 0) {
                 perror("fcntl(..., F_GETFD)");
                 return;
-        } else if (retval & FD_CLOEXEC)
+        } else if (retval & FD_CLOEXEC) {
                 backing->flags |= O_CLOEXEC;
-        else if (backing->flags & O_CLOEXEC)
+        } else if (backing->flags & O_CLOEXEC) {
                 backing->flags &= ~O_CLOEXEC;
+        }
 
         backing->state = FD_STATE_SAVED;
 }
@@ -73,24 +75,24 @@ void fd_backing_restore(int fd)
 
                 switch (state->type) {
                 case FD_STDIN:
-                        retval          = dup2(STDIN_FILENO, fd);
+                        retval = dup2(STDIN_FILENO, fd);
                         backing->reopen = STDIN_FILENO;
                         break;
                 case FD_STDOUT:
-                        retval          = dup2(STDOUT_FILENO, fd);
+                        retval = dup2(STDOUT_FILENO, fd);
                         backing->reopen = STDOUT_FILENO;
                         break;
                 case FD_STDERR:
-                        retval          = dup2(STDERR_FILENO, fd);
+                        retval = dup2(STDERR_FILENO, fd);
                         backing->reopen = STDERR_FILENO;
                         break;
                 default:
                         __builtin_trap();
                 }
 
-                if (retval < 0)
+                if (retval < 0) {
                         perror("dup2");
-                else {
+                } else {
                         assert(retval == fd);
                         backing->state = FD_STATE_RESTORED;
                 }
@@ -145,8 +147,6 @@ void fd_table_init(void)
                 fd_table[fd].src = malloc(sizeof(struct fd_backing));
                 fd_table[fd].src->ref = 1;
         }
-
-        atomic_store(&fd_table_ready, 1);
 }
 
 __attribute__((destructor))
@@ -155,11 +155,13 @@ void fd_table_destroy(void)
         int fd;
 
         for (fd = 0; fd < MAXFILES; fd++) {
-                if (fd_table[fd].src == NULL)
+                if (fd_table[fd].src == NULL) {
                         continue;
+                }
                 fd_table[fd].src->ref--;
-                if (fd_table[fd].src->ref == 0)
+                if (fd_table[fd].src->ref == 0) {
                         free(fd_table[fd].src);
+                }
         }
 }
 
@@ -181,9 +183,9 @@ void fd_table_restore_state(void)
         int fd;
 
         for (fd = 0; fd < MAXFILES; fd++) {
-                if (fd_table[fd].type == FD_UNUSED)
+                if (fd_table[fd].type == FD_UNUSED) {
                         continue;
-                else if (fd_table[fd].src->state == FD_STATE_RESTORED) {
+                } else if (fd_table[fd].src->state == FD_STATE_RESTORED) {
                         if (dup2(fd_table[fd].src->reopen, fd) != fd)
                                 perror("dup2");
                         continue;
@@ -194,14 +196,15 @@ void fd_table_restore_state(void)
 
 void fd_table_open(int fd, const char *path, int flags, mode_t mode)
 {
-        if (!atomic_load(&fd_table_ready))
+        if (get_ckpt_state() == LIBCKPT_UNINITIALIZED) {
                 return;
+        }
 
-        fd_table[fd].src        = malloc(sizeof(struct fd_backing));
-        fd_table[fd].type       = FD_REGFILE;
+        fd_table[fd].src = malloc(sizeof(struct fd_backing));
+        fd_table[fd].type = FD_REGFILE;
         fd_table[fd].src->flags = flags;
-        fd_table[fd].src->mode  = mode;
-        fd_table[fd].src->ref   = 1;
+        fd_table[fd].src->mode = mode;
+        fd_table[fd].src->ref = 1;
         fd_table[fd].src->state = FD_STATE_NONE;
 
         strncpy(fd_table[fd].src->path, path, strlen(path) + 1);
@@ -209,8 +212,11 @@ void fd_table_open(int fd, const char *path, int flags, mode_t mode)
 
 void fd_table_dup(int oldfd, int newfd)
 {
-        if (!atomic_load(&fd_table_ready) || oldfd == newfd)
+        if (get_ckpt_state() == LIBCKPT_UNINITIALIZED) {
                 return;
+        } else if (oldfd == newfd) {
+                return;
+        }
 
         assert(fd_table[oldfd].src != NULL &&
                fd_table[oldfd].type != FD_UNUSED);
@@ -225,8 +231,9 @@ void fd_table_dup(int oldfd, int newfd)
 
 void fd_table_close(int fd)
 {
-        if (!atomic_load(&fd_table_ready))
+        if (get_ckpt_state() == LIBCKPT_UNINITIALIZED) {
                 return;
+        }
         
         fd_table[fd].type = FD_UNUSED;
         fd_table[fd].src->ref--;
@@ -250,8 +257,9 @@ int __openat_hook(int dirfd, const char *path, int flags, ...)
                 va_end(va);
         }
 
-        if ((retval = openat(dirfd, path, flags, mode)) != -1)
+        if ((retval = openat(dirfd, path, flags, mode)) != -1) {
                 fd_table_open(retval, path, flags, mode);
+        }
 
         return retval;
 }
@@ -289,8 +297,9 @@ int __close_hook(int fd)
 {
         int retval;
 
-        if ((retval = close(fd)) != -1)
+        if ((retval = close(fd)) != -1) {
                 fd_table_close(fd);
+        }
 
         return retval;
 }
@@ -299,8 +308,9 @@ int __dup_hook(int oldfd)
 {
         int newfd;
 
-        if ((newfd = dup(oldfd)) != -1)
+        if ((newfd = dup(oldfd)) != -1) {
                 fd_table_dup(oldfd, newfd);
+        }
 
         return newfd;
 }
@@ -328,8 +338,9 @@ int __fcntl_hook(int fd, int cmd, ...)
         va_end(va);
         
         if ((retval = fcntl(fd, cmd, arg)) != -1 &&
-            (cmd == F_DUPFD || cmd == F_DUPFD_CLOEXEC))
+            (cmd == F_DUPFD || cmd == F_DUPFD_CLOEXEC)) {
                 fd_table_dup(fd, retval);
+        }
 
         return retval;
 }
@@ -352,8 +363,9 @@ int __fclose_hook(FILE *stream)
         int retval, fd;
         
         fd = fileno(stream);
-        if ((retval = fclose(stream)) != EOF)
+        if ((retval = fclose(stream)) != EOF) {
                 fd_table_close(fd);
+        }
 
         return retval;
 }
