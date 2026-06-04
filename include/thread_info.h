@@ -16,8 +16,7 @@ typedef enum thread_state {
         ST_SUSPINPROG,
         ST_SUSPENDED,
         ST_CKPT_THREAD,
-        ST_THREAD_CREATE,
-        ST_THREAD_JOIN
+        ST_UNSAFE
 } thread_state;
 
 struct thread_list {
@@ -52,9 +51,6 @@ static inline bool thread_state_cas(struct thread_info *th,
         return atomic_compare_exchange_strong(&th->state,
                                               &expected, desired);
 }
-
-extern void     *pthread_get_stackaddr_np(pthread_t);
-extern size_t   pthread_get_stacksize_np(pthread_t);
 
 __constructor void      thread_list_init(void);
 __destructor void       thread_list_destroy(void);

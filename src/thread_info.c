@@ -297,7 +297,7 @@ void ckpt_thread_wait(void)
 
 void *ckpt_thread_work(void *arg)
 {
-        static volatile int restart;
+        static volatile bool restart;
         {
                 sigset_t set;
 
@@ -309,8 +309,8 @@ void *ckpt_thread_work(void *arg)
                 pthread_sigmask(SIG_BLOCK, &set, NULL);
         }
         
-        myself          = &ckpt_thread;
-        myself->self    = pthread_self();
+        myself = &ckpt_thread;
+        myself->self= pthread_self();
         
         /**
          * Signal to main thread that the checkpoint thread has
@@ -321,13 +321,12 @@ void *ckpt_thread_work(void *arg)
         pthread_cond_signal(&myself->cond);
         pthread_mutex_unlock(&myself->lock);
 
-        restart = 0;
+        restart = false;
         getcontext(&myself->uc);
 
         if (restart) {
-                restart         = 0;
-                myself          = &ckpt_thread;
-                myself->self    = pthread_self();
+                myself = &ckpt_thread;
+                myself->self = pthread_self();
                 
                 thread_restore_tls();
                 thread_restore_sig_state();
@@ -337,7 +336,7 @@ void *ckpt_thread_work(void *arg)
                 resume_threads();
         }
         
-        restart = 1;
+        restart = true;
         for (;;) {
                 ckpt_thread_wait();
                 
@@ -386,7 +385,6 @@ bool scan_threads(u32 *thread_count)
                 if (th->state == ST_RUNNING &&
                     thread_state_cas(th, ST_RUNNING, ST_SIGNALED)) {
                         err = pthread_kill(th->self, SIGUSR1);
-                        
                         if (err == ESRCH) {
                                 thread_reap(th);
                                 continue;
@@ -394,11 +392,9 @@ bool scan_threads(u32 *thread_count)
                                 fprintf(stderr, "pthread_kill: %s\n",
                                         strerror(err));
                         }
-                        
                         rescan = true;
                 } else if (th->state == ST_SIGNALED) {
                         err = pthread_kill(th->self, 0);
-
                         if (err == ESRCH) {
                                 thread_reap(th);
                                 continue;
@@ -406,13 +402,11 @@ bool scan_threads(u32 *thread_count)
                                 fprintf(stderr, "pthread_kill: %s\n",
                                         strerror(err));
                         }
-
                         rescan = true;
                 } else if (th->state == ST_SUSPENDED ||
                            th->state == ST_SUSPINPROG) {
                         count++;
-                } else if (th->state == ST_THREAD_CREATE ||
-                           th->state == ST_THREAD_JOIN) {
+                } else if (th->state == ST_UNSAFE) {
                         rescan = true;
                 }
         }

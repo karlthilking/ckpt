@@ -15,13 +15,18 @@ int __pthread_create_hook(pthread_t *p, const pthread_attr_t *attr,
                           void *(*start_routine)(void *), void *arg)
 {
         int                     retval;
-        struct thread_info      *new, *self;
+        struct thread_info      *new, *self = thread_self();
         uintptr_t               ptr;
          
-        self = thread_self();
         new = thread_init(start_routine, arg);
-
-        assert(thread_state_cas(self, ST_RUNNING, ST_THREAD_CREATE));
+        
+        /**
+         * If checkpoint thread compare and swaps this thread's state
+         * to ST_SIGNALED, then the cas will spin for a bit and the
+         * checkpoint signal will be sent. Otherwise, the loop will
+         * correctly fall through.
+         */
+        while (!thread_state_cas(self, ST_RUNNING, ST_UNSAFE));
         
         retval = pthread_create(p, attr, thread_start, new);
         if (retval != 0) {
@@ -34,8 +39,7 @@ int __pthread_create_hook(pthread_t *p, const pthread_attr_t *attr,
                 pthread_cond_wait(&new->cond, &new->lock);
         }
         pthread_mutex_unlock(&new->lock);
-
-        assert(thread_state_cas(self, ST_THREAD_CREATE, ST_RUNNING));
+        assert(thread_state_cas(self, ST_UNSAFE, ST_RUNNING));
         
         /**
          * Set the pthread_t pointer to point libckpt's internal thread
@@ -51,19 +55,17 @@ int __pthread_create_hook(pthread_t *p, const pthread_attr_t *attr,
 
 int __pthread_join_hook(pthread_t p, void **value_ptr)
 {
-        int                     err = 0;
-        uintptr_t               ptr;
-        struct thread_info      *self, *th = NULL;
+        int                     err;
+        uintptr_t               ptr = (uintptr_t)p;
+        struct thread_info      *th, *self = thread_self();
         
-        self = thread_self();
-        ptr = (uintptr_t)p;
         if ((ptr & PTHREAD_TAG_MASK) != PTHREAD_MAGIC) {
                 return ESRCH;
         }
-
-        th = (struct thread_info *)(ptr & ~PTHREAD_TAG_MASK);
-        assert(pthread_mutex_lock(&th->lock) == 0);
         
+        th = (struct thread_info *)(ptr & ~PTHREAD_TAG_MASK);
+        
+        assert(pthread_mutex_lock(&th->lock) == 0);
         while (!th->exiting) {
                 err = pthread_cond_wait(&th->cond, &th->lock);
                 if (err) {
@@ -74,12 +76,11 @@ int __pthread_join_hook(pthread_t p, void **value_ptr)
                         return EINVAL;
                 }
         }
-
         assert(pthread_mutex_unlock(&th->lock) == 0);
         
-        assert(thread_state_cas(self, ST_RUNNING, ST_THREAD_JOIN));
+        while (!thread_state_cas(self, ST_RUNNING, ST_UNSAFE));
         err = pthread_join(th->self, value_ptr);
-        assert(thread_state_cas(self, ST_THREAD_JOIN, ST_RUNNING));
+        assert(thread_state_cas(self, ST_UNSAFE, ST_RUNNING));
 
         return err;
 }
@@ -113,8 +114,9 @@ int __pthread_equal_hook(pthread_t p1, pthread_t p2)
 
 int __pthread_kill_hook(pthread_t p, int sig)
 {
-        struct thread_info      *th;
+        struct thread_info      *th, *self = thread_self();
         uintptr_t               ptr = (uintptr_t)p;
+        int                     err;
 
         if ((PTHREAD_TAG_MASK & ptr) != PTHREAD_MAGIC) {
                 return ESRCH;
@@ -128,40 +130,71 @@ int __pthread_kill_hook(pthread_t p, int sig)
                 return EINVAL;
         }
         
-        return pthread_kill(th->self, sig);
+        /**
+         * pthread_kill uses __pthread_kill internally which uses a mach 
+         * port to identify the target thread, so pthread_kill is not safe 
+         * to restart after a checkpoint (the mach port will be invalid 
+         * by then).
+         */
+        while (!thread_state_cas(self, ST_RUNNING, ST_UNSAFE));
+        err = pthread_kill(th->self, sig);
+        assert(thread_state_cas(self, ST_UNSAFE, ST_RUNNING));
+
+        return err;
 }
 
 int __pthread_detach_hook(pthread_t p)
 {
-        struct thread_info      *th;
+        struct thread_info      *th, *self = thread_self();
         uintptr_t               ptr = (uintptr_t)p;
+        int                     err;
 
         if ((PTHREAD_TAG_MASK & ptr) != PTHREAD_MAGIC) {
                 return ESRCH;
         }
 
         th = (struct thread_info *)(ptr & ~PTHREAD_TAG_MASK);
-        return pthread_detach(th->self);
+        
+        while (!thread_state_cas(self, ST_RUNNING, ST_UNSAFE));
+        err = pthread_detach(th->self);
+        assert(thread_state_cas(self, ST_UNSAFE, ST_RUNNING));
+
+        return err;
 }
 
 int __pthread_sigmask_hook(int how, const sigset_t *set, sigset_t *oset)
 {
+        sigset_t clean;
+
         if (set) {
-                sigset_t cleaned = *set;
-
-                if (sigismember(set, SIGUSR1)) {
-                        fprintf(stderr, "SIGUSR1 is reserved for "
-                                "libckpt and can not be masked\n");
-                        sigdelset(&cleaned, SIGUSR1);
-                }
+                clean = *set;
                 
-                if (sigismember(set, SIGUSR2)) {
-                        fprintf(stderr, "SIGUSR2 is reserved for "
-                                "libckpt and can not be masked\n");
-                        sigdelset(&cleaned, SIGUSR2);
+                switch (how) {
+                case SIG_BLOCK:
+                        /**
+                         * Don't allow user threads to block SIGUSR1
+                         * (user for user thread checkpoint handler).
+                         */
+                        sigdelset(&clean, SIGUSR1);
+                        break;
+                case SIG_UNBLOCK:
+                        /**
+                         * Don't allow user threads to unblock SIGUSR2
+                         * (reserved for checkpoint thread to receive).
+                         */
+                        sigdelset(&clean, SIGUSR2);
+                        break;
+                case SIG_SETMASK:
+                        /**
+                         * If a user is replacing the signal mask,
+                         * SIGUSR1 must be kept unblocked, and SIGUSR2
+                         * must be kept block (see above).
+                         */
+                         sigaddset(&clean, SIGUSR2);
+                         sigdelset(&clean, SIGUSR1);
+                         break;
                 }
-
-                return pthread_sigmask(how, &cleaned, oset);
+                set = &clean;
         }
 
         return pthread_sigmask(how, set, oset);
@@ -170,68 +203,110 @@ int __pthread_sigmask_hook(int how, const sigset_t *set, sigset_t *oset)
 int __pthread_setschedparam_hook(pthread_t p, int policy, 
                                  const struct sched_param *param)
 {
-        struct thread_info      *th;
+        struct thread_info      *th, *self = thread_self();
         uintptr_t               ptr = (uintptr_t)p;
+        int                     err;
         
         if ((PTHREAD_TAG_MASK & ptr) != PTHREAD_MAGIC) {
                 return ESRCH;
         }
 
         th = (struct thread_info *)(ptr & ~PTHREAD_TAG_MASK);
-        return pthread_setschedparam(th->self, policy, param);
+
+        while (!thread_state_cas(self, ST_RUNNING, ST_UNSAFE));
+        err = pthread_setschedparam(th->self, policy, param);
+        assert(thread_state_cas(self, ST_UNSAFE, ST_RUNNING));
+
+        return err;
 }
 
 int __pthread_getschedparam_hook(pthread_t p, int *policy,
                                  struct sched_param *param)
 {
-        struct thread_info      *th;
+        struct thread_info      *th, *self = thread_self();
         uintptr_t               ptr = (uintptr_t)p;
+        int                     err;
 
         if ((PTHREAD_TAG_MASK & ptr) != PTHREAD_MAGIC) {
                 return ESRCH;
         }
 
         th = (struct thread_info *)(ptr & ~PTHREAD_TAG_MASK);
-        return pthread_getschedparam(th->self, policy, param);
+        
+        while (!thread_state_cas(self, ST_RUNNING, ST_UNSAFE));
+        err = pthread_getschedparam(th->self, policy, param);
+        assert(thread_state_cas(self, ST_UNSAFE, ST_RUNNING));
+
+        return err;
 }
 
 void *__pthread_get_stackaddr_np_hook(pthread_t p)
 {
-        struct thread_info      *th;
+        struct thread_info      *th, *self = thread_self();
         uintptr_t               ptr = (uintptr_t)p;
+        void                    *retval;
 
         if ((PTHREAD_TAG_MASK & ptr) != PTHREAD_MAGIC) {
                 return (void *)(uintptr_t)ESRCH;
         }
         
         th = (struct thread_info *)(ptr & ~PTHREAD_TAG_MASK);
-        return pthread_get_stackaddr_np(th->self);
+        if (th == self || th == main_thread()) {
+                return pthread_get_stackaddr_np(th->self);
+        }
+        
+        while (!thread_state_cas(self, ST_RUNNING, ST_UNSAFE));
+        retval = pthread_get_stackaddr_np(th->self);
+        assert(thread_state_cas(self, ST_UNSAFE, ST_RUNNING));
+
+        return retval;
 }
 
 size_t __pthread_get_stacksize_np_hook(pthread_t p)
 {
-        struct thread_info      *th;
+        struct thread_info      *th, *self = thread_self();
         uintptr_t               ptr = (uintptr_t)p;
+        size_t                  retval;
 
         if ((PTHREAD_TAG_MASK & ptr) != PTHREAD_MAGIC) {
                 return (size_t)ESRCH;
         }
 
         th = (struct thread_info *)(ptr & ~PTHREAD_TAG_MASK);
-        return pthread_get_stacksize_np(th->self);
+        if (th == self || th == main_thread()) {
+                /**
+                 * pthread_get_stacksize_np won't grab the internal
+                 * thread list lock if the calling thread is the main
+                 * thread or inquiring about its own stack so this
+                 * will be safe.
+                 */
+                return pthread_get_stacksize_np(th->self);
+        }
+
+        while (!thread_state_cas(self, ST_RUNNING, ST_UNSAFE));
+        retval = pthread_get_stacksize_np(th->self);
+        assert(thread_state_cas(self, ST_UNSAFE, ST_RUNNING));
+        
+        return retval;
 }
 
 int __pthread_cancel_hook(pthread_t p)
 {
-        struct thread_info      *th;
+        struct thread_info      *th, *self = thread_self();
         uintptr_t               ptr = (uintptr_t)p;
+        int                     err;
 
         if ((PTHREAD_TAG_MASK & ptr) != PTHREAD_MAGIC) {
                 return ESRCH;
         }
 
         th = (struct thread_info *)(ptr & ~PTHREAD_TAG_MASK);
-        return pthread_cancel(th->self);
+
+        while (!thread_state_cas(self, ST_RUNNING, ST_UNSAFE));
+        err = pthread_cancel(th->self);
+        assert(thread_state_cas(self, ST_UNSAFE, ST_RUNNING));
+
+        return err;
 }
 
 /**
@@ -254,6 +329,27 @@ int __pthread_main_np_hook(void)
         return thread_self() == main_thread();
 }
 
+/**
+ * Examples of how libpthread uses ptrauth:
+ *
+ * void _pthread_init_signature(pthread_t thread) 
+ * {
+ *      ...
+ *      th = ptrauth_sign_unauthenticated(
+ *           th, ptrauth_key_process_dependent_data,
+ *           ptrauth_string_discriminator("pthread.signature")
+ *      );
+ *      thread->sig = (uintptr_t)th ^ _pthread_ptr_munge_token
+ *      ...
+ * }
+ *
+ * thread->sig is the first field in struct pthread_s (long)
+ * _pthread_ptr_munge_token = tsd[6] (slot 6 in thread specific data)
+ *
+ * Discriminator = ptrauth_string_discriminator("pthread.signature")
+ * Key = APDBKey_EL1
+ */
+
 static uintptr_t pthread_xor_cookie;
 
 void __pthread_cookie()
@@ -261,26 +357,10 @@ void __pthread_cookie()
         uintptr_t tls, self, signed_ptr, slot;
         
         asm volatile("mrs %0, tpidrro_el0" : "=r" (tls) :: "memory");
+        self = tls + PTHREAD_SELF_TLS_OFFSET;
+        slot = *(uintptr_t *)self;
         
-        /**
-         * Find libpthread xor cookie by signing pthread_self pointer
-         * with libpthread constant discriminator xor'd with the
-         * slot value (offset 0 of pthread_self pointer). Then, the
-         * cookie will used be at restart to calculate the new slot value
-         * that reconstructs the pthread_self signed pointer (given the
-         * DB key in the new process).
-         *
-         * pthread_self = tls - PTHREAD_SELF_TLS_OFFSET
-         * slot = pthread_self[0]
-         * signed_ptr = pacdb(pthread_self, PTHREAD_SELF_DISCRIMINATOR)
-         *
-         * pthread_xor_cookie = slot ^ signed_ptr
-         */
-
-        self            = tls + PTHREAD_SELF_TLS_OFFSET;
-        slot            = *(uintptr_t *)self;
-        signed_ptr      = self;
-
+        signed_ptr = self;
         PACDB(signed_ptr, PTHREAD_SELF_DISCRIMINATOR);
         pthread_xor_cookie = slot ^ signed_ptr;
 }
@@ -290,22 +370,8 @@ void __pthread_slot_fixup()
         uintptr_t tls, *slot_ptr, old_ptr, new_ptr;
 
         asm volatile("mrs %0, tpidrro_el0" : "=r" (tls) :: "memory");
-        
-        /**
-         * Find new pthread_self pointer address signed with DB key
-         * and reconstruct slot value with signed_ptr ^ cookie.
-         * Then, libpthread will use the slot value and cookie to
-         * reconstruct the signed pointer at runtime, and because the
-         * slot has been fixed-up, the autdb will succeed.
-         *
-         * slot_ptr     = (uintptr_t *)(tpidrro_el0 - 0xe0)
-         * old_ptr      = pthread_xor_cookie ^ slot_ptr[0]
-         *
-         * new_ptr      = pac_strip_and_resign(old_ptr)
-         * slot_ptr[0]  = new_ptr ^ pthread_xor_cookie
-         */
-        slot_ptr        = (uintptr_t *)(tls + PTHREAD_SELF_TLS_OFFSET);
-        old_ptr         = pthread_xor_cookie ^ slot_ptr[0];
+        slot_ptr = (uintptr_t *)(tls + PTHREAD_SELF_TLS_OFFSET);
+        old_ptr = pthread_xor_cookie ^ slot_ptr[0];
 
         new_ptr = old_ptr;
         XPACD(new_ptr);

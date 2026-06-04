@@ -37,15 +37,6 @@ int             __pthread_cancel_hook(pthread_t);
 pthread_t       __pthread_main_thread_np_hook(void);
 int             __pthread_main_np_hook(void);
 
-/**
- * pthread_sigqueue,
- * pthread_setname_np, pthread_getname_np, 
- * pthread_setschedprio, ,
- * pthread_main_np, pthread_from_mach_thread_np,
- * pthread_mach_thread_np, 
- * pthread_join_np
- */
-
 INTERPOSE(__pthread_create_hook, pthread_create);
 INTERPOSE(__pthread_join_hook, pthread_join);
 INTERPOSE(__pthread_exit_hook, pthread_exit);
