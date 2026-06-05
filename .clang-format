@@ -1,0 +1,59 @@
+IndentWidth:              8
+TabWidth:                 8
+UseTab:                   ForIndentation
+ContinuationIndentWidth:  8
+BreakBeforeBraces:        Linux
+BraceWrapping:
+  AfterControlStatement:  Never
+InsertBraces:             false
+RemoveBracesLLVM:         true
+ColumnLimit:              80
+PointerAlignment:         Right
+ReferenceAlignment:       Right
+AllowShortFunctionsOnASingleLine:     None
+AllowShortIfStatementsOnASingleLine:  Never
+AllowShortLoopsOnASingleLine:         false
+AllowShortBlocksOnASingleLine:        Never
+AllowShortCaseLabelsOnASingleLine:    false
+AlignConsecutiveDeclarations:
+  Enabled:          true
+  AcrossEmptyLines: false
+  AcrossComments:   false
+  AlignCompound:    false
+  PadOperators:     false
+AlignConsecutiveAssignments:
+  Enabled:          false
+  AcrossEmptyLines: false
+  AcrossComments:   false
+  AlignCompound:    false
+  PadOperators:     false
+AlignConsecutiveMacros:
+  Enabled:          true
+  AcrossEmptyLines: false
+  AcrossComments:   false
+AlignTrailingComments:
+  Kind:           Always
+  OverEmptyLines: 0
+AlignOperands:    AlignAfterOperator
+SortIncludes:             Never
+SpaceBeforeParens:              ControlStatements
+SpaceInEmptyParentheses:        false
+SpaceAfterCStyleCast:           false
+SpacesInCStyleCastParentheses:  false
+SpacesInParentheses:            false
+SpacesInSquareBrackets:         false
+SpaceBeforeSquareBrackets:      false
+SpaceAroundPointerQualifiers:   Default
+SpaceBeforeAssignmentOperators: true
+SpaceAfterLogicalNot:           false
+ReflowComments: false
+BinPackArguments:           false
+BinPackParameters:          false
+AlwaysBreakAfterReturnType: None
+BreakBeforeBinaryOperators: None
+BreakBeforeTernaryOperators: true
+BreakStringLiterals:        false
+MaxEmptyLinesToKeep:       1
+KeepEmptyLinesAtTheStartOfBlocks: false
+IndentCaseLabels:          false
+IndentGotoLabels:          true
