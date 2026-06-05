@@ -14,8 +14,8 @@
 #include "thread_info.h"
 #include "pthread_wrappers.h"
 
-_Thread_local struct thread_info        *myself = NULL;
-static struct thread_info               *_main_thread = NULL;
+_Thread_local struct thread_info        *myself         = NULL;
+static struct thread_info               *_main_thread   = NULL;
 static struct thread_info               ckpt_thread;
 static struct thread_list               thread_list;
 
@@ -621,15 +621,23 @@ void thread_save_tls(void)
  */
 void thread_restore_tls(void)
 {
-        /* Zero cleanup handler is pthread struct */
-        *(struct __darwin_pthread_handler_rec **)
-         ((char *)myself->self + 0x8) = NULL;
-
-        uintptr_t       tls, off;
-        void            **dst, **src;
-        const u32       step = sizeof(void *);
+        struct __darwin_pthread_handler_rec     *old, *new;
+        uintptr_t                               tls, off;
+        void                                    **dst, **src;
+        const u32                               step = sizeof(void *);
 
         asm volatile("mrs %0, tpidrro_el0" : "=r" (tls) :: "memory");
+        old = *(struct __darwin_pthread_handler_rec **)
+              ((char *)myself->tls - 0xe0 + 0x8);
+        new = *(struct __darwin_pthread_handler_rec **)
+              ((char *)myself->self + 0x8);
+
+        if (old != NULL) {
+                assert(old->__routine != NULL);
+                new = old;
+                assert(new->__next == old->__next);
+        }
+
         for (off = 125 * step; off < 210 * step; off += step) {
                 dst = (void **)(tls + off);
                 src = (void **)(myself->tls + off);
@@ -645,8 +653,6 @@ void thread_restore_tls(void)
                         dst[0] = src[0];
                 }
         }
-
-        return;
 }
 
 void thread_save_context(ucontext_t *ucp)
