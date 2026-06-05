@@ -5,5 +5,4 @@
 *.dat
 *.ckpt
 tmp/
-test/
 build/
