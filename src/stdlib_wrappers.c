@@ -12,21 +12,18 @@ extern void (*__cleanup)(void);
 
 void __exit_hook(int status)
 {
-#if defined(__arm64e__)
         if (PTRAUTH_SIGNED((uintptr_t)__cleanup)) {
                 pac_strip_resign(__cleanup, APIBKey, 0x211b, 1);
         }
-#endif
+        
         exit(status);
 }
 
 void __abort_hook(void)
 {
-#if defined(__arm64e__)
         if (PTRAUTH_SIGNED((u64)__cleanup)) {
                 pac_strip_resign(__cleanup, APIBKey, 0x211b, 1);
         }
-#endif
 
         abort();
 }
