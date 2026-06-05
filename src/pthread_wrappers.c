@@ -10,6 +10,7 @@
 #include "thread_info.h"
 #include "types.h"
 #include "pac.h"
+#include "tls.h"
 
 static __always_inline pthread_t encode_pthread(struct thread_info *t)
 {
@@ -46,7 +47,7 @@ int __pthread_create_hook(pthread_t *p, const pthread_attr_t *attr,
                 pthread_cond_wait(&new->cond, &new->lock);
         }
         pthread_mutex_unlock(&new->lock);
-        unsafe_exit(self);
+        assert(unsafe_exit(self));
         
         /**
          * Set pthread_t to be an opaque pointer to a libckpt internal
@@ -75,19 +76,23 @@ int __pthread_join_hook(pthread_t p, void **value_ptr)
         assert(pthread_mutex_lock(&th->lock) == 0);
         while (!th->exiting) {
                 err = pthread_cond_wait(&th->cond, &th->lock);
-                if (err) {
+                if (unlikely(err != 0)) {
                         pthread_mutex_unlock(&th->lock);
-                        if (pthread_kill(th->self, 0) == ESRCH) {
-                                return ESRCH;
-                        }
-                        return EINVAL;
+                        unsafe_enter(self);
+                        err = pthread_kill(th->self, 0);
+                        assert(unsafe_exit(self));
+                        return err == ESRCH ? ESRCH : EINVAL;
                 }
         }
         assert(pthread_mutex_unlock(&th->lock) == 0);
         
         unsafe_enter(self);
+        if (pthread_kill(th->self, 0) == ESRCH) {
+                assert(unsafe_exit(self));
+                return ESRCH;
+        }
         err = pthread_join(th->self, value_ptr);
-        unsafe_exit(self);
+        assert(unsafe_exit(self));
 
         return err;
 }
@@ -140,7 +145,7 @@ int __pthread_kill_hook(pthread_t p, int sig)
          */
         unsafe_enter(self);
         err = pthread_kill(th->self, sig);
-        unsafe_exit(self);
+        assert(unsafe_exit(self));
 
         return err;
 }
@@ -158,7 +163,7 @@ int __pthread_detach_hook(pthread_t p)
         
         unsafe_enter(self);
         err = pthread_detach(th->self);
-        unsafe_exit(self);
+        assert(unsafe_exit(self));
 
         return err;
 }
@@ -215,7 +220,7 @@ int __pthread_setschedparam_hook(pthread_t p, int policy,
         
         unsafe_enter(self);
         err = pthread_setschedparam(th->self, policy, param);
-        unsafe_exit(self);
+        assert(unsafe_exit(self));
 
         return err;
 }
@@ -234,7 +239,7 @@ int __pthread_getschedparam_hook(pthread_t p, int *policy,
         
         unsafe_enter(self);
         err = pthread_getschedparam(th->self, policy, param);
-        unsafe_exit(self);
+        assert(unsafe_exit(self));
 
         return err;
 }
@@ -255,7 +260,7 @@ void *__pthread_get_stackaddr_np_hook(pthread_t p)
         
         unsafe_enter(self);
         retval = pthread_get_stackaddr_np(th->self);
-        unsafe_exit(self);
+        assert(unsafe_exit(self));
 
         return retval;
 }
@@ -282,7 +287,7 @@ size_t __pthread_get_stacksize_np_hook(pthread_t p)
         
         unsafe_enter(self);
         retval = pthread_get_stacksize_np(th->self);
-        unsafe_exit(self);
+        assert(unsafe_exit(self));
         
         return retval;
 }
@@ -300,7 +305,7 @@ int __pthread_cancel_hook(pthread_t p)
         
         unsafe_enter(self);
         err = pthread_cancel(th->self);
-        unsafe_exit(self);
+        assert(unsafe_exit(self));
 
         return err;
 }
@@ -353,7 +358,7 @@ void __pthread_cookie()
         uintptr_t tls, self, signed_ptr, slot;
         
         asm volatile("mrs %0, tpidrro_el0" : "=r" (tls) :: "memory");
-        self = tls + PTHREAD_SELF_TLS_OFFSET;
+        self = tls + TLS_PTHREAD_T_OFFSET;
         slot = *(uintptr_t *)self;
         
         signed_ptr = self;
@@ -366,7 +371,7 @@ void __pthread_slot_fixup()
         uintptr_t tls, *slot_ptr, old_ptr, new_ptr;
 
         asm volatile("mrs %0, tpidrro_el0" : "=r" (tls) :: "memory");
-        slot_ptr = (uintptr_t *)(tls + PTHREAD_SELF_TLS_OFFSET);
+        slot_ptr = (uintptr_t *)(tls + TLS_PTHREAD_T_OFFSET);
         old_ptr = pthread_xor_cookie ^ slot_ptr[0];
 
         new_ptr = old_ptr;

@@ -80,10 +80,7 @@ void fd_backing_restore(int);
 void fd_table_save_state(void);
 void fd_table_restore_state(void);
 
-__attribute__((constructor(101)))
 void fd_table_init(void);
-
-__attribute__((destructor))
 void fd_table_destroy(void);
 
 void fd_table_open(int, const char *, int, mode_t);

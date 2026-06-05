@@ -54,10 +54,7 @@ void precheckpoint(void);
 void postrestart(void);
 void docheckpoint(ucontext_t *);
 
-__attribute__((constructor))
 void setup(void);
-
-__attribute__((destructor))
 void cleanup(void);
 
 #endif // __CKPT_H__

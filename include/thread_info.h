@@ -54,16 +54,20 @@ static __always_inline bool thread_state_cas(struct thread_info *th,
 
 static __always_inline void unsafe_enter(struct thread_info *self)
 {
+        if (unlikely(self->state == ST_CKPT_THREAD))
+                return;
         while (!thread_state_cas(self, ST_RUNNING, ST_UNSAFE));
 }
 
 static __always_inline bool unsafe_exit(struct thread_info *self)
 {
+        if (unlikely(self->state == ST_CKPT_THREAD))
+                return true;
         return thread_state_cas(self, ST_UNSAFE, ST_RUNNING);
 }
 
-__constructor void      thread_list_init(void);
-__destructor void       thread_list_destroy(void);
+void                    thread_list_init(void);
+void                    thread_list_destroy(void);
 void                    thread_list_acquire(void);
 void                    thread_list_release(void);
 struct thread_info      *thread_list_find(pthread_t);
@@ -73,6 +77,7 @@ struct thread_info      *thread_init(void *(*)(void *), void *);
 void                    thread_reap(struct thread_info *);
 void                    thread_exit(void *);
 struct thread_info      *thread_self(void);
+struct thread_info      *thread_self_or_null(void);
 struct thread_info      *main_thread(void);
 
 void    ckpt_thread_exit(void);

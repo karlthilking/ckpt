@@ -7,6 +7,7 @@
 #include "pac.h"
 #include "thread_info.h"
 #include "stdlib_wrappers.h"
+#include "tls.h"
 
 extern void (*__cleanup)(void);
 
@@ -26,6 +27,117 @@ void __abort_hook(void)
         }
 
         abort();
+}
+
+void *__calloc_hook(size_t count, size_t size)
+{
+        struct thread_info      *self;
+        void                    *retval;
+        
+        if (skip_interpose())
+                return calloc(count, size);
+
+        self = thread_self();
+        unsafe_enter(self);
+        retval = calloc(count, size);
+        assert(unsafe_exit(self));
+
+        return retval;
+}
+
+void __free_hook(void *ptr)
+{
+        struct thread_info *self;
+        
+        if (skip_interpose()) {
+                free(ptr);
+                return;
+        }
+
+        self = thread_self();
+        unsafe_enter(self);
+        free(ptr);
+        unsafe_exit(self);
+}
+
+void *__malloc_hook(size_t size)
+{
+        struct thread_info  *self;
+        void                *retval;
+
+        if (skip_interpose())
+                return malloc(size);
+
+        self = thread_self();
+        unsafe_enter(self);
+        retval = malloc(size);
+        unsafe_exit(self);
+
+        return retval;
+}
+
+void *__realloc_hook(void *ptr, size_t size)
+{
+        struct thread_info      *self;
+        void                    *retval;
+
+        if (skip_interpose())
+                return realloc(ptr, size);
+        
+        self = thread_self();
+        unsafe_enter(self);
+        retval = realloc(ptr, size);
+        unsafe_exit(self);
+
+        return retval;
+}
+
+void *__reallocf_hook(void *ptr, size_t size)
+{
+        struct thread_info      *self;
+        void                    *retval;
+
+        if (skip_interpose())
+                return reallocf(ptr, size);
+
+        self = thread_self();
+        unsafe_enter(self);
+        retval = reallocf(ptr, size);
+        unsafe_exit(self);
+
+        return retval;
+}
+
+void *__valloc_hook(size_t size)
+{
+        struct thread_info      *self;
+        void                    *retval;
+        
+        if (skip_interpose())
+                return valloc(size);
+
+        self = thread_self();
+        unsafe_enter(self);
+        retval = valloc(size);
+        unsafe_exit(self);
+
+        return retval;
+}
+
+void *__aligned_alloc_hook(size_t align, size_t size)
+{
+        struct thread_info      *self;
+        void                    *retval;
+
+        if (skip_interpose())
+                return aligned_alloc(align, size);
+
+        self = thread_self();
+        unsafe_enter(self);
+        retval = aligned_alloc(align, size);
+        unsafe_exit(self);
+
+        return retval;
 }
 
 /**

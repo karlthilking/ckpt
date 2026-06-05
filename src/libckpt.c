@@ -16,6 +16,7 @@
 #include "file_wrappers.h"
 #include "signal_wrappers.h"
 #include "thread_info.h"
+#include "tls.h"
 
 static _Atomic ckpt_state libckpt_state = LIBCKPT_UNINITIALIZED;
 
@@ -95,11 +96,14 @@ __constructor void setup()
         sa.sa_flags = SA_SIGINFO | SA_RESTART;
         sa.sa_sigaction = thread_sighandler;
         sigaction(SIGUSR1, &sa, NULL);
-
+        
+        fd_table_init();
+        thread_list_init();
         set_ckpt_state(LIBCKPT_RUNNING);
 }
 
 __destructor void cleanup()
 {
-        return;
+        fd_table_destroy();
+        thread_list_destroy();
 }

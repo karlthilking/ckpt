@@ -13,6 +13,7 @@
 #include "pac.h"
 #include "thread_info.h"
 #include "pthread_wrappers.h"
+#include "tls.h"
 
 _Thread_local struct thread_info        *myself         = NULL;
 static struct thread_info               *_main_thread   = NULL;
@@ -26,7 +27,7 @@ static pthread_cond_t   cond_arrived    = PTHREAD_COND_INITIALIZER;
 static pthread_cond_t   cond_released   = PTHREAD_COND_INITIALIZER;
 static pthread_mutex_t  ckpt_mtx        = PTHREAD_MUTEX_INITIALIZER;
 
-__constructor void thread_list_init(void)
+void thread_list_init(void)
 {
         uintptr_t ckpt_thread_ready = 0;
         
@@ -36,6 +37,7 @@ __constructor void thread_list_init(void)
         thread_list.head = malloc(sizeof(struct thread_info));
         assert(thread_list.head != NULL);
         
+        tlv_init();
         myself = thread_list.head;
         myself->self = pthread_self();
         myself->state = ST_RUNNING;
@@ -66,10 +68,9 @@ __constructor void thread_list_init(void)
         pthread_mutex_unlock(&ckpt_thread.lock);
 }
 
-__destructor void thread_list_destroy(void)
+void thread_list_destroy(void)
 {
-        struct thread_info      *th, *next;
-        int                     killed, total;
+        struct thread_info *th, *next;
 
         /* Get checkpoint thread to exit */
         pthread_mutex_lock(&ckpt_mtx);
@@ -87,29 +88,12 @@ __destructor void thread_list_destroy(void)
         pthread_mutex_destroy(&ckpt_thread.lock);
         pthread_cond_destroy(&ckpt_thread.cond);
         
-        do {
-                total = 0;
-                killed = 0;
+        for (th = thread_list.head; th; th = next) {
+                next = th->next;
+                thread_reap(th);
+        }
 
-                for (th = thread_list.head; th; th = next) {
-                        next = th->next;
-                        if (th == myself) {
-                                continue;
-                        } else if (pthread_kill(th->self, 0) == ESRCH) {
-                                killed++;
-                                thread_reap(th);
-                        }
-                        total++;
-                }
-
-                if (killed != total) {
-                        usleep(10);
-                }
-        } while (killed != total);
-
-        assert(thread_list.head == myself);
-        thread_reap(myself);
-        pthread_mutex_destroy(&thread_list.lock);
+        tlv_exit();
 }
 
 void thread_list_acquire(void)
@@ -242,7 +226,8 @@ void thread_exit(void *exit_value)
 {
         assert(myself != NULL);
         pthread_mutex_lock(&myself->lock);
-
+        
+        tlv_exit();
         myself->exiting = true;
         myself->exit_value = exit_value;
 
@@ -253,6 +238,11 @@ void thread_exit(void *exit_value)
 struct thread_info *thread_self(void)
 {
         assert(myself != NULL);
+        return myself;
+}
+
+struct thread_info *thread_self_or_null(void)
+{
         return myself;
 }
 
@@ -267,6 +257,7 @@ void ckpt_thread_exit(void)
         assert(myself == &ckpt_thread);
         pthread_mutex_lock(&myself->lock);
         
+        tlv_exit();
         myself->exiting = true;
         myself->exit_value = NULL;
         
@@ -308,7 +299,8 @@ void *ckpt_thread_work(void *arg)
                 
                 pthread_sigmask(SIG_BLOCK, &set, NULL);
         }
-        
+       
+        tlv_init();
         myself = &ckpt_thread;
         myself->self= pthread_self();
         
@@ -325,14 +317,15 @@ void *ckpt_thread_work(void *arg)
         getcontext(&myself->uc);
 
         if (restart) {
+                postrestart();
+                restore_threads();
+
+                tlv_init();
                 myself = &ckpt_thread;
                 myself->self = pthread_self();
-                
                 thread_restore_tls();
                 thread_restore_sig_state();
-                postrestart();
-                
-                restore_threads();
+
                 set_ckpt_state(LIBCKPT_RUNNING);
                 resume_threads();
         }
@@ -559,6 +552,7 @@ void *thread_start(void *thread)
 {
         void *retval;
         
+        tlv_init();
         /**
          * Set thread local pointer to thread descriptor to point to
          * newly allocated thread struct, and initialize pthread_t
@@ -571,8 +565,9 @@ void *thread_start(void *thread)
         thread_list_add();
         
         /**
-         * Signal to thread that spawned this thread in __pthread_create_hook
-         * that this thread has started and added itself to the thread list.
+         * Signal to thread that spawned this thread in 
+         * __pthread_create_hook that this thread has started and added 
+         * itself to the thread list.
          */
         pthread_mutex_lock(&myself->lock);
         pthread_cond_signal(&myself->cond);
@@ -586,6 +581,7 @@ void *thread_start(void *thread)
 
 void *thread_restart(void *thread)
 {
+        tlv_init();
         /* Reinitialize and set state to suspended */
         myself = (struct thread_info *)thread;
         myself->self = pthread_self();
@@ -606,12 +602,7 @@ void *thread_restart(void *thread)
 void thread_save_tls(void)
 {
         assert(myself != NULL);
-        asm volatile(
-                "mrs %[tls], tpidrro_el0"
-                : [tls] "=r" (myself->tls)
-                :
-                : "memory"
-        );
+        asm volatile("mrs %0, tpidrro_el0" : "=r" (myself->tls));
 }
 
 /**
@@ -621,37 +612,34 @@ void thread_save_tls(void)
  */
 void thread_restore_tls(void)
 {
-        struct __darwin_pthread_handler_rec     *old, *new;
+        struct __darwin_pthread_handler_rec     *old_handler;
         uintptr_t                               tls, off;
         void                                    **dst, **src;
         const u32                               step = sizeof(void *);
 
         asm volatile("mrs %0, tpidrro_el0" : "=r" (tls) :: "memory");
-        old = *(struct __darwin_pthread_handler_rec **)
-              ((char *)myself->tls - 0xe0 + 0x8);
-        new = *(struct __darwin_pthread_handler_rec **)
-              ((char *)myself->self + 0x8);
-
-        if (old != NULL) {
-                assert(old->__routine != NULL);
-                new = old;
-                assert(new->__next == old->__next);
-        }
+        old_handler = thread_cleanup_stack(myself->tls);
+        if (old_handler)
+                thread_cleanup_stack(tls) = old_handler;
+        else
+                thread_cleanup_stack(tls) = NULL;
 
         for (off = 125 * step; off < 210 * step; off += step) {
                 dst = (void **)(tls + off);
                 src = (void **)(myself->tls + off);
-                if (dst[0] == NULL && src[0] != NULL) {
+                if (dst[0] == NULL && src[0] != NULL)
                         dst[0] = src[0];
-                }
+                else if (dst[0] != NULL && src[0] == NULL)
+                        dst[0] = NULL;
         }
 
         for (off = 256 * step; off < 768 * step; off += step) {
                 dst = (void **)(tls + off);
                 src = (void **)(myself->tls + off);
-                if (dst[0] == NULL && src[0] != NULL) {
+                if (dst[0] == NULL && src[0] != NULL)
                         dst[0] = src[0];
-                }
+                else if (dst[0] != NULL && src[0] == NULL)
+                        dst[0] = NULL;
         }
 }
 

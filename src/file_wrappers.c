@@ -130,7 +130,6 @@ void fd_backing_restore(int fd)
         backing->state  = FD_STATE_RESTORED;
 }
 
-__attribute__((constructor(101)))
 void fd_table_init(void)
 {
         bzero(&fd_table, sizeof(fd_table));
@@ -149,7 +148,6 @@ void fd_table_init(void)
         }
 }
 
-__attribute__((destructor))
 void fd_table_destroy(void)
 {
         int fd;

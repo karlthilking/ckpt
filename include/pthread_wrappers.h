@@ -2,10 +2,10 @@
 #ifndef __PTHREAD_WRAPPERS_H__
 #define __PTHREAD_WRAPPERS_H__
 #include <pthread.h>
+#include "tls.h"
 #include "inject.h"
 
 #define PTHREAD_SELF_DISCRIMINATOR      0x5B9ULL
-#define PTHREAD_SELF_TLS_OFFSET         -224
 
 #define PTHREAD_MAGIC                   0x7770000000000000ULL
 #define PTHREAD_TAG_MASK                0xFFF0000000000000ULL
