@@ -3,7 +3,7 @@
 #include "readckpt.h"
 #include "vm_region.h"
 
-int ckpt_vm_mark_regions()
+int ckpt_vm_mark_regions(void)
 {
         kern_return_t                   ret;
         mach_vm_address_t               addr = 0;

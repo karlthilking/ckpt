@@ -74,7 +74,7 @@ typedef struct ckpt_vm_region {
          ((__info)->user_tag == VM_MEMORY_RESTART_STACK))
 
 /* Functions implemented in vm_restore.c and used during restart */
-int ckpt_vm_mark_regions();
+int ckpt_vm_mark_regions(void);
 int ckpt_vm_restore_region(int, const ckpt_vm_region_t *);
 
 /* Functions implemented in vm_checkpoint.c and used by libckpt.dylib */

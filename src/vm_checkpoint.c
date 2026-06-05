@@ -31,13 +31,13 @@ int ckpt_vm_valid_region(const vm_region_submap_info_data_64_t *info,
         case VM_MEMORY_MALLOC_LARGE_REUSABLE:
         case VM_MEMORY_MALLOC_LARGE_REUSED:
         case VM_MEMORY_MALLOC_PROB_GUARD:
-                if (info->pages_dirtied) {
+                if (info->pages_resident && info->pages_dirtied) {
                         assert(info->max_protection & VM_PROT_WRITE);
                         return 1;
                 }
                 return 0;
         case VM_MEMORY_STACK:
-                if (info->pages_dirtied > 0) {
+                if (info->pages_resident && info->pages_dirtied) {
                         assert((info->max_protection & VM_PROT_WRITE) &&
                                VM_REGION_PRIVATE(info));
                         return 1;
@@ -45,7 +45,7 @@ int ckpt_vm_valid_region(const vm_region_submap_info_data_64_t *info,
                 return 0;
         case VM_MEMORY_DYLD:
         case VM_MEMORY_DYLD_MALLOC:
-                if (info->pages_dirtied) {
+                if (info->pages_resident && info->pages_dirtied) {
                         assert((info->max_protection & VM_PROT_WRITE) &&
                                VM_REGION_PRIVATE(info));
                         return 1;
