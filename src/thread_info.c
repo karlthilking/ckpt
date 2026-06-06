@@ -12,8 +12,8 @@
 #include "ckpt.h"
 #include "pac.h"
 #include "thread_info.h"
-#include "pthread_wrappers.h"
 #include "tls.h"
+#include "pthread_wrappers.h"
 
 _Thread_local struct thread_info        *myself         = NULL;
 static struct thread_info               *_main_thread   = NULL;
@@ -22,7 +22,7 @@ static struct thread_list               thread_list;
 
 static int              threads_expected;
 static int              threads_arrived;
-static ullong           ckpt_epoch      = 0u;
+static ullong           barrier_epoch   = 0u;
 static pthread_cond_t   cond_arrived    = PTHREAD_COND_INITIALIZER;
 static pthread_cond_t   cond_released   = PTHREAD_COND_INITIALIZER;
 static pthread_mutex_t  ckpt_mtx        = PTHREAD_MUTEX_INITIALIZER;
@@ -134,8 +134,7 @@ struct thread_info *thread_list_find(pthread_t p)
  */
 void thread_list_add(void)
 {
-        struct thread_info      *th, *next;
-        int                     err;
+        struct thread_info *th, *next;
         
         thread_list_acquire();
         /**
@@ -144,12 +143,8 @@ void thread_list_add(void)
          */
         for (th = thread_list.head; th; th = next) {
                 next = th->next;
-                if (th->exiting) {
-                        if ((err = pthread_kill(th->self, 0)) != 0) {
-                                assert(err == ESRCH);
-                                thread_reap(th);
-                        }
-                }
+                if (th->exiting && pthread_kill(th->self, 0) == ESRCH)
+                        thread_reap(th);
         }
         
         /**
@@ -160,9 +155,8 @@ void thread_list_add(void)
         myself->next = thread_list.head;
         myself->prev = NULL;
 
-        if (myself->next) {
+        if (myself->next)
                 myself->next->prev = myself;
-        }
         
         thread_list.head = myself;
         thread_list_release();
@@ -206,15 +200,13 @@ struct thread_info *thread_init(void *(*fn)(void *), void *arg)
  */
 void thread_reap(struct thread_info *zombie)
 {
-        if (zombie->prev) {
+        if (zombie->prev)
                 zombie->prev->next = zombie->next;
-        } else {
+        else
                 thread_list.head = zombie->next;
-        }
 
-        if (zombie->next) {
+        if (zombie->next)
                 zombie->next->prev = zombie->prev;
-        }
         
         pthread_mutex_destroy(&zombie->lock);
         pthread_cond_destroy(&zombie->cond);
@@ -233,6 +225,8 @@ void thread_exit(void *exit_value)
 
         pthread_cond_signal(&myself->cond);
         pthread_mutex_unlock(&myself->lock);
+
+        pthread_exit(exit_value);
 }
 
 struct thread_info *thread_self(void)
@@ -323,11 +317,13 @@ void *ckpt_thread_work(void *arg)
                 tlv_init();
                 myself = &ckpt_thread;
                 myself->self = pthread_self();
+                
+                barrier_arrival_wait();
                 thread_restore_tls();
                 thread_restore_sig_state();
 
                 set_ckpt_state(LIBCKPT_RUNNING);
-                resume_threads();
+                barrier_release();
         }
         
         restart = true;
@@ -339,16 +335,34 @@ void *ckpt_thread_work(void *arg)
 
                 set_ckpt_state(LIBCKPT_CKPTINPROG);
                 suspend_threads();
+                barrier_arrival_wait();
                 wait_for_exiting_threads();
 
                 precheckpoint();
                 docheckpoint(&myself->uc);
                 
                 set_ckpt_state(LIBCKPT_RUNNING);
-                resume_threads();
+                barrier_release();
         }
 
         return NULL;
+}
+
+void barrier_arrival_wait(void)
+{
+        pthread_mutex_lock(&ckpt_mtx);
+        while (threads_arrived < threads_expected) {
+                pthread_cond_wait(&cond_arrived, &ckpt_mtx);
+        }
+        pthread_mutex_unlock(&ckpt_mtx);
+}
+
+void barrier_release(void)
+{
+        pthread_mutex_lock(&ckpt_mtx);
+        barrier_epoch++;
+        pthread_cond_broadcast(&cond_released);
+        pthread_mutex_unlock(&ckpt_mtx);
 }
 
 /**
@@ -416,28 +430,15 @@ void suspend_threads(void)
         u32 thread_count;
         
         pthread_mutex_lock(&ckpt_mtx);
+        threads_arrived = 0;
+        
         thread_list_acquire();
-
         while (scan_threads(&thread_count)) {
                 usleep(10);
         }
-
         thread_list_release();
 
-        threads_arrived = 0;
         threads_expected = thread_count;
-        while (threads_arrived != threads_expected) {
-                pthread_cond_wait(&cond_arrived, &ckpt_mtx);
-        }
-
-        pthread_mutex_unlock(&ckpt_mtx);
-}
-
-void resume_threads(void)
-{
-        pthread_mutex_lock(&ckpt_mtx);
-        ckpt_epoch++;
-        pthread_cond_broadcast(&cond_released);
         pthread_mutex_unlock(&ckpt_mtx);
 }
 
@@ -460,14 +461,9 @@ void restore_threads(void)
                                 strerror(err));
                         exit(EXIT_FAILURE);
                 }
-
                 threads_expected++;
         }
 
-        while (threads_arrived != threads_expected) {
-                pthread_cond_wait(&cond_arrived, &ckpt_mtx);
-        }
-        
         thread_list_release();
         pthread_mutex_unlock(&ckpt_mtx);
 }
@@ -504,17 +500,16 @@ void wait_for_exiting_threads(void)
 
 void thread_barrier(void)
 {
-        int epoch;
+        int local_epoch;
 
         pthread_mutex_lock(&ckpt_mtx);
-        epoch = ckpt_epoch;
+        local_epoch = barrier_epoch;
         threads_arrived++;
         
-        if (threads_arrived == threads_expected) {
+        if (threads_arrived == threads_expected)
                 pthread_cond_signal(&cond_arrived);
-        }
 
-        while (epoch == ckpt_epoch) {
+        while (local_epoch == barrier_epoch) {
                 pthread_cond_wait(&cond_released, &ckpt_mtx);
         }
 
@@ -582,17 +577,23 @@ void *thread_start(void *thread)
 void *thread_restart(void *thread)
 {
         tlv_init();
-        /* Reinitialize and set state to suspended */
+        
+        /**
+         * Reinitialize thread local struct thread_info pointer to
+         * the current thread
+         */
         myself = (struct thread_info *)thread;
         myself->self = pthread_self();
         myself->state = ST_RUNNING;
         
-        /**
-         * Restore signal state and wait at barrier before restoring
-         * user context.
-         */
+        /* Restore tls/tsd and signal state */
         thread_restore_tls();
         thread_restore_sig_state();
+        
+        /**
+         * Wait in barrier until all threads have restored their
+         * tls and signal state. Then, restore context via setcontext().
+         */
         thread_barrier();
         thread_restore_context();
 
@@ -609,37 +610,34 @@ void thread_save_tls(void)
  * thread_restore_tls:
  *  TPIDRRO_EL0 can not be written to directly. Instead, restore tsd 
  *  slots 125-209 and 256-767 for thread locals.
+ *  Also restore per-thread cleanup stack that was located in the
+ *  thread's previous struct pthread_s.
  */
 void thread_restore_tls(void)
 {
-        struct __darwin_pthread_handler_rec     *old_handler;
-        uintptr_t                               tls, off;
+        uintptr_t                               tls;
         void                                    **dst, **src;
-        const u32                               step = sizeof(void *);
+        struct __darwin_pthread_handler_rec     *__cleanup;
 
-        asm volatile("mrs %0, tpidrro_el0" : "=r" (tls) :: "memory");
-        old_handler = thread_cleanup_stack(myself->tls);
-        if (old_handler)
-                thread_cleanup_stack(tls) = old_handler;
-        else
-                thread_cleanup_stack(tls) = NULL;
+        asm volatile("mrs %0, tpidrro_el0" : "=r" (tls) :: "memory"); 
+        __cleanup = get_thread_cleanup_stack(myself->tls);
+        set_thread_cleanup_stack(__cleanup);
 
-        for (off = 125 * step; off < 210 * step; off += step) {
-                dst = (void **)(tls + off);
-                src = (void **)(myself->tls + off);
-                if (dst[0] == NULL && src[0] != NULL)
-                        dst[0] = src[0];
-                else if (dst[0] != NULL && src[0] == NULL)
-                        dst[0] = NULL;
+        dst = (void **)tls;
+        src = (void **)myself->tls;
+
+        for (uint slot = 125; slot < 210; slot++) {
+                if (dst[slot] == NULL && src[slot] != NULL)
+                        dst[slot] = src[slot];
+                else if (dst[slot] != NULL && src[slot] == NULL)
+                        dst[slot] = NULL;
         }
 
-        for (off = 256 * step; off < 768 * step; off += step) {
-                dst = (void **)(tls + off);
-                src = (void **)(myself->tls + off);
-                if (dst[0] == NULL && src[0] != NULL)
-                        dst[0] = src[0];
-                else if (dst[0] != NULL && src[0] == NULL)
-                        dst[0] = NULL;
+        for (uint slot = 256; slot < 768; slot++) {
+                if (dst[slot] == NULL && src[slot] != NULL)
+                        dst[slot] = src[slot];
+                else if (dst[slot] != NULL && src[slot] == NULL)
+                        dst[slot] = NULL;
         }
 }
 
@@ -667,7 +665,6 @@ __noreturn void thread_restore_context(void)
         if (setcontext(&myself->uc) < 0) {
                 perror("setcontext");
                 thread_exit(NULL);
-                pthread_exit(NULL);
         }
         
         unreachable();

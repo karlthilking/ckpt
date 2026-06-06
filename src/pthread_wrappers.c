@@ -1,16 +1,18 @@
 /* pthread_wrappers.c */
 #define _XOPEN_SOURCE
+#include <stdlib.h>
 #include <stdio.h>
+#include <unistd.h>
 #include <assert.h>
 #include <time.h>
 #include <errno.h>
-#include <stdlib.h>
 #include <signal.h>
 #include "pthread_wrappers.h"
 #include "thread_info.h"
 #include "types.h"
 #include "pac.h"
 #include "tls.h"
+#include "ckpt.h"
 
 static __always_inline pthread_t encode_pthread(struct thread_info *t)
 {
@@ -100,7 +102,6 @@ int __pthread_join_hook(pthread_t p, void **value_ptr)
 void __pthread_exit_hook(void *value_ptr)
 {
         thread_exit(value_ptr);
-        pthread_exit(value_ptr);
 }
 
 pthread_t __pthread_self_hook(void)

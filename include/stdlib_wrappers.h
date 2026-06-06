@@ -6,7 +6,7 @@
 #include "types.h"
 
 #define skip_interpose() \
-        (get_ckpt_state() == LIBCKPT_UNINITIALIZED) || (tlv_ok() != true)
+        unlikely(get_ckpt_state() == LIBCKPT_UNINITIALIZED || !tlv_ok())
 
 void    __exit_hook(int);
 void    __abort_hook(void);

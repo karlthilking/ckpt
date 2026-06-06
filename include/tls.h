@@ -1,7 +1,6 @@
 /* tls.h */
 #ifndef __CKPT_TLS_H__
 #define __CKPT_TLS_H__
-#include "thread_info.h"
 #include "types.h"
 
 #define TLS_TLV_FLAG_SLOT       11
@@ -13,16 +12,22 @@
 #define TLS_PTHREAD_T_OFFSET                    -0xe0
 #define TLS_CLEANUP_HANDLER_OFFSET              -0xd8
 
+#define TSD_SLOTS 768
+
 #define force_tlv_init() \
         (void)thread_self_or_null()
 
-#define thread_cleanup_stack(__tls)                     \
-        *(struct __darwin_pthread_handler_rec **)       \
-         ((char *)(__tls) + TLS_CLEANUP_HANDLER_OFFSET) \
+#define get_thread_cleanup_stack(__tls) ({                      \
+        *(struct __darwin_pthread_handler_rec **)               \
+         ((uintptr_t)(__tls) + TLS_CLEANUP_HANDLER_OFFSET);     \
+})
 
-#define thread_cleanup_stack_pointer(__tls)             \
-        (struct __darwin_pthread_handler_rec **)        \
-        ((char *)(__tls) + TLS_CLEANUP_HANDLER_OFFSET)
+#define set_thread_cleanup_stack(__handler) ({                  \
+        *(struct __darwin_pthread_handler_rec **)               \
+         ((uintptr_t)pthread_self() +                           \
+         PTHREAD_T_CLEANUP_HANDLER_OFFSET) =                    \
+         (struct __darwin_pthread_handler_rec *)(__handler);    \
+})
 
 static __always_inline void set_tls_slot(uint __slot, uintptr_t __val)
 {

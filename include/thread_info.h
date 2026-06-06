@@ -84,9 +84,11 @@ void    ckpt_thread_exit(void);
 void    ckpt_thread_wait(void);
 void    *ckpt_thread_work(void *);
 
+void    barrier_arrival_wait(void);
+void    barrier_release(void);
+
 bool    scan_threads(u32 *);
 void    suspend_threads(void);
-void    resume_threads(void);
 void    restore_threads(void);
 void    wait_for_exiting_threads(void);
 
