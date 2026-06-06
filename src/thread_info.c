@@ -555,8 +555,6 @@ void *thread_start(void *thread)
          */
         myself = (struct thread_info *)thread;
         myself->self = pthread_self();
-        myself->state = ST_RUNNING;
-        
         thread_list_add();
         
         /**
@@ -565,6 +563,7 @@ void *thread_start(void *thread)
          * itself to the thread list.
          */
         pthread_mutex_lock(&myself->lock);
+        myself->state = ST_RUNNING;
         pthread_cond_signal(&myself->cond);
         pthread_mutex_unlock(&myself->lock);
 
