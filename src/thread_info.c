@@ -339,8 +339,10 @@ void *ckpt_thread_work(void *arg)
                 wait_for_exiting_threads();
 
                 precheckpoint();
+                set_tls_slot(TLS_TLV_FLAG_SLOT, 0);
                 docheckpoint(&myself->uc);
                 
+                set_tls_slot(TLS_TLV_FLAG_SLOT, TLS_TLV_INIT_MAGIC);
                 set_ckpt_state(LIBCKPT_RUNNING);
                 barrier_release();
         }
@@ -536,10 +538,12 @@ void thread_sighandler(int sig, siginfo_t *info, void *uctx)
         thread_save_tls();
         thread_save_sig_state();
         thread_save_context((ucontext_t *)uctx);
+        set_tls_slot(TLS_TLV_FLAG_SLOT, 0);
         assert(thread_state_cas(myself, ST_SUSPINPROG, ST_SUSPENDED));
         
         /* Wait in barrier and then resume */
         thread_barrier();
+        set_tls_slot(TLS_TLV_FLAG_SLOT, TLS_TLV_INIT_MAGIC);
         assert(thread_state_cas(myself, ST_SUSPENDED, ST_RUNNING));
 }
 
