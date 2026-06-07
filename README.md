@@ -1,33 +1,39 @@
-MCND: Transparent Checkpoint-Restart for macOS on Apple Silicon
+XND: Transparent Checkpoint-Restart for macOS on Apple Silicon
 ===============================================================
 
-MCND provides user-level process checkpointing capabilities on macOS, with a focus on modern, ARM-based Macs. For an in-depth
-overview on the internal architecture of MCND, see `internals.md`. 
+XND provides user-level process checkpointing capabilities on macOS, focusing on modern, ARM-based Macs. For an in-depth
+overview on the internal architecture of XND, see `internals.md`. 
 
-MCND Source Tree
+XND Source Tree
 ================
 
   * `src` - Source code for the checkpoint library, restart binary, and other utilities.
   * `include` - Header files used by relevant checkpoint-restart components.
-  * `test` - Test/example programs that can be checkpointed by MCND.
+  * `test` - Test/example programs that can be checkpointed by XND.
 
-Building MCND
+Building XND
 =============
 
-Compiling MCND is as straightforward as `make all`.
-MCND does not use any external libraries or require any kernel modifications. The only prerequisites to compiling MCND are
-access to the relevant system headers and a version of the clang compiler; Both should be shipped with any macOS SDK that would
-be available a recent-enough macOS versions.
+```
+git clone https://github.com/karlthilking/xnd
+cd xnd && make all
+```
 
-| Feature | Support |
-|---------|---------|
-| Single-threaded checkpointing | yes |
-| Multi-threaded checkpointing | yes |
-| PAC return address re-signing | yes |
-| Checkpointing file descriptor state | yes |
-| Thread local storage restoration | yes |
-| Signal state checkpoint/restore | yes |
-| Cross-reboot restarts | no |
-| Checkpointing arm64e binaries | no |
-| Multi-process computations | no |
-| IPC (pipes, sockets) | no |
+Feature Support
+================
+
+| Feature | Status |
+|---------|--------|
+| Single-threaded checkpointing | supported |
+| Multi-threaded checkpointing | POSIX threads supported (see example applications) |
+| PAC return address re-siging | supported |
+| File desciptor restoration | regular files only |
+| Restoring thread local storage | supported |
+| Signal state restoration | masks and handlers are restored (pending signals are lost) |
+| Cross-reboot restarts | not supported |
+| Checkpointing arm64e binaries | not supported |
+| Multi-process computations | not supported |
+| Restoring IPC constructs (pipes, sockets) | not supported |
+
+Supported Applications
+======================
