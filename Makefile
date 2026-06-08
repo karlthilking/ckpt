@@ -1,66 +1,71 @@
 ARCH    ?= arm64
 CC      := clang
 CFLAGS  := -std=c17 -Wall -Wno-deprecated-declarations \
-           -g3 -O0 -arch $(ARCH)
+           -g3 -O0 -arch $(ARCH) -iquote . -iquote ./include
 
-SRC     := ./src
-TEST    := ./test
-INCLUDE := ./include
-BUILD   := ./build
+BUILD ?= ./build
 
-LIBCKPT_WRAPPERS := $(SRC)/time_wrappers.c $(SRC)/stdlib_wrappers.c \
-                    $(SRC)/pthread_wrappers.c $(SRC)/file_wrappers.c \
-                    $(SRC)/signal_wrappers.c
+LIBXND_WRAPPERS := \
+        xnd/wrappers/time_wrappers.c \
+        xnd/wrappers/stdlib_wrappers.c \
+        xnd/wrappers/pthread_wrappers.c \
+        xnd/wrappers/file_wrappers.c \
+        xnd/wrappers/signal_wrappers.c
 
-LIBCKPT_SOURCES := $(SRC)/libckpt.c $(SRC)/pac.c $(SRC)/vm_common.c \
-                   $(SRC)/vm_checkpoint.c $(SRC)/writeckpt.c \
-                   $(SRC)/shared_cache.c $(SRC)/thread_info.c \
-                   $(LIBCKPT_WRAPPERS)
-                   
-RESTART_SOURCES := $(SRC)/restart.c $(SRC)/pac.c $(SRC)/vm_common.c \
-                   $(SRC)/vm_restore.c $(SRC)/readckpt.c \
-                   $(SRC)/shared_cache.c
+LIBXND_SOURCES := \
+        xnd/libckpt.c \
+        xnd/pac.c \
+        xnd/vm_common.c \
+        xnd/vm_checkpoint.c \
+        xnd/writeckpt.c \
+        xnd/shared_cache.c \
+        xnd/thread_info.c \
+        $(LIBXND_WRAPPERS)
 
-TESTS           := $(BUILD)/01_conjugate_gradient \
-                   $(BUILD)/02_heat_diffusion \
-                   $(BUILD)/03_monte_carlo $(BUILD)/04_stencil
+XND_RESTART_SOURCES := \
+        xnd/restart.c \
+        xnd/pac.c \
+        xnd/vm_common.c \
+        xnd/vm_restore.c \
+        xnd/readckpt.c \
+        xnd/shared_cache.c
 
-BINARIES        := $(BUILD)/ckpt $(BUILD)/printckpt $(TESTS)
-ALL             := $(BINARIES) $(BUILD)/restart $(BUILD)/libckpt.dylib
+XND_RUN_SOURCES := \
+        xnd/xnd_run.c \
+        xnd/ckptfile.c \
+        xnd/platform/exe.c \
+        xnd/util/path.c
+
+ALL := \
+        $(BUILD)/xnd_run \
+        $(BUILD)/xnd_print \
+        $(BUILD)/xnd_restart \
+        $(BUILD)/libxnd.dylib
 
 all: $(ALL)
 
 $(BUILD):
 	mkdir -p $@
 
-$(BUILD)/libckpt.dylib: $(LIBCKPT_SOURCES) | $(BUILD)
-	$(CC) $(CFLAGS) -I$(INCLUDE) -dynamiclib -fPIC -o $@ $^
+$(BUILD)/libxnd.dylib: $(LIBXND_SOURCES) | $(BUILD)
+	$(CC) $(CFLAGS) -dynamiclib -fPIC -o $@ $^
 
 __TEXT          := 0x500000000000
 __DATA          := 0x500000004000
 __LINKEDIT      := 0x500000008000
-$(BUILD)/restart: $(RESTART_SOURCES) | $(BUILD)
-	$(CC) $(CFLAGS) -I$(INCLUDE)  		\
-	-Wl,-segaddr,__TEXT,$(__TEXT) 		\
-	-Wl,-segaddr,__DATA,$(__DATA) 		\
-	-Wl,-segaddr,__LINKEDIT,$(__LINKEDIT) 	\
+$(BUILD)/xnd_restart: $(XND_RESTART_SOURCES) | $(BUILD)
+	$(CC) $(CFLAGS) \
+	-Wl,-segaddr,__TEXT,$(__TEXT) \
+	-Wl,-segaddr,__DATA,$(__DATA) \
+	-Wl,-segaddr,__LINKEDIT,$(__LINKEDIT) \
 	-o $@ $^
 
-$(BUILD)/ckpt: $(SRC)/ckpt.c $(SRC)/repl.c | $(BUILD)
-	$(CC) $(CFLAGS) -I$(INCLUDE) -o $@ $^
+$(BUILD)/xnd_run: $(XND_RUN_SOURCES) | $(BUILD)
+	$(CC) $(CFLAGS) -o $@ $^
 
-$(BUILD)/%: $(SRC)/%.c | $(BUILD)
-	$(CC) $(CFLAGS) -I$(INCLUDE) -o $@ $<
-
-$(BUILD)/%: $(TEST)/%.c | $(BUILD)
-	$(CC) $(CFLAGS) -o $@ $<
-
-OPENMP_INCLUDE	:= /opt/homebrew/opt/libomp/include
-OPENMP_LIB	:= /opt/homebrew/opt/libomp/lib
-$(BUILD)/02_heat_diffusion: $(TEST)/02_heat_diffusion.c | $(BUILD)
-	$(CC) -arch arm64 -g -O2 -Xpreprocessor -fopenmp -lomp \
-        -I$(OPENMP_INCLUDE) -L$(OPENMP_LIB) -o $@ $<
+$(BUILD)/xnd_print: xnd/printckpt.c | $(BUILD)
+	$(CC) $(CFLAGS) -o $@ $^
 
 clean:
-	rm -rf build/
-	rm -rf *.dSYM *.dylib *.o *.ckpt *.dat
+	rm -rf $(ALL) build/ *.dSYM *.dylib *.o *.ckpt *.dat
+	rm -f xnd_run xnd_print xnd_restart

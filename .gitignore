@@ -6,3 +6,6 @@
 *.ckpt
 tmp/
 build/
+xnd_run
+xnd_restart
+xnd_print
