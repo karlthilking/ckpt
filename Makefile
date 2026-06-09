@@ -3,7 +3,7 @@ CC      := clang
 CFLAGS  := -std=c17 -Wall -Wno-deprecated-declarations \
            -g3 -O0 -arch $(ARCH) -iquote . -iquote ./include
 
-BUILD ?= ./build
+BUILD ?= .
 
 LIBXND_WRAPPERS := \
         xnd/wrappers/time_wrappers.c \
@@ -63,7 +63,7 @@ $(BUILD)/xnd_restart: $(XND_RESTART_SOURCES) | $(BUILD)
 $(BUILD)/xnd_run: $(XND_RUN_SOURCES) | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ $^
 
-$(BUILD)/xnd_print: xnd/printckpt.c | $(BUILD)
+$(BUILD)/xnd_print: xnd/xnd_print.c | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ $^
 
 clean:

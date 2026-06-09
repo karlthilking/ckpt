@@ -5,6 +5,7 @@
 #include "xnd/platform/exe.h"
 #include <stdlib.h>
 #include <stdio.h>
+#include <string.h>
 #include <unistd.h>
 #include <err.h>
 #include <spawn.h>
@@ -15,37 +16,82 @@
 #endif
 
 static const char *help =
-        "OVERVIEW: XND Checkpoint-Restart for MacOS\n\n"
-        "USAGE: ./xnd_run [options] file...\n\n"
-        "OPTIONS:\n"
-        "  -p <file>            Print checkpoint file contents\n"
-        "  -c <binary> <args>   Execute binary injected with libxnd.dylib\n"
-        "  -r <file>            Restart from saved checkpoint file\n";
+"OVERVIEW: xnd_run\n\n"
+"DESCRIPTION: Checkpoint-restart for MacOS (arm64)\n\n"
+"USAGE: ./xnd_run [options] file ...\n\n"
+"OPTIONS:\n"
+" --launch, -l <binary> <args>\n"
+"    Execute a binary injected with libxnd.dylib. The spawned process can\n"
+"    be checkpointed throughout its execution.\n\n"
+" --restart, -r <checkpoint-file>\n"
+"    Restart a program from a previous checkpoint using the checkpoint\n"
+"    image file that was created as a result of the checkpoint. The \n"
+"    restart process can also receive subsequent checkpoints.\n\n"
+" --print, -p <checkpoint-file>\n"
+"    Invoke the xnd_print utility in order to display the contents of a\n"
+"    checkpoint file in a human-readable way. The xnd_print program will\n"
+"    display information about each memory region as well as the register\n"
+"    context that was serialized to the checkpoint image file.\n";
+
+static void usage(void);
+static void print_checkpoint(char **);
+static void launch_checkpoint_target(char **);
+static void restart_from_checkpoint(char *);
+
+int main(int argc, char *argv[])
+{
+        if (argc < 3) {
+                usage();
+                exit(0);
+        }
+        
+        switch (getopt(argc, argv, "l:r:p:")) {
+        case 'l':
+                launch_checkpoint_target(&argv[optind - 1]);
+        case 'r':
+                restart_from_checkpoint(optarg);
+        case 'p':
+                print_checkpoint(&argv[optind - 1]);
+        case '?':
+        default:
+                break;
+        }
+        
+        usage();
+        exit(0);
+}
 
 static void usage(void)
 {
-        dprintf(STDERR_FILENO, "%s", help);
+        fprintf(stderr, "%s", help);
 }
 
-static __noreturn void print(char *ckptfile)
+static __noreturn void print_checkpoint(char **argv)
 {
         /* ./xnd_print <ckpt-file> */
         char    xnd_print_path[PATH_MAX];
-        int     retval;
+        int     retval, idx;
+        char    *xnd_print_args[sysconf(_SC_ARG_MAX) / PATH_MAX];
 
         retval = xnd_exe_path_of("xnd_print", xnd_print_path, PATH_MAX);
         if (retval < 0) {
                 fprintf(stderr, "Failed to get path of xnd_print!\n");
                 exit(EXIT_FAILURE);
         }
+        
+        xnd_print_args[0] = xnd_print_path;
+        for (idx = 1; argv[idx - 1]; idx++)
+                xnd_print_args[idx] = argv[idx - 1];
+        xnd_print_args[idx] = NULL;
 
-        if (execl(xnd_print_path, ckptfile, NULL) < 0)
-                err(EXIT_FAILURE, "execl(%s, %s)", xnd_print_path, ckptfile);
+        if (execvp(xnd_print_args[0], (char **)xnd_print_args) < 0)
+                err(EXIT_FAILURE, "execvp(%s, {%s, %s, ...})",
+                    xnd_print_args[0], xnd_print_args[0], xnd_print_args[1]);
 
         unreachable();
 }
 
-static __noreturn void checkpoint(char **argv)
+static __noreturn void launch_checkpoint_target(char **argv)
 {
         /**
          * DLYD_INSERT_LIBRARIES=libxnd.dylib
@@ -82,7 +128,7 @@ static __noreturn void checkpoint(char **argv)
         unreachable();
 }
 
-static __noreturn void restart(char *ckptfile)
+static __noreturn void restart_from_checkpoint(char *ckptfile)
 {
         short                   flags;
         pid_t                   pid;
@@ -126,26 +172,4 @@ static __noreturn void restart(char *ckptfile)
         }
 
         unreachable();
-}
-
-int main(int argc, char *argv[])
-{
-        if (argc < 3) {
-                usage();
-                exit(0);
-        }
-        
-        switch (getopt(argc, argv, "c:r:p:")) {
-        case 'c':
-                checkpoint(&argv[optind - 1]);
-        case 'r':
-                restart(optarg);
-        case 'p':
-                print(optarg);
-        case '?':
-        default:
-                usage();
-        }
-
-        exit(0);
 }
