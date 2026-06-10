@@ -86,16 +86,10 @@ int __pthread_join_hook(pthread_t p, void **value_ptr)
         xnd_assert(pthread_mutex_unlock(&th->lock) == 0);
         
         unsafe_enter();
-        if (pthread_kill(th->self, 0) == ESRCH) {
-                err = ESRCH;
-                unsafe_exit();
-                goto done;
-        }
         err = pthread_join(th->self, value_ptr);
+        th->joined = (err == 0);
         unsafe_exit();
 
-done:
-        thread_reap(th);
         return err;
 }
 

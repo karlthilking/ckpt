@@ -34,7 +34,8 @@ struct thread_info {
         _Atomic enum thread_state       state;
         u8                              exiting : 1,
                                         joining : 1,
-                                        unused  : 6;
+                                        joined  : 1,
+                                        unused  : 5;
         void                            *exit_value;
 
         u32                             wrapper_depth;

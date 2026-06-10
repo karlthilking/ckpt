@@ -3,10 +3,11 @@
 #include "xnd/util/log.h"
 
 #include <stdlib.h>
+#include <stdio.h>
 #include <unistd.h>
+#include <errno.h>
 
 static int log_level = XND_DEFAULT_LOG_LEVEL;
-
 static int level_to_fd[] = { 
         XND_ERROR_FD, XND_WARN_FD, XND_DEBUG_FD, XND_TRACE_FD
 };
@@ -19,20 +20,22 @@ void xnd_log_setup(void)
         if (level_str)
                 log_level = min(atoi(level_str), XND_MAX_LOG_LEVEL);
         
-        xnd_trace("XND_LOG_LEVEL=%d", log_level);
-        for (int l = 0; l < log_level; l++)
-                dup2(STDERR_FILENO, level_to_fd[l]);
+        for (int l = 0; l <= log_level; l++) {
+                if (dup2(STDERR_FILENO, level_to_fd[l]) < 0)
+                        perror("dup2");
+        }
+        xnd_trace("XND_LOG_LEVEL=%d\n", log_level);
 }
 
 void xnd_log_cleanup(void)
 {
-        for (uint l = 0; l < log_level; l++)
+        for (uint l = 0; l <= log_level; l++)
                 close(level_to_fd[l]);
 }
 
 void xnd_log_setup_direct(int level)
 {
         log_level = min(level, XND_MAX_LOG_LEVEL);
-        for (int l = 0; l < log_level; l++)
+        for (int l = 0; l <= log_level; l++)
                 dup2(STDERR_FILENO, level_to_fd[l]);
 }

@@ -12,10 +12,10 @@ enum xnd_log_type {
 };
 
 enum xnd_log_fd {
-        XND_ERROR_FD    = 800,
-        XND_WARN_FD     = 801,
-        XND_DEBUG_FD    = 802,
-        XND_TRACE_FD    = 803
+        XND_ERROR_FD    = 250,
+        XND_WARN_FD     = 251,
+        XND_DEBUG_FD    = 252,
+        XND_TRACE_FD    = 253
 };
 
 #if DEVELOPMENT || DEBUG
@@ -32,7 +32,7 @@ enum xnd_log_fd {
          __builtin_strrchr(__FILE__, '/') + 1 : __FILE__)
 
 #define xnd_print(__fd, __type, __fmt, ...) \
-        dprintf(__fd, "[xnd:%s %s:%s]" __fmt, __type,   \
+        dprintf(__fd, "[xnd:%s %s:%s] " __fmt, __type, \
                 __XND_FILE__, __func__, ##__VA_ARGS__)
 
 #define xnd_error(__fmt, ...) \

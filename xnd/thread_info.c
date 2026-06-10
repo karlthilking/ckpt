@@ -23,7 +23,8 @@ static struct thread_list               thread_list;
 
 static int              threads_expected;
 static int              threads_arrived;
-static ullong           barrier_epoch   = 0u;
+static u64              barrier_epoch = 0ull;
+
 static pthread_cond_t   cond_arrived    = PTHREAD_COND_INITIALIZER;
 static pthread_cond_t   cond_released   = PTHREAD_COND_INITIALIZER;
 static pthread_mutex_t  ckpt_mtx        = PTHREAD_MUTEX_INITIALIZER;
@@ -32,9 +33,11 @@ void thread_list_init(void)
 {
         pthread_mutexattr_t     attr;
         uintptr_t               ckpt_thread_ready = 0;
-        
+
         pthread_mutexattr_init(&attr);
+#if DEVELOPMENT || DEBUG
         pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_ERRORCHECK);
+#endif
         pthread_mutex_init(&thread_list.lock, &attr);
 
         /* Initialize main thread info */
@@ -187,6 +190,11 @@ void thread_list_remove(struct thread_info *th)
 
         if (th->next)
                 th->next->prev = th->prev;
+
+        if (th->joined) {
+                xnd_assert(pthread_kill(th->self, 0) == ESRCH);
+                thread_reap(th);
+        }
 }
 
 /**
@@ -211,13 +219,16 @@ struct thread_info *thread_init(void *(*fn)(void *), void *arg)
         new->arg = arg;
         new->exiting = 0;
         new->joining = 0;
+        new->joined = 0;
         new->wrapper_depth = 0;
         new->state = ST_EMBRYO;
         new->next = NULL;
         new->prev = NULL;
 
         pthread_mutexattr_init(&attr);
+#if DEVELOPMENT || DEBUG
         pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_ERRORCHECK);
+#endif
 
         xnd_assert(pthread_mutex_init(&new->lock, &attr) == 0);
         xnd_assert(pthread_cond_init(&new->cond, NULL) == 0);
@@ -233,6 +244,11 @@ struct thread_info *thread_init(void *(*fn)(void *), void *arg)
  */
 void thread_reap(struct thread_info *zombie)
 {
+        if (!zombie->joined) {
+                xnd_warn("Thread was never joined! (pthread_t=0x%lx)\n",
+                         (uintptr_t)zombie->self);
+        }
+
         xnd_assert(pthread_mutex_destroy(&zombie->lock) == 0);
         xnd_assert(pthread_cond_destroy(&zombie->cond) == 0);
         free(zombie);
@@ -245,7 +261,6 @@ __noreturn void thread_exit(void *exit_value)
         
         tlv_exit();
         myself->exiting = 1;
-        myself->exit_value = exit_value;
 
         pthread_cond_signal(&myself->cond);
         xnd_assert(pthread_mutex_unlock(&myself->lock) == 0);
@@ -527,9 +542,8 @@ void thread_barrier(void)
 
         xnd_assert(pthread_mutex_lock(&ckpt_mtx) == 0);
         local_epoch = barrier_epoch;
-        threads_arrived++;
         
-        if (threads_arrived == threads_expected)
+        if (++threads_arrived == threads_expected)
                 pthread_cond_signal(&cond_arrived);
 
         while (local_epoch == barrier_epoch) {
@@ -641,11 +655,11 @@ void thread_restore_tls(void)
 {
         uintptr_t                               tls;
         void                                    **dst, **src;
-        struct __darwin_pthread_handler_rec     *__cleanup;
+        // struct __darwin_pthread_handler_rec     *cleanup;
 
         asm volatile("mrs %0, tpidrro_el0" : "=r" (tls) :: "memory"); 
-        __cleanup = get_thread_cleanup_stack(myself->tls);
-        set_thread_cleanup_stack(__cleanup);
+        // cleanup = get_thread_cleanup_stack(myself->tls);
+        set_thread_cleanup_stack(NULL);
 
         dst = (void **)tls;
         src = (void **)myself->tls;

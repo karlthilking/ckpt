@@ -2,7 +2,7 @@ ARCH    ?= arm64
 BUILD   ?= .
 
 CC      := clang
-CFLAGS  := -std=c17 -Wall -Wno-deprecated-declarations -DDEVELOPMENT \
+CFLAGS  := -std=c17 -Wall -Wno-deprecated-declarations -DDEVELOPMENT=1 \
            -g3 -O0 -arch $(ARCH) -iquote . -iquote ./include
 
 LIBXND_WRAPPERS := \
