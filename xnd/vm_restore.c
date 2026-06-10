@@ -1,7 +1,7 @@
 /* vm_restore.c */
-#include <assert.h>
-#include "readckpt.h"
-#include "vm_region.h"
+#include "xnd/xnd.h"
+#include "xnd/vm_region.h"
+#include "xnd/readckpt.h"
 
 int ckpt_vm_mark_regions(void)
 {
@@ -38,8 +38,8 @@ int ckpt_vm_mark_regions(void)
                 );
 
                 if (ret != KERN_SUCCESS) {
-                        fprintf(stderr, "mach_vm_inherit: %s\n",
-                                mach_error_string(ret));
+                        xnd_warn("mach_vm_inherit: %s\n",
+                                 mach_error_string(ret));
                         return -1;
                 }
 
@@ -49,8 +49,8 @@ int ckpt_vm_mark_regions(void)
                 );
 
                 if (ret != KERN_SUCCESS) {
-                        fprintf(stderr, "mach_vm_behavior_set: %s\n",
-                                mach_error_string(ret));
+                        xnd_warn("mach_vm_behavior_set: %s\n",
+                                 mach_error_string(ret));
                         return -1;
                 }
 
@@ -65,7 +65,7 @@ int ckpt_vm_restore_region(int fd, const ckpt_vm_region_t *region)
         kern_return_t           ret;
         mach_vm_address_t       addr;
         
-        assert(region->start != NULL && region->end != NULL);
+        xnd_assert(region->start != NULL && region->end != NULL);
         addr = (mach_vm_address_t)region->start;
         
         /* Allocate checkpointed memory region */
@@ -76,12 +76,11 @@ int ckpt_vm_restore_region(int fd, const ckpt_vm_region_t *region)
                           VM_PROT_ALL, region->inherit);
         
         if (ret != KERN_SUCCESS) {
-                fprintf(stderr, "mach_vm_map: %s\n",
-                        mach_error_string(ret));
+                xnd_error("mach_vm_map: %s\n", mach_error_string(ret));
                 return -1;
         }
         
-        assert((void *)addr == region->start);
+        xnd_assert((void *)addr == region->start);
         if (readall(fd, (void *)addr, region->size) < 0)
                 return -1;
 

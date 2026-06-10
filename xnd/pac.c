@@ -1,11 +1,13 @@
 /* pac.c */
+#include "xnd/xnd.h"
+#include "xnd/pac.h"
+#include "xnd/util/log.h"
+
 #define _XOPEN_SOURCE
+#include <ucontext.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <err.h>
-#include <ucontext.h>
-#include "xnd.h"
-#include "pac.h"
 
 static __always_inline u64 *first_signed_frame(u64 *fp)
 {
@@ -79,7 +81,7 @@ void pac_patch_context(ckpt_context_t *ctx)
 void pac_resign_frames(u64 *fp)
 {
         for_each_signed_frame(fp) {
-                assert(PTRAUTH_SIGNED(fp[1]));
+                xnd_assert(PTRAUTH_SIGNED(fp[1]));
                 XPACI(fp[1]);
                 PACIB(fp[1], (u64)fp + 0x10);
         }

@@ -18,7 +18,7 @@
 #include "thread_info.h"
 #include "tls.h"
 
-static _Atomic ckpt_state libckpt_state = LIBCKPT_UNINITIALIZED;
+static _Atomic ckpt_state libckpt_state = XND_UNINITIALIZED;
 
 ckpt_state get_ckpt_state(void)
 {
@@ -47,6 +47,7 @@ void postrestart(void)
 #endif
         sig_state_restore();
         fd_table_restore_state();
+        xnd_log_setup();
 }
 
 void docheckpoint(ucontext_t *uctx)
@@ -99,11 +100,14 @@ __constructor() void setup()
         
         fd_table_init();
         thread_list_init();
-        set_ckpt_state(LIBCKPT_RUNNING);
+        xnd_log_setup();
+        set_ckpt_state(XND_RUNNING);
 }
 
 __destructor() void cleanup()
 {
+        set_ckpt_state(XND_EXITING);
         fd_table_destroy();
         thread_list_destroy();
+        xnd_log_cleanup();
 }

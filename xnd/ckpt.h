@@ -44,8 +44,13 @@ typedef enum ckpt_header {
 typedef enum ckpt_state {
         LIBCKPT_UNINITIALIZED,
         LIBCKPT_RUNNING,
-        LIBCKPT_CKPTINPROG
+        LIBCKPT_CKPTINPROG,
+        XND_EXITING
 } ckpt_state;
+
+#define XND_UNINITIALIZED       LIBCKPT_UNINITIALIZED
+#define XND_RUNNING             LIBCKPT_RUNNING
+#define XND_CKPTINPROG          LIBCKPT_CKPTINPROG
 
 ckpt_state      get_ckpt_state(void);
 void            set_ckpt_state(ckpt_state);

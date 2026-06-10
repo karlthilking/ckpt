@@ -1,9 +1,9 @@
 ARCH    ?= arm64
-CC      := clang
-CFLAGS  := -std=c17 -Wall -Wno-deprecated-declarations \
-           -g3 -O0 -arch $(ARCH) -iquote . -iquote ./include
+BUILD   ?= .
 
-BUILD ?= .
+CC      := clang
+CFLAGS  := -std=c17 -Wall -Wno-deprecated-declarations -DDEVELOPMENT \
+           -g3 -O0 -arch $(ARCH) -iquote . -iquote ./include
 
 LIBXND_WRAPPERS := \
         xnd/wrappers/time_wrappers.c \
@@ -20,6 +20,7 @@ LIBXND_SOURCES := \
         xnd/writeckpt.c \
         xnd/shared_cache.c \
         xnd/thread_info.c \
+        xnd/util/log.c \
         $(LIBXND_WRAPPERS)
 
 XND_RESTART_SOURCES := \
@@ -67,5 +68,4 @@ $(BUILD)/xnd_print: xnd/xnd_print.c | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ $^
 
 clean:
-	rm -rf $(ALL) build/ *.dSYM *.dylib *.o *.ckpt *.dat
-	rm -f xnd_run xnd_print xnd_restart
+	rm -rf $(ALL) *.dSYM *.dylib *.o *.ckpt *.dat

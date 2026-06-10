@@ -57,11 +57,17 @@
         __builtin_unreachable();        \
 } while (0)
 
-#define __noreturn              __attribute__((noreturn))
-#define __constructor(...)      __attribute__((constructor(__VA_ARGS__)))
-#define __destructor(...)       __attribute__((destructor(__VA_ARGS__)))
+#ifndef __noreturn
+# define __noreturn __attribute__((noreturn))
+#endif
 
-#define noinline        __attribute__((noinline))
+#define __constructor(x)        __attribute__((constructor(x)))
+#define __destructor(x)         __attribute__((destructor(x)))
+
+#ifndef noinline
+# define noinline __attribute__((noinline))
+#endif
+
 #define __always_inline inline __attribute__((always_inline))
 
 #ifndef __used

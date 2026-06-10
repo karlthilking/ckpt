@@ -1,15 +1,17 @@
 /* writeckpt.c */
+#include "xnd/xnd.h"
+#include "xnd/writeckpt.h"
+#include "xnd/ckpt.h"
+#include "xnd/vm_region.h"
+
 #define _XOPEN_SOURCE
+#include <ucontext.h>
+#include <stdlib.h>
 #include <stdio.h>
+#include <time.h>
 #include <fcntl.h>
 #include <unistd.h>
-#include <err.h>
-#include <string.h>
-#include <errno.h>
-#include "ckpt.h"
-#include "pac.h"
-#include "vm_region.h"
-#include "writeckpt.h"
+
 
 int ckptfilename(char *buf, size_t len)
 {
@@ -65,7 +67,7 @@ int write_vm_region(int fd, const ckpt_vm_region_t *rgn)
         return 0;
 }
 
-int write_context(int fd, const ckpt_context_t *ctx)
+int write_context(int fd, const ucontext_t *ctx)
 {
         if (writeall(fd, (void *)ctx, sizeof(*ctx)) < 0)
                 return -1;
@@ -76,12 +78,11 @@ int write_context(int fd, const ckpt_context_t *ctx)
 int write_ckpt(const ckpt_metadata_t *meta, 
                const ckpt_header_t *headers, 
                const ckpt_vm_region_t *regions, 
-               const ckpt_context_t *contexts)
+               const ucontext_t *uctx)
 {
         int                     fd, retval;
         char                    ckptfile[256];
         const ckpt_vm_region_t  *rgn    = regions;
-        const ckpt_context_t    *ctx    = contexts;
 
         ckptfilename(ckptfile, sizeof(ckptfile));
         fd = open(ckptfile, O_CREAT | O_EXCL | O_WRONLY, 0666);
@@ -108,12 +109,11 @@ int write_ckpt(const ckpt_metadata_t *meta,
                         rgn++;
                         break;
                 case CKPT_CONTEXT_HEADER:
-                        retval = writeall(fd, ctx, sizeof(*ctx));
-                        ctx++;
+                        retval = write_context(fd, uctx);
                         break;
                 default:
                         /* Unrecognized header */
-                        __builtin_trap();
+                        xnd_abort();
                 }
 
                 if (retval < 0) {

@@ -8,10 +8,11 @@
 
 #include <stdlib.h>
 #include <stdio.h>
+#include <string.h>
+#include <errno.h>
 #include <unistd.h>
 #include <assert.h>
 #include <time.h>
-#include <errno.h>
 #include <signal.h>
 
 static __always_inline pthread_t encode_pthread(struct thread_info *t)
@@ -33,23 +34,24 @@ int __pthread_create_hook(pthread_t *p, const pthread_attr_t *attr,
                           void *(*start_routine)(void *), void *arg)
 {
         int                     retval;
-        struct thread_info      *new, *self = thread_self();
+        struct thread_info      *new;
          
         new = thread_init(start_routine, arg);
         
-        unsafe_enter(self);
+        unsafe_enter();
         retval = pthread_create(p, attr, thread_start, new);
         if (retval != 0) {
+                xnd_warn("pthread_create: %s\n", strerror(retval));
                 free(new);
                 return retval;
         }
 
-        pthread_mutex_lock(&new->lock);
+        xnd_assert(pthread_mutex_lock(&new->lock) == 0);
         while (new->state != ST_RUNNING) {
                 pthread_cond_wait(&new->cond, &new->lock);
         }
-        pthread_mutex_unlock(&new->lock);
-        assert(unsafe_exit(self));
+        xnd_assert(pthread_mutex_unlock(&new->lock) == 0);
+        unsafe_exit();
         
         /**
          * Set pthread_t to be an opaque pointer to a libckpt internal
@@ -68,34 +70,32 @@ int __pthread_create_hook(pthread_t *p, const pthread_attr_t *attr,
 int __pthread_join_hook(pthread_t p, void **value_ptr)
 {
         int                     err;
-        struct thread_info      *th, *self = thread_self();
+        struct thread_info      *th;
         
-        if (!validate_pthread(p)) {
+        if (!validate_pthread(p))
                 return ESRCH;
-        }
         th = decode_pthread(p);
 
-        assert(pthread_mutex_lock(&th->lock) == 0);
+        xnd_assert(pthread_mutex_lock(&th->lock) == 0);
+        th->joining = 1;
         while (!th->exiting) {
                 err = pthread_cond_wait(&th->cond, &th->lock);
-                if (unlikely(err != 0)) {
-                        pthread_mutex_unlock(&th->lock);
-                        unsafe_enter(self);
-                        err = pthread_kill(th->self, 0);
-                        assert(unsafe_exit(self));
-                        return err == ESRCH ? ESRCH : EINVAL;
-                }
+                if (unlikely(err != 0))
+                        return EINVAL;
         }
-        assert(pthread_mutex_unlock(&th->lock) == 0);
+        xnd_assert(pthread_mutex_unlock(&th->lock) == 0);
         
-        unsafe_enter(self);
+        unsafe_enter();
         if (pthread_kill(th->self, 0) == ESRCH) {
-                assert(unsafe_exit(self));
-                return ESRCH;
+                err = ESRCH;
+                unsafe_exit();
+                goto done;
         }
         err = pthread_join(th->self, value_ptr);
-        assert(unsafe_exit(self));
+        unsafe_exit();
 
+done:
+        thread_reap(th);
         return err;
 }
 
@@ -124,7 +124,7 @@ int __pthread_equal_hook(pthread_t p1, pthread_t p2)
 
 int __pthread_kill_hook(pthread_t p, int sig)
 {
-        struct thread_info      *th, *self = thread_self();
+        struct thread_info      *th;
         int                     err;
 
         if (!validate_pthread(p)) {
@@ -144,16 +144,16 @@ int __pthread_kill_hook(pthread_t p, int sig)
          * to restart after a checkpoint (the mach port will be invalid 
          * by then).
          */
-        unsafe_enter(self);
+        unsafe_enter();
         err = pthread_kill(th->self, sig);
-        assert(unsafe_exit(self));
+        unsafe_exit();
 
         return err;
 }
 
 int __pthread_detach_hook(pthread_t p)
 {
-        struct thread_info      *th, *self = thread_self();
+        struct thread_info      *th;
         int                     err;
 
         if (!validate_pthread(p)) {
@@ -162,9 +162,9 @@ int __pthread_detach_hook(pthread_t p)
         
         th = decode_pthread(p);
         
-        unsafe_enter(self);
+        unsafe_enter();
         err = pthread_detach(th->self);
-        assert(unsafe_exit(self));
+        unsafe_exit();
 
         return err;
 }
@@ -210,7 +210,7 @@ int __pthread_sigmask_hook(int how, const sigset_t *set, sigset_t *oset)
 int __pthread_setschedparam_hook(pthread_t p, int policy, 
                                  const struct sched_param *param)
 {
-        struct thread_info      *th, *self = thread_self();
+        struct thread_info      *th;
         int                     err;
         
         if (!validate_pthread(p)) {
@@ -219,9 +219,9 @@ int __pthread_setschedparam_hook(pthread_t p, int policy,
 
         th = decode_pthread(p);
         
-        unsafe_enter(self);
+        unsafe_enter();
         err = pthread_setschedparam(th->self, policy, param);
-        assert(unsafe_exit(self));
+        unsafe_exit();
 
         return err;
 }
@@ -229,7 +229,7 @@ int __pthread_setschedparam_hook(pthread_t p, int policy,
 int __pthread_getschedparam_hook(pthread_t p, int *policy,
                                  struct sched_param *param)
 {
-        struct thread_info      *th, *self = thread_self();
+        struct thread_info      *th;
         int                     err;
 
         if (!validate_pthread(p)) {
@@ -238,16 +238,16 @@ int __pthread_getschedparam_hook(pthread_t p, int *policy,
 
         th = decode_pthread(p);
         
-        unsafe_enter(self);
+        unsafe_enter();
         err = pthread_getschedparam(th->self, policy, param);
-        assert(unsafe_exit(self));
+        unsafe_exit();
 
         return err;
 }
 
 void *__pthread_get_stackaddr_np_hook(pthread_t p)
 {
-        struct thread_info      *th, *self = thread_self();
+        struct thread_info      *th;
         void                    *retval;
 
         if (!validate_pthread(p)) {
@@ -255,20 +255,20 @@ void *__pthread_get_stackaddr_np_hook(pthread_t p)
         }
 
         th = decode_pthread(p);
-        if (th == self || th == main_thread()) {
+        if (th == thread_self_or_null() || th == main_thread()) {
                 return pthread_get_stackaddr_np(th->self);
         }
         
-        unsafe_enter(self);
+        unsafe_enter();
         retval = pthread_get_stackaddr_np(th->self);
-        assert(unsafe_exit(self));
+        unsafe_exit();
 
         return retval;
 }
 
 size_t __pthread_get_stacksize_np_hook(pthread_t p)
 {
-        struct thread_info      *th, *self = thread_self();
+        struct thread_info      *th;
         size_t                  retval;
 
         if (!validate_pthread(p)) {
@@ -276,7 +276,7 @@ size_t __pthread_get_stacksize_np_hook(pthread_t p)
         }
 
         th = decode_pthread(p);
-        if (th == self || th == main_thread()) {
+        if (th == thread_self_or_null() || th == main_thread()) {
                 /**
                  * pthread_get_stacksize_np won't grab the internal
                  * thread list lock if the calling thread is the main
@@ -286,16 +286,16 @@ size_t __pthread_get_stacksize_np_hook(pthread_t p)
                 return pthread_get_stacksize_np(th->self);
         }
         
-        unsafe_enter(self);
+        unsafe_enter();
         retval = pthread_get_stacksize_np(th->self);
-        assert(unsafe_exit(self));
+        unsafe_exit();
         
         return retval;
 }
 
 int __pthread_cancel_hook(pthread_t p)
 {
-        struct thread_info      *th, *self = thread_self();
+        struct thread_info      *th;
         int                     err;
 
         if (!validate_pthread(p)) {
@@ -304,9 +304,9 @@ int __pthread_cancel_hook(pthread_t p)
 
         th = decode_pthread(p);
         
-        unsafe_enter(self);
+        unsafe_enter();
         err = pthread_cancel(th->self);
-        assert(unsafe_exit(self));
+        unsafe_exit();
 
         return err;
 }
@@ -381,3 +381,19 @@ void __pthread_slot_fixup()
 
         slot_ptr[0] = new_ptr ^ pthread_xor_cookie;
 }
+
+INTERPOSE(__pthread_create_hook, pthread_create);
+INTERPOSE(__pthread_join_hook, pthread_join);
+INTERPOSE(__pthread_exit_hook, pthread_exit);
+INTERPOSE(__pthread_self_hook, pthread_self);
+INTERPOSE(__pthread_equal_hook, pthread_equal);
+INTERPOSE(__pthread_kill_hook, pthread_kill);
+INTERPOSE(__pthread_detach_hook, pthread_detach);
+INTERPOSE(__pthread_sigmask_hook, pthread_sigmask);
+INTERPOSE(__pthread_setschedparam_hook, pthread_setschedparam);
+INTERPOSE(__pthread_getschedparam_hook, pthread_getschedparam);
+INTERPOSE(__pthread_get_stackaddr_np_hook, pthread_get_stackaddr_np);
+INTERPOSE(__pthread_get_stacksize_np_hook, pthread_get_stacksize_np);
+INTERPOSE(__pthread_cancel_hook, pthread_cancel);
+INTERPOSE(__pthread_main_thread_np_hook, pthread_main_thread_np);
+INTERPOSE(__pthread_main_np_hook, pthread_main_np);

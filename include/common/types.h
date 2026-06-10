@@ -28,6 +28,5 @@ typedef unsigned long long      ullong;
 typedef enum    ckpt_header     ckpt_header_t;
 typedef struct  ckpt_metadata   ckpt_metadata_t;
 typedef struct  ckpt_vm_region  ckpt_vm_region_t;
-typedef ucontext_t              ckpt_context_t;
 
 #endif /* TYPES_H */

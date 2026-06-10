@@ -1,12 +1,13 @@
 /* pac.h */
-#ifndef __CKPT_PAC_H__
-#define __CKPT_PAC_H__
+#ifndef XND_PAC_H
+#define XND_PAC_H
+
+#include "xnd/xnd.h"
+
 #define _XOPEN_SOURCE
 #include <ucontext.h>
-#include <assert.h>
 #include <mach/mach.h>
 #include <mach/arm/_structs.h>
-#include "xnd.h"
 
 #if __DARWIN_OPAQUE_ARM_THREAD_STATE64
 /**

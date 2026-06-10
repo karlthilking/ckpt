@@ -1,13 +1,14 @@
 /* readckpt.c */
+
+#include "xnd/xnd.h"
+#include "xnd/readckpt.h"
+#include "xnd/ckpt.h"
+#include "xnd/vm_region.h"
+#include "xnd/pac.h"
+
 #define _XOPEN_SOURCE
-#include <err.h>
-#include <unistd.h>
-#include <assert.h>
 #include <ucontext.h>
-#include "ckpt.h"
-#include "readckpt.h"
-#include "pac.h"
-#include "vm_region.h"
+#include <unistd.h>
 
 int readall(int fd, void *buf, size_t size)
 {
@@ -34,27 +35,25 @@ int read_vm_region(int fd, ckpt_vm_region_t *rgn)
         return retval;
 }
 
-int read_context(int fd, ckpt_context_t *ctx)
+int read_context(int fd, ucontext_t *uctx)
 {
-        if (readall(fd, ctx, sizeof(*ctx)) < 0)
+        if (readall(fd, uctx, sizeof(ucontext_t)) < 0)
                 return -1;
-        
-        ctx->uc_mcontext = &ctx->__mcontext_data;
+
+        uctx->uc_mcontext = (mcontext_t)&uctx->__mcontext_data;
         return 0;
 }
 
 int read_ckpt(int fd, const ckpt_metadata_t *meta, ckpt_header_t *headers,
-              ckpt_vm_region_t *regions, ckpt_context_t *contexts)
+              ckpt_vm_region_t *regions, ucontext_t *uctx)
 {
+        ckpt_vm_region_t        *rgn = regions;
         int                     retval;
-        ckpt_vm_region_t        *rgn    = regions;
-        ckpt_context_t          *ctx    = contexts;
 
         for (u32 i = 0; i < meta->nr_headers; i++) {
                 if (readall(fd, &headers[i], sizeof(headers[i])) < 0) {
-                        fprintf(stderr, 
-                                "Failed to read checkpoint header\n");
-                        return -1;
+                        xnd_error("Failed to read checkpoint header\n");
+                        goto bad;
                 }
 
                 switch (headers[i]) {
@@ -63,22 +62,21 @@ int read_ckpt(int fd, const ckpt_metadata_t *meta, ckpt_header_t *headers,
                         rgn++;
                         break;
                 case CKPT_CONTEXT_HEADER:
-                        retval = read_context(fd, ctx);
-                        ctx++;
+                        retval = read_context(fd, uctx);
                         break;
                 default:
-                        __builtin_trap();
+                        xnd_abort();
                 }
 
                 if (retval < 0) {
-                        fprintf(stderr,
-                                "Error reading %s from checkpoint\n",
-                                CKPT_HEADER_STRING(headers[i]));
-                        close(fd);
-                        return -1;
+                        xnd_error("Failed to read checkpoint data!\n");
+                        goto bad;
                 }
         }
 
         close(fd);
         return 0;
+bad:
+        close(fd);
+        return -1;
 }

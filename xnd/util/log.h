@@ -18,7 +18,12 @@ enum xnd_log_fd {
         XND_TRACE_FD    = 803
 };
 
-#define XND_DEFAULT_LOG_LEVEL   XND_WARNINGS
+#if DEVELOPMENT || DEBUG
+# define XND_DEFAULT_LOG_LEVEL XND_TRACING
+#else
+# define XND_DEFAULT_LOG_LEVEL XND_WARNINGS
+#endif
+
 #define XND_MIN_LOG_LEVEL       XND_ERRORS
 #define XND_MAX_LOG_LEVEL       XND_TRACING
 
@@ -28,30 +33,30 @@ enum xnd_log_fd {
 
 #define xnd_print(__fd, __type, __fmt, ...) \
         dprintf(__fd, "[xnd:%s %s:%s]" __fmt, __type,   \
-                __XND_FILE__, __func__, __VA_ARGS__)
+                __XND_FILE__, __func__, ##__VA_ARGS__)
 
 #define xnd_error(__fmt, ...) \
-        xnd_print(XND_ERROR_FD, "error", __fmt, __VA_ARGS__)
+        xnd_print(XND_ERROR_FD, "error", __fmt, ##__VA_ARGS__)
 #define xnd_warn(__fmt, ...) \
-        xnd_print(XND_WARN_FD, "warning", __fmt, __VA_ARGS__)
+        xnd_print(XND_WARN_FD, "warning", __fmt, ##__VA_ARGS__)
 #define xnd_debug(__fmt, ...) \
-        xnd_print(XND_DEBUG_FD, "debug", __fmt, __VA_ARGS__)
+        xnd_print(XND_DEBUG_FD, "debug", __fmt, ##__VA_ARGS__)
 #define xnd_trace(__fmt, ...) \
-        xnd_print(XND_TRACE_FD, "trace", __fmt, __VA_ARGS__)
+        xnd_print(XND_TRACE_FD, "trace", __fmt, ##__VA_ARGS__)
 
 #define xnd_abort() \
-        do { __asm__ __volatile__("brk 777") } while (0)
+        do { __asm__ __volatile__("brk 777"); } while (0)
 
 #define xnd_assert(__expr) do {                                 \
-        if (unlikely(!(__expr)) {                               \
-                xnd_error("Assertion failed: %s\n", ##__expr);  \
+        if (unlikely(!(__expr))) {                              \
+                xnd_error("Assertion failed: %s\n", #__expr);   \
                 xnd_abort();                                    \
         }                                                       \
 } while (0)
 
 #define xnd_panic(__fmt, ...) do {                              \
         dprintf(STDERR_FILENO, "[xnd:panic %s:%s]" __fmt,       \
-                __XND_FILE__, __func__, __VA_ARGS__);           \
+                __XND_FILE__, __func__, ##__VA_ARGS__);         \
         xnd_abort();                                            \
 } while (0)
 
