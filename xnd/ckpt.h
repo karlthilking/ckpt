@@ -38,7 +38,7 @@ typedef enum ckpt_header {
          ((__header) == CKPT_CONTEXT_HEADER)    ? "context"     : "")
 
 #define MAX_CKPT_HEADERS        (512)
-#define MAX_CKPT_VM_REGIONS     (128)
+#define MAX_CKPT_VM_REGIONS     (512)
 #define MAX_CKPT_CONTEXTS       (1)
 
 typedef enum ckpt_state {

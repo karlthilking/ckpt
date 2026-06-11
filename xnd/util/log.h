@@ -62,5 +62,6 @@ enum xnd_log_fd {
 
 void xnd_log_setup(void);
 void xnd_log_cleanup(void);
+void xnd_log_setup_direct(int);
 
 #endif /* XND_LOG_H */

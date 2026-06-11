@@ -45,7 +45,8 @@ int __pthread_create_hook(pthread_t *p, const pthread_attr_t *attr,
                 free(new);
                 return retval;
         }
-
+        
+        xnd_trace("Created new thread (0x%lx)\n", (uintptr_t)p);
         xnd_assert(pthread_mutex_lock(&new->lock) == 0);
         while (new->state != ST_RUNNING) {
                 pthread_cond_wait(&new->cond, &new->lock);
@@ -138,9 +139,8 @@ int __pthread_kill_hook(pthread_t p, int sig)
         struct thread_info      *th;
         int                     err;
 
-        if (!validate_pthread(p)) {
-                return ESRCH;
-        }
+        if (!validate_pthread(p))
+                return pthread_kill(p, sig);
         
         if (sig == SIGUSR1 || sig == SIGUSR2) {
                 fprintf(stderr, "%s is reserved for libckpt\n",

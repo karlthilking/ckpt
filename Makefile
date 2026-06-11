@@ -29,7 +29,8 @@ XND_RESTART_SOURCES := \
         xnd/vm_common.c \
         xnd/vm_restore.c \
         xnd/readckpt.c \
-        xnd/shared_cache.c
+        xnd/shared_cache.c \
+        xnd/util/log.c
 
 XND_RUN_SOURCES := \
         xnd/xnd_run.c \
@@ -53,11 +54,15 @@ $(BUILD)/libxnd.dylib: $(LIBXND_SOURCES) | $(BUILD)
 
 __TEXT          := 0x500000000000
 __DATA          := 0x500000004000
-__LINKEDIT      := 0x500000008000
+__DATA_CONST    := 0x500000008000
+__LINKEDIT      := 0x50000000c000
+STACKADDR       := 0x50000010c000
 $(BUILD)/xnd_restart: $(XND_RESTART_SOURCES) | $(BUILD)
 	$(CC) $(CFLAGS) \
+        -DXND_RESTART_STACKADDR=$(STACKADDR) \
 	-Wl,-segaddr,__TEXT,$(__TEXT) \
 	-Wl,-segaddr,__DATA,$(__DATA) \
+        -Wl,-segaddr,__DATA_CONST,$(__DATA_CONST) \
 	-Wl,-segaddr,__LINKEDIT,$(__LINKEDIT) \
 	-o $@ $^
 

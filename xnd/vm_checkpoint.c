@@ -6,9 +6,9 @@
 int ckpt_vm_valid_region(const vm_region_submap_info_data_64_t *info,
                          mach_vm_address_t addr, mach_vm_size_t size)
 {
-        if (PAGEZERO(addr, size) || info->max_protection == VM_PROT_NONE)
+        if (PAGEZERO(addr, size) || info->max_protection == VM_PROT_NONE) {
                 return 0;
-        else if (RESTART_REGION(info)) {
+        } else if (RESTART_REGION(info)) {
                 /* Restart region, can be discared */
                 return 0;
         } else if (DYLD_SHARED_CACHE_REGION(addr, size)) {
@@ -57,6 +57,17 @@ int ckpt_vm_valid_region(const vm_region_submap_info_data_64_t *info,
         case VM_MEMORY_UNSHARED_PMAP:
                 return 0;
         case VM_MEMORY_DYLIB:
+        case VM_MEMORY_OS_ALLOC_ONCE:
+                return 1;
+        case VM_MEMORY_FOUNDATION:
+        case VM_MEMORY_JAVA:
+        case VM_MEMORY_GLSL:
+        case VM_MEMORY_OPENCL:
+        case VM_MEMORY_LIBDISPATCH:
+        case VM_MEMORY_ACCELERATE:
+        case VM_MEMORY_SWIFT_RUNTIME:
+                if (info->protection & VM_PROT_WRITE)
+                        return info->pages_resident && info->pages_dirtied;
                 return 1;
         default:
                 break;

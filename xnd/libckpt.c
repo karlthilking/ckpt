@@ -58,20 +58,24 @@ void docheckpoint(ucontext_t *uctx)
 
         bzero(&meta, sizeof(meta));
         if (shared_cache_get_info(&meta.shared_cache_info) < 0) {
-                fprintf(stderr,
-                        "Failed to get shared cache info, "
-                        "aborting checkpoint...\n");
+                xnd_warn("Failed to get dyld shared cache info,"
+                         "aborting checkpoint...\n");
                 return;
         }
 
         meta.nr_regions = ckpt_vm_save_regions(regions);
+        if (unlikely(meta.nr_regions > MAX_CKPT_VM_REGIONS)) {
+                xnd_error("Not enough space to save all memory regions!\n");
+                return;
+        }
+
         meta.nr_headers += meta.nr_regions;
         for (u32 i = 0; i < meta.nr_regions; i++) {
                 headers[i] = CKPT_VM_REGION_HEADER;
         }
         
         headers[meta.nr_headers] = CKPT_CONTEXT_HEADER;
-        meta.nr_contexts = 1;
+        meta.nr_contexts++;
         meta.nr_headers++;
 
         write_ckpt(&meta, headers, regions, uctx);

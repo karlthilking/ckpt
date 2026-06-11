@@ -27,12 +27,11 @@ int ckpt_vm_mark_regions(void)
                 }
                 
                 /**
-                 * Don't bother marking regions which will be handled by
-                 * by libxnd exceptionally regardless.
+                 * Don't bother marking regions which will be handled
+                 * exceptionally regardless.
                  */
-                if (info.max_protection == VM_PROT_NONE ||
-                    DYLD_SHARED_CACHE_REGION(addr, size) ||
-                    PAGEZERO(addr, size) || VM_REGION_SHARED(&info)) {
+                if (PAGEZERO(addr, size) ||
+                    DYLD_SHARED_CACHE_REGION(addr, size)) {
                         addr += size;
                         continue;
                 }
