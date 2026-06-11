@@ -19,35 +19,34 @@ int ckpt_vm_mark_regions(void)
                         (vm_region_recurse_info_t)&info, &count
                 );
 
-                if (ret != KERN_SUCCESS)
+                if (ret != KERN_SUCCESS) {
                         break;
-                else if (info.is_submap ||
-                         info.max_protection == VM_PROT_NONE) {
-                        addr += size;
+                } else if (info.is_submap) {
+                        depth++;
                         continue;
-                } else if (PAGEZERO(addr, size) ||
-                           DYLD_SHARED_CACHE_REGION(addr, size) ||
-                           VM_REGION_SHARED(&info)) {
+                }
+                
+                /**
+                 * Don't bother marking regions which will be handled by
+                 * by libxnd exceptionally regardless.
+                 */
+                if (info.max_protection == VM_PROT_NONE ||
+                    DYLD_SHARED_CACHE_REGION(addr, size) ||
+                    PAGEZERO(addr, size) || VM_REGION_SHARED(&info)) {
                         addr += size;
                         continue;
                 }
-        
-                ret = mach_vm_inherit(
-                        mach_task_self(), addr, size,
-                        RESTART_REGION_INHERIT_FLAG
-                );
-
+                
+                ret = mach_vm_inherit(mach_task_self(), addr, size,
+                                      RESTART_REGION_INHERIT_FLAG);
                 if (ret != KERN_SUCCESS) {
                         xnd_warn("mach_vm_inherit: %s\n",
                                  mach_error_string(ret));
                         return -1;
                 }
 
-                ret = mach_vm_behavior_set(
-                        mach_task_self(), addr, size,
-                        RESTART_REGION_BEHAVIOR_FLAG
-                );
-
+                ret = mach_vm_behavior_set(mach_task_self(), addr, size,
+                                           RESTART_REGION_BEHAVIOR_FLAG);
                 if (ret != KERN_SUCCESS) {
                         xnd_warn("mach_vm_behavior_set: %s\n",
                                  mach_error_string(ret));

@@ -11,10 +11,11 @@
 
 static __always_inline u64 *first_signed_frame(u64 *fp)
 {
-        for (; fp != NULL; fp = (u64 *)fp[0]) {
-                if (PTRAUTH_SIGNED(fp[1])) {
-                        return fp;
-                }
+        u64 *__fp;
+
+        for (__fp = fp; __fp != NULL; __fp = (u64 *)__fp[0]) {
+                if (PTRAUTH_SIGNED(__fp[1]))
+                        return __fp;
         }
 
         return NULL;
@@ -22,13 +23,26 @@ static __always_inline u64 *first_signed_frame(u64 *fp)
 
 static __always_inline u64 *next_signed_frame(u64 *fp)
 {
-        for (fp = (u64 *)fp[0]; fp != NULL; fp = (u64 *)fp[0]) {
-                if (PTRAUTH_SIGNED(fp[1])) {
-                        return fp;
-                }
+        u64 *__fp = fp;
+
+        if (!__fp)
+                return NULL;
+
+        for (__fp = (u64 *)fp[0]; __fp != NULL; __fp = (u64 *)__fp[0]) {
+                if (PTRAUTH_SIGNED(__fp[1]))
+                        return __fp;
         }
 
         return NULL;
+}
+
+static __always_inline void ucontext_populate_mctx(ucontext_t *uctx)
+{
+        if (uctx->uc_mcontext == &uctx->__mcontext_data)
+                return;
+        memmove(&uctx->__mcontext_data, uctx->uc_mcontext,
+                sizeof(uctx->__mcontext_data));
+        uctx->uc_mcontext = &uctx->__mcontext_data;
 }
 
 /**
@@ -36,11 +50,11 @@ static __always_inline u64 *next_signed_frame(u64 *fp)
  *  Patch ucontext pointer that was delivered in signal
  *  handler frame during checkpoint.
  */
-void pac_patch_context(ckpt_context_t *ctx)
+void pac_patch_context(ucontext_t *uctx)
 {
-        u64 fp = get_ucontext_fp(ctx);
-        u64 lr = get_ucontext_lr(ctx);
-        u64 sp = get_ucontext_sp(ctx);
+        u64 fp = get_ucontext_fp(uctx);
+        u64 lr = get_ucontext_lr(uctx);
+        u64 sp = get_ucontext_sp(uctx);
         
         /**
          * Unconditionally strip and resign link register
@@ -55,27 +69,18 @@ void pac_patch_context(ckpt_context_t *ctx)
          */
         XPACI(lr);
         PACIA(lr, LR_DISCRIMINATOR);
-        set_ucontext_lr(ctx, lr);
-        set_ucontext_flags(ctx, 0);
+        set_ucontext_lr(uctx, lr);
+        set_ucontext_flags(uctx, 0);
         
         XPACD(fp);
         PACDA(fp, FP_DISCRIMINATOR);
-        set_ucontext_fp(ctx, fp);
+        set_ucontext_fp(uctx, fp);
         
         XPACD(sp);
         PACDA(sp, SP_DISCRIMINATOR);
-        set_ucontext_sp(ctx, sp);
-
-        /**
-         * Copy the context pointed to by ucp->uc_mcontext
-         * to ucp->__mcontext_data because setcontext()
-         * will access the register context through
-         * __mcontext_data.
-         */
-        if (ctx->uc_mcontext != (mcontext_t)&ctx->__mcontext_data) {
-                memmove(&ctx->__mcontext_data, ctx->uc_mcontext,
-                        sizeof(ctx->__mcontext_data));
-        }
+        set_ucontext_sp(uctx, sp);
+        
+        ucontext_populate_mctx(uctx);
 }
 
 void pac_resign_frames(u64 *fp)

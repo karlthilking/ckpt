@@ -28,7 +28,7 @@ __noreturn noinline void restart(int fd)
 
         ckpt_header_t           headers[meta.nr_headers];
         ckpt_vm_region_t        regions[meta.nr_regions];
-        ckpt_context_t          ctx;
+        ucontext_t              ctx;
 
         retval = read_ckpt(fd, &meta, headers, regions, &ctx);
         if (retval < 0) {

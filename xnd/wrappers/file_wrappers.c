@@ -153,12 +153,14 @@ void fd_table_destroy(void)
         int fd;
 
         for (fd = 0; fd < MAXFILES; fd++) {
-                if (fd_table[fd].src == NULL) {
+                if (fd_table[fd].type == FD_UNUSED) {
+                        xnd_assert(fd_table[fd].src == NULL);
                         continue;
                 }
                 fd_table[fd].src->ref--;
                 if (fd_table[fd].src->ref == 0) {
                         free(fd_table[fd].src);
+                        fd_table[fd].src = NULL;
                 }
         }
 }
@@ -231,16 +233,18 @@ void fd_table_close(int fd)
 {
         if (get_ckpt_state() == LIBCKPT_UNINITIALIZED) {
                 return;
+        } else if (fd_table[fd].type == FD_UNUSED) {
+                xnd_assert(fd_table[fd].src == NULL);
+                return;
         }
         
         fd_table[fd].type = FD_UNUSED;
         fd_table[fd].src->ref--;
-
         if (fd_table[fd].src->ref == 0) {
                 /* Free fd backing info if last reference */
                 free(fd_table[fd].src);
-                fd_table[fd].src = NULL;
         }
+        fd_table[fd].src = NULL;
 }
 
 int __openat_hook(int dirfd, const char *path, int flags, ...)

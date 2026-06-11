@@ -100,7 +100,23 @@ void __pthread_exit_hook(void *value_ptr)
 
 pthread_t __pthread_self_hook(void)
 {
-        return encode_pthread(thread_self());
+        struct thread_info *self = thread_self_or_null();
+
+        if (unlikely(!tlv_ok())) {
+                /**
+                 * If thread locals have been dealloacted through _tlv_exit,
+                 * (indicated by the return value of tlv_ok), just return
+                 * the real pthread_t of the thread. It is likely the case
+                 * that destructors are running and libraries need the
+                 * real pthread_t.
+                 */
+                return pthread_self();
+        } else if (unlikely(self == NULL)) {
+                xnd_error("thread_self_or_null() returned NULL!\n");
+                xnd_abort();
+        }
+
+        return encode_pthread(self);
 }
 
 int __pthread_equal_hook(pthread_t p1, pthread_t p2)
@@ -109,9 +125,10 @@ int __pthread_equal_hook(pthread_t p1, pthread_t p2)
          * Validate that the pthread_t passed into pthread_equal
          * is a real tagged thread_info pointer from libckpt.
          */
-        if (!validate_pthread(p1) || !validate_pthread(p2)) {
+        if (unlikely(!tlv_ok()))
+                return pthread_equal(p1, p2);
+        else if (!validate_pthread(p1) || !validate_pthread(p2))
                 return 0;
-        }
 
         return (uintptr_t)p1 == (uintptr_t)p2;
 }
@@ -312,6 +329,13 @@ int __pthread_cancel_hook(pthread_t p)
  */
 pthread_t __pthread_main_thread_np_hook(void)
 {
+        /**
+         * If destructors are being run, just return the real main thread's
+         * pthread_t.
+         */
+        if (unlikely(!tlv_ok()))
+                return pthread_main_thread_np();
+
         return encode_pthread(main_thread());
 }
 
@@ -322,7 +346,10 @@ pthread_t __pthread_main_thread_np_hook(void)
  */
 int __pthread_main_np_hook(void)
 {
-        return thread_self() == main_thread();
+        if (unlikely(!tlv_ok()))
+                return pthread_main_np();
+
+        return pthread_self() == main_thread()->self;
 }
 
 /**

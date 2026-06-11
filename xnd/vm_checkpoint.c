@@ -54,6 +54,7 @@ int ckpt_vm_valid_region(const vm_region_submap_info_data_64_t *info,
         case VM_MEMORY_REALLOC:
         case VM_MEMORY_GUARD:
         case VM_MEMORY_SHARED_PMAP:
+        case VM_MEMORY_UNSHARED_PMAP:
                 return 0;
         case VM_MEMORY_DYLIB:
                 return 1;
@@ -107,7 +108,7 @@ u32 ckpt_vm_save_regions(ckpt_vm_region_t *regions)
         return nr_rgns;
 }
 
-void ckpt_vm_deallocate_regions()
+void ckpt_vm_deallocate_regions(void)
 {
         kern_return_t                   ret;
         mach_vm_address_t               addr    = 0;
@@ -123,14 +124,23 @@ void ckpt_vm_deallocate_regions()
                         (vm_region_recurse_info_t)&info, &count
                 );
 
-                if (ret != KERN_SUCCESS)
+                if (ret != KERN_SUCCESS) {
                         break;
-                else if (RESTART_REGION(&info)) {
-                        ret = mach_vm_deallocate(mach_task_self(), 
-                                                 addr, size);
-                        if (ret != KERN_SUCCESS)
-                                fprintf(stderr, "mach_vm_deallocate: %s\n",
-                                        mach_error_string(ret));
+                } else if (info.is_submap) {
+                        depth++;
+                        continue;
+                } else if (!RESTART_REGION(&info)) {
+                        addr += size;
+                        continue;
+                }
+
+                ret = mach_vm_deallocate(mach_task_self(), addr, size);
+                if (ret == KERN_SUCCESS) {
+                        xnd_trace("Deallocated restart region: %p-%p\n",
+                                  (void *)addr, (void *)(addr + size));
+                } else {
+                        xnd_warn("mach_vm_deallocate: %s\n",
+                                 mach_error_string(ret));
                 }
 
                 addr += size;

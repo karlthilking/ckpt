@@ -15,18 +15,13 @@ static struct __real_sigaction  __real_sigactions[NSIG];
 
 __noreturn void __internal_sigreturn(ucontext_t *ucp)
 {
-        u64 fp;
-
-        pac_patch_context(ucp);
-        fp = get_ucontext_fp(ucp);
-        
-        if (PTRAUTH_SIGNED(fp)) {
-                XPACD(fp);
+        if (ucp->uc_mcontext != &ucp->__mcontext_data) {
+                memmove(&ucp->__mcontext_data, ucp->uc_mcontext,
+                        sizeof(ucp->__mcontext_data));
+                ucp->uc_mcontext = &ucp->__mcontext_data;
         }
 
-        pac_resign_frames((u64 *)fp);
         setcontext(ucp);
-
         unreachable();
 }
 
@@ -92,6 +87,7 @@ sig_t __signal_hook(int sig, sig_t handler)
 
         __real_sigactions[sig].sa_handler = handler;
         __real_sigactions[sig].sa_siginfo = false;
+        xnd_trace("Handler installed for signal %d: %p\n", sig, handler);
 
         return handler;
 }
@@ -114,7 +110,8 @@ sig_t __signal_hook(int sig, sig_t handler)
 int __sigaction_hook(int sig, const struct sigaction *act,
                      struct sigaction *oact)
 {
-        struct sigaction hook;
+        struct sigaction        hook;
+        int                     err;
         
         if (act == NULL) {
                 return sigaction(sig, act, oact);
@@ -132,13 +129,21 @@ int __sigaction_hook(int sig, const struct sigaction *act,
         hook.sa_flags = act->sa_flags | SA_SIGINFO;
         hook.sa_sigaction = __internal_sigtramp;
 
+        err = sigaction(sig, &hook, oact);
+        if (err != 0)
+                return err;
+
         if (act->sa_flags & SA_SIGINFO) {
                 __real_sigactions[sig].sa_sigaction = act->sa_sigaction;
                 __real_sigactions[sig].sa_siginfo = true;
+                xnd_trace("Handler installed for signal %d: %p\n",
+                          sig, act->sa_sigaction);
         } else {
                 __real_sigactions[sig].sa_handler = act->sa_handler;
                 __real_sigactions[sig].sa_siginfo = false;
+                xnd_trace("Handler installed for signal %d: %p\n",
+                          sig, act->sa_handler);
         }
-
-        return sigaction(sig, &hook, oact);
+        
+        return err;
 }

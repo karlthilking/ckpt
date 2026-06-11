@@ -137,6 +137,11 @@
 #define PTRAUTH_FAILED(__ptr) \
         (((__ptr) >> 61) == 0b01 || ((__ptr) >> 62) == 0b10)
 
+#define pac_strip_conditional(__ptr) do {       \
+        if (PTRAUTH_SIGNED((__ptr)))            \
+                XPACI(__ptr);                   \
+} while (0)
+
 /**
  * PAC instruction macros for:
  *
@@ -274,9 +279,7 @@
         for (__fp = first_signed_frame(__fp); __fp != NULL; \
              __fp = next_signed_frame(__fp))
 
-typedef ucontext_t ckpt_context_t;
-
-void pac_patch_context(ckpt_context_t *);
+void pac_patch_context(ucontext_t *);
 void pac_resign_frames(u64 *);
 
 #endif // __CKPT_PAC_H__

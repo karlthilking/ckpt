@@ -256,7 +256,7 @@ void thread_reap(struct thread_info *zombie)
 
 __noreturn void thread_exit(void *exit_value)
 {
-        xnd_assert(myself != NULL);
+        xnd_assert(myself);
         xnd_assert(pthread_mutex_lock(&myself->lock) == 0);
         
         tlv_exit();
@@ -264,7 +264,7 @@ __noreturn void thread_exit(void *exit_value)
 
         pthread_cond_signal(&myself->cond);
         xnd_assert(pthread_mutex_unlock(&myself->lock) == 0);
-
+        
         pthread_exit(exit_value);
         unreachable();
 }
@@ -650,21 +650,37 @@ void thread_save_tls(void)
  *  slots 125-209 and 256-767 for thread locals.
  *  Also restore per-thread cleanup stack that was located in the
  *  thread's previous struct pthread_s.
+ *
+ * From Apple's libpthread:
+ *      Keys 0 - 9 are for Libsyscall/libplatform usage
+ *      Keys 10 - 29 are for Libc/Libsystem internal usage
+ *      Keys 20-29,120-125 for libdispatch usage
+ *      Keys 30-255 for Non Libsystem usage
+ *      Keys 30-39 for Graphic frameworks usage
+ *      Keys 40-49 for Objective-C runtime usage
+ *      Keys 50-59 for Core Foundation usage
+ *      Keys 60-69 for Foundation usage
+ *      Keys 70-79 for Core Animation/QuartzCore usage
+ *      Keys 80-89 for CoreData
+ *      Keys 90-94 for JavaScriptCore Collection
+ *      Keys 95 for CoreText
+ *      Keys 100-109 are for the Swift runtime
+ *      Keys 110-115 for libmalloc
+ *      Keys 115-120 for libdispatch workgroups
+ *      125 - 209 for shared cache dylibs __thread support
  */
 void thread_restore_tls(void)
 {
-        uintptr_t                               tls;
-        void                                    **dst, **src;
-        // struct __darwin_pthread_handler_rec     *cleanup;
+        uintptr_t       tls;
+        void            **dst, **src;
 
-        asm volatile("mrs %0, tpidrro_el0" : "=r" (tls) :: "memory"); 
-        // cleanup = get_thread_cleanup_stack(myself->tls);
+        asm volatile("mrs %0, tpidrro_el0" : "=r" (tls) :: "memory");
         set_thread_cleanup_stack(NULL);
 
         dst = (void **)tls;
         src = (void **)myself->tls;
-
-        for (uint slot = 125; slot < 210; slot++) {
+        
+        for (uint slot = 30; slot < 256; slot++) {
                 if (dst[slot] == NULL && src[slot] != NULL)
                         dst[slot] = src[slot];
                 else if (dst[slot] != NULL && src[slot] == NULL)
