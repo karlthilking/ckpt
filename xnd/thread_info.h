@@ -101,7 +101,8 @@ static __always_inline void unsafe_enter(void)
 {
         struct thread_info *self = thread_self_or_null();
 
-        if (unlikely(self == NULL || self->state == ST_CKPT_THREAD))
+        if (unlikely(self == NULL || self->state == ST_EMBRYO ||
+                     self->state == ST_CKPT_THREAD))
                 return;
         if (self->wrapper_depth++ == 0)
                 while (!thread_state_cas(self, ST_RUNNING, ST_UNSAFE));
@@ -111,7 +112,8 @@ static __always_inline void unsafe_exit(void)
 {
         struct thread_info *self = thread_self_or_null();
 
-        if (unlikely(self == NULL || self->state == ST_CKPT_THREAD))
+        if (unlikely(self == NULL || self->state == ST_CKPT_THREAD ||
+                     self->state == ST_EMBRYO))
                 return;
         if (--self->wrapper_depth == 0)
                 thread_state_cas(self, ST_UNSAFE, ST_RUNNING);

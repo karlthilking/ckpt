@@ -144,6 +144,7 @@ void fd_table_init(void)
 
         for (int fd = 0; fd <= 2; fd++) {
                 fd_table[fd].src = malloc(sizeof(struct fd_backing));
+                xnd_assert(fd_table[fd].src != NULL);
                 fd_table[fd].src->ref = 1;
         }
 }

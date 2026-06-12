@@ -39,7 +39,6 @@ static void initialize(double *grid, ulong nx, ulong ny)
 static void step(const double *restrict ogrid, double *restrict ngrid,
                  ulong nx, ulong ny, double alpha)
 {
-        /* T_t+1 = T_t + alpha * (T_l + T_r + T_u + T_d - 4 * T_t) */
         #pragma omp parallel for collapse(2) schedule(static)
         for (ulong y = 1; y < ny - 1; y++) {
                 for (ulong x = 1; x < nx - 1; x++) {

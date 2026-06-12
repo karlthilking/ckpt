@@ -47,7 +47,7 @@ __noreturn noinline void restart(int fd)
 
         pac_resign_frames((u64 *)fp);
         pac_patch_context(&ctx);
-
+        
         if (setcontext(&ctx) < 0) {
                 err(EXIT_FAILURE, "setcontext");
         }

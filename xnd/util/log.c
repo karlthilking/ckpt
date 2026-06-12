@@ -5,7 +5,10 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <unistd.h>
-#include <errno.h>
+#include <fcntl.h>
+#include <time.h>
+#include <limits.h>
+#include <mach-o/dyld.h>
 
 static int log_level = XND_DEFAULT_LOG_LEVEL;
 static int level_to_fd[] = { 
@@ -14,17 +17,16 @@ static int level_to_fd[] = {
 
 void xnd_log_setup(void)
 {
-        char *level_str;
+        char    *level_str;
+        int     level;
         
         level_str = getenv("XND_LOG_LEVEL");
         if (level_str)
-                log_level = min(atoi(level_str), XND_MAX_LOG_LEVEL);
+                level = min(atoi(level_str), XND_MAX_LOG_LEVEL);
+        else
+                level = XND_DEFAULT_LOG_LEVEL;
         
-        for (int l = 0; l <= log_level; l++) {
-                if (dup2(STDERR_FILENO, level_to_fd[l]) < 0)
-                        perror("dup2");
-        }
-        xnd_trace("XND_LOG_LEVEL=%d\n", log_level);
+        xnd_log_setup_direct(level);
 }
 
 void xnd_log_cleanup(void)
@@ -35,7 +37,21 @@ void xnd_log_cleanup(void)
 
 void xnd_log_setup_direct(int level)
 {
-        log_level = min(level, XND_MAX_LOG_LEVEL);
-        for (int l = 0; l <= log_level; l++)
+        int     logfd;
+        char    buf[PATH_MAX];
+        
+        log_level = level;
+        for (int l = 0; l <= min(log_level, XND_DEBUGGING); l++)
                 dup2(STDERR_FILENO, level_to_fd[l]);
+        
+        if (log_level < XND_TRACING)
+                return;
+
+        logfd = open("xnd.log", O_WRONLY | O_CREAT | O_APPEND, 0666);
+        dup2(logfd, XND_TRACE_FD);
+        close(logfd);
+        
+        u32 size = sizeof(buf);
+        _NSGetExecutablePath(buf, &size);
+        xnd_trace("%s log (%ld):\n", buf, (long)time(NULL));
 }

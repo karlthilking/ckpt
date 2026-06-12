@@ -46,9 +46,8 @@ int __pthread_create_hook(pthread_t *p, const pthread_attr_t *attr,
                 return retval;
         }
         
-        xnd_trace("Created new thread (0x%lx)\n", (uintptr_t)p);
         xnd_assert(pthread_mutex_lock(&new->lock) == 0);
-        while (new->state != ST_RUNNING) {
+        while (new->state == ST_EMBRYO) {
                 pthread_cond_wait(&new->cond, &new->lock);
         }
         xnd_assert(pthread_mutex_unlock(&new->lock) == 0);
@@ -81,8 +80,10 @@ int __pthread_join_hook(pthread_t p, void **value_ptr)
         th->joining = 1;
         while (!th->exiting) {
                 err = pthread_cond_wait(&th->cond, &th->lock);
-                if (unlikely(err != 0))
+                if (unlikely(err != 0)) {
+                        pthread_mutex_unlock(&th->lock);
                         return EINVAL;
+                }
         }
         xnd_assert(pthread_mutex_unlock(&th->lock) == 0);
         

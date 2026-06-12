@@ -1,9 +1,10 @@
 /* thread_info.c */
-#include "thread_info.h"
-#include "ckpt.h"
-#include "pac.h"
-#include "tls.h"
-#include "wrappers/pthread_wrappers.h"
+#include "xnd/xnd.h"
+#include "xnd/thread_info.h"
+#include "xnd/ckpt.h"
+#include "xnd/pac.h"
+#include "xnd/tls.h"
+#include "xnd/wrappers/pthread_wrappers.h"
 
 #define _XOPEN_SOURCE
 #include <ucontext.h>
@@ -24,7 +25,6 @@ static struct thread_list               thread_list;
 static int              threads_expected;
 static int              threads_arrived;
 static u64              barrier_epoch = 0ull;
-
 static pthread_cond_t   cond_arrived    = PTHREAD_COND_INITIALIZER;
 static pthread_cond_t   cond_released   = PTHREAD_COND_INITIALIZER;
 static pthread_mutex_t  ckpt_mtx        = PTHREAD_MUTEX_INITIALIZER;
@@ -41,17 +41,19 @@ void thread_list_init(void)
         pthread_mutex_init(&thread_list.lock, &attr);
 
         /* Initialize main thread info */
+        tlv_init();
         thread_list.head = malloc(sizeof(struct thread_info));
         xnd_assert(thread_list.head != NULL);
-        
-        tlv_init();
+
         myself = thread_list.head;
         myself->self = pthread_self();
         myself->state = ST_RUNNING;
-        myself->next = NULL;
-        myself->prev = NULL;
         myself->exiting = 0;
         myself->joining = 0;
+        myself->joined = 0;
+        myself->wrapper_depth = 0;
+        myself->next = NULL;
+        myself->prev = NULL;
         _main_thread = myself;
 
         pthread_mutex_init(&myself->lock, &attr);
@@ -100,7 +102,9 @@ void thread_list_destroy(void)
         thread_list_acquire();
         for (th = thread_list.head; th; th = next) {
                 next = th->next;
-                thread_list_remove(th);
+                pthread_mutex_destroy(&th->lock);
+                pthread_cond_destroy(&th->cond);
+                free(th);
         }
         thread_list_release();
         
@@ -155,7 +159,7 @@ void thread_list_add(void)
          */
         for (th = thread_list.head; th; th = next) {
                 next = th->next;
-                if (th->exiting && pthread_kill(th->self, 0) == ESRCH)
+                if (th->joined)
                         thread_list_remove(th);
         }
         
@@ -191,10 +195,8 @@ void thread_list_remove(struct thread_info *th)
         if (th->next)
                 th->next->prev = th->prev;
 
-        if (th->joined) {
-                xnd_assert(pthread_kill(th->self, 0) == ESRCH);
+        if (th->joined)
                 thread_reap(th);
-        }
 }
 
 /**
@@ -214,14 +216,14 @@ struct thread_info *thread_init(void *(*fn)(void *), void *arg)
 
         new = malloc(sizeof(struct thread_info));
         xnd_assert(new != NULL);
-
+        
         new->fn = fn;
         new->arg = arg;
+        new->state = ST_EMBRYO;
         new->exiting = 0;
         new->joining = 0;
         new->joined = 0;
         new->wrapper_depth = 0;
-        new->state = ST_EMBRYO;
         new->next = NULL;
         new->prev = NULL;
 
@@ -244,13 +246,9 @@ struct thread_info *thread_init(void *(*fn)(void *), void *arg)
  */
 void thread_reap(struct thread_info *zombie)
 {
-        if (!zombie->joined) {
-                xnd_warn("Thread was never joined! (pthread_t=0x%lx)\n",
-                         (uintptr_t)zombie->self);
-        }
-
-        xnd_assert(pthread_mutex_destroy(&zombie->lock) == 0);
-        xnd_assert(pthread_cond_destroy(&zombie->cond) == 0);
+        xnd_assert(zombie->joined);
+        pthread_mutex_destroy(&zombie->lock);
+        pthread_cond_destroy(&zombie->cond);
         free(zombie);
 }
 
@@ -426,9 +424,10 @@ bool scan_threads(u32 *thread_count)
         for (th = thread_list.head; th; th = next) {
                 next = th->next;
 
-                if (th->exiting) {
+                if (th->exiting || unlikely(th->state == ST_CKPT_THREAD)) {
                         continue;
-                } else if (unlikely(th->state == ST_CKPT_THREAD)) {
+                } else if (th->joined) {
+                        thread_list_remove(th);
                         continue;
                 }
         
@@ -513,25 +512,23 @@ void wait_for_exiting_threads(void)
 
         thread_list_acquire();
         do {
-                killed  = 0;
+                killed = 0;
                 exiting = 0;
-                
                 for (th = thread_list.head; th; th = next) {
                         next = th->next;
-                        if (!th->exiting) {
-                                continue;
-                        }
-
-                        exiting++;
-                        if (pthread_kill(th->self, 0) == ESRCH) {
-                                killed++;
+                        if (th->joined) {
                                 thread_list_remove(th);
+                        } else if (th->exiting) {
+                                exiting++;
+                                if (pthread_kill(th->self, 0) == ESRCH) {
+                                        killed++;
+                                        thread_list_remove(th);
+                                }
                         }
                 }
 
-                if (killed != exiting) {
+                if (killed != exiting)
                         usleep(10);
-                }
         } while (killed != exiting);
         thread_list_release();
 }

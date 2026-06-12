@@ -146,12 +146,12 @@ void ckpt_vm_deallocate_regions(void)
                 }
 
                 ret = mach_vm_deallocate(mach_task_self(), addr, size);
-                if (ret == KERN_SUCCESS) {
-                        xnd_trace("Deallocated restart region: %p-%p\n",
-                                  (void *)addr, (void *)(addr + size));
-                } else {
+                if (ret != KERN_SUCCESS) {
                         xnd_warn("mach_vm_deallocate: %s\n",
                                  mach_error_string(ret));
+                } else {
+                        xnd_trace("Deallocated restart region 0x%llx-0x%llx\n",
+                                  addr, addr + size);
                 }
 
                 addr += size;
