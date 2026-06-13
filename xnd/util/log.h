@@ -31,8 +31,8 @@ enum xnd_log_fd {
         (__builtin_strrchr(__FILE__, '/') ? \
          __builtin_strrchr(__FILE__, '/') + 1 : __FILE__)
 
-#define xnd_print(__fd, __type, __fmt, ...) \
-        dprintf(__fd, "[xnd:%s %s:%s] " __fmt, __type, \
+#define xnd_print(fd, type, fmt, ...)                           \
+        dprintf(fd, "[xnd:%s %s:%s]:\n " fmt "\n", type,        \
                 __XND_FILE__, __func__, ##__VA_ARGS__)
 
 #define xnd_error(__fmt, ...) \
@@ -63,5 +63,7 @@ enum xnd_log_fd {
 void xnd_log_setup(void);
 void xnd_log_cleanup(void);
 void xnd_log_setup_direct(int);
+void xnd_log_shared_cache_info(void);
+void xnd_log_main_thread_info(void);
 
 #endif /* XND_LOG_H */

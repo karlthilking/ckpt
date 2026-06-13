@@ -115,13 +115,16 @@ static __noreturn void launch_checkpoint_target(char **argv)
         }
 
         if (setenv("XND_PROGRAM", xnd_program, 1) < 0 ||
-            setenv("DYLD_INSERT_LIBRARIES", libxnd_path, 1) < 0)
+            setenv("DYLD_INSERT_LIBRARIES", libxnd_path, 1) < 0 ||
+            setenv("DYLD_SHARED_REGION", "private", 1) < 0)
                 err(EXIT_FAILURE, "setenv");
-        
-        fprintf(stderr, "DYLD_INSERT_LIBRARIES=%s\n" "XND_PROGRAM=%s\n",
-                libxnd_path, xnd_program);
-        fprintf(stderr, "Executing %s (pid=%d)\n", argv[0], getpid());
 
+        fprintf(stderr, "XND_PROGRAM=%s\n"
+                "DYLD_INSERT_LIBRARIES=%s\n"
+                "DYLD_SHARED_REGION=private\n",
+                xnd_program, libxnd_path);
+        
+        fprintf(stderr, "Executing %s (pid=%d)\n", argv[0], getpid());
         if (execvp(argv[0], argv) < 0)
                 err(EXIT_FAILURE, "execvp(%s)", argv[0]);
 
@@ -151,9 +154,9 @@ static __noreturn void restart_from_checkpoint(char *ckptfile)
                         "checkpoint file: %s!\n", ckptfile);
                 exit(EXIT_FAILURE);
         }
-
-        retval = setenv("XND_PROGRAM", xnd_program, 1);
-        if (retval < 0)
+        
+        if (setenv("XND_PROGRAM", xnd_program, 1) < 0 ||
+            setenv("DYLD_SHARED_REGION", "private", 1) < 0)
                 err(EXIT_FAILURE, "setenv");
 
         fprintf(stderr, "Set XND_PROGRAM=%s\n", xnd_program);

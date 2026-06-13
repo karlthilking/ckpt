@@ -1,3 +1,4 @@
+/* path.h */
 #ifndef XND_PATH_UTIL_H
 #define XND_PATH_UTIL_H
 

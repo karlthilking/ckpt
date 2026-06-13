@@ -21,6 +21,8 @@ LIBXND_SOURCES := \
         xnd/shared_cache.c \
         xnd/thread_info.c \
         xnd/util/log.c \
+        xnd/util/path.c \
+        xnd/util/debug.c \
         $(LIBXND_WRAPPERS)
 
 XND_RESTART_SOURCES := \
@@ -30,7 +32,8 @@ XND_RESTART_SOURCES := \
         xnd/vm_restore.c \
         xnd/readckpt.c \
         xnd/shared_cache.c \
-        xnd/util/log.c
+        xnd/util/log.c \
+        xnd/util/path.c
 
 XND_RUN_SOURCES := \
         xnd/xnd_run.c \
@@ -74,3 +77,4 @@ $(BUILD)/xnd_print: xnd/xnd_print.c | $(BUILD)
 
 clean:
 	rm -rf $(ALL) *.dSYM *.dylib *.o *.ckpt *.dat
+	rm -f xnd.log xnd-debug.sh

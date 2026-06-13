@@ -140,19 +140,28 @@ void ckpt_vm_deallocate_regions(void)
                 } else if (info.is_submap) {
                         depth++;
                         continue;
-                } else if (!RESTART_REGION(&info)) {
+                }
+                
+                if (!RESTART_REGION(&info)) {
                         addr += size;
                         continue;
                 }
-
-                ret = mach_vm_deallocate(mach_task_self(), addr, size);
-                if (ret != KERN_SUCCESS) {
-                        xnd_warn("mach_vm_deallocate: %s\n",
-                                 mach_error_string(ret));
-                } else {
-                        xnd_trace("Deallocated restart region 0x%llx-0x%llx\n",
-                                  addr, addr + size);
+                
+                /* Only deallocate restart stack and executable segments */
+                if (info.user_tag != VM_MEMORY_RESTART_STACK &&
+                    info.protection != (VM_PROT_READ | VM_PROT_EXECUTE)) {
+                        addr += size;
+                        continue;
                 }
+                        
+                // ret = mach_vm_deallocate(mach_task_self(), addr, size);
+                // if (ret != KERN_SUCCESS) {
+                //         xnd_warn("mach_vm_deallocate: %s\n",
+                //                  mach_error_string(ret));
+                // } else {
+                //         xnd_trace("Deallocated restart region 0x%llx-0x%llx\n",
+                //                   addr, addr + size);
+                // }
 
                 addr += size;
         }

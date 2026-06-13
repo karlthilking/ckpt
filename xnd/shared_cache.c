@@ -2,54 +2,57 @@
 #include <stdio.h>
 #include "shared_cache.h"
 
-int shared_cache_get_info(shared_cache_info_t *info)
+static inline int shared_cache_cmp(const struct shared_cache_info *old,
+                                   const struct shared_cache_info *new)
 {
-        info->base = _dyld_get_shared_cache_range(&info->size);
-        if (info->base == NULL) {
-                fprintf(stderr, "_dyld_get_shared_cache_range error\n");
+        if (old->base != new->base || old->size != new->size) {
+                xnd_error("dyld shared cache range differs:\n"
+                          "\told shared cache region: %p-%p %zu\n"
+                          "\tnew shared cache region: %p-%p %zu\n",
+                          old->base, old->base + old->size, old->size,
+                          new->base, new->base + new->size, new->size);
                 return -1;
         }
 
-        if (!_dyld_get_shared_cache_uuid(info->uuid)) {
-                fprintf(stderr, "_dyld_get_shared_cache_uuid error\n");
+        if (uuid_compare(old->uuid, new->uuid)) {
+                char old_uuid[37], new_uuid[37];
+                uuid_unparse(old->uuid, old_uuid);
+                uuid_unparse(new->uuid, new_uuid);
+                xnd_error("dyld shared cache uuid differs:\n"
+                          "\told uuid: %s\n"
+                          "\tnew uuid: %s\n",
+                          old_uuid, new_uuid);
                 return -1;
         }
 
         return 0;
 }
 
-int shared_cache_check(const shared_cache_info_t *info)
+int shared_cache_get_info(struct shared_cache_info *info)
 {
-        const void      *base;
-        size_t          size;
-        uuid_t          uuid;
-        
-        if ((base = _dyld_get_shared_cache_range(&size)) == NULL) {
-                fprintf(stderr, "_dyld_get_shared_cache_range error\n");
+        info->base = _dyld_get_shared_cache_range(&info->size);
+        if (info->base == NULL) {
+                xnd_error("_dyld_get_shared_cache_range failed!\n");
                 return -1;
         }
 
-        if (!_dyld_get_shared_cache_uuid(uuid)) {
-                fprintf(stderr, "_dyld_get_shared_cache_uuid error\n");
+        if (!_dyld_get_shared_cache_uuid(info->uuid)) {
+                xnd_error("_dyld_get_shared_cache_uuid failed!\n");
                 return -1;
         }
 
-        if (base != info->base || size != info->size ||
-            uuid_compare(uuid, info->uuid)) {
-                char ckpt_uuid[37], curr_uuid[37];
-
-                uuid_unparse(info->uuid, ckpt_uuid);
-                uuid_unparse(uuid, curr_uuid);
-
-                fprintf(stderr,
-                        "dyld shared cache was rebuilt/slid:\n"
-                        "    current: (base=%p) (size=%zu) (uuid=%s)\n"
-                        " checkpoint: (base=%p) (size=%zu) (uuid=%s)\n",
-                        base, size, curr_uuid, 
-                        info->base, info->size, ckpt_uuid);
-
-                return -1;
-        }
-        
         return 0;
+}
+
+int shared_cache_check(const struct shared_cache_info *old)
+{
+        struct shared_cache_info new;
+        
+        if (shared_cache_get_info(&new) < 0) {
+                xnd_error("Failed to get address range and uuid of the "
+                          "current shared cache\n");
+                return -1;
+        }
+        
+        return shared_cache_cmp(old, &new);
 }

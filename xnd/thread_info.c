@@ -82,22 +82,8 @@ void thread_list_init(void)
 void thread_list_destroy(void)
 {
         struct thread_info *th, *next;
-
-        /* Get checkpoint thread to exit */
-        pthread_mutex_lock(&ckpt_mtx);
-        pthread_mutex_lock(&ckpt_thread.lock);
-        assert(pthread_kill(ckpt_thread.self, SIGUSR2) == 0);
-
-        while (!ckpt_thread.exiting) {
-                pthread_cond_wait(&ckpt_thread.cond, &ckpt_thread.lock);
-        }
         
-        xnd_assert(pthread_join(ckpt_thread.self, NULL) == 0);
-        pthread_mutex_unlock(&ckpt_mtx);
-        pthread_mutex_unlock(&ckpt_thread.lock);
-        
-        pthread_mutex_destroy(&ckpt_thread.lock);
-        pthread_cond_destroy(&ckpt_thread.cond);
+        ckpt_thread_reap();
         
         thread_list_acquire();
         for (th = thread_list.head; th; th = next) {
@@ -348,12 +334,12 @@ void *ckpt_thread_work(void *arg)
 
         if (restart) {
                 postrestart();
-                restore_threads();
 
                 tlv_init();
                 myself = &ckpt_thread;
                 myself->self = pthread_self();
-                
+
+                restore_threads();
                 barrier_arrival_wait();
                 thread_restore_tls();
                 thread_restore_sig_state();
@@ -364,9 +350,9 @@ void *ckpt_thread_work(void *arg)
         
         restart = true;
         for (;;) {
+                thread_save_tls();
                 ckpt_thread_wait();
                 
-                thread_save_tls();
                 thread_save_sig_state();
 
                 set_ckpt_state(XND_CKPTINPROG);
@@ -384,6 +370,22 @@ void *ckpt_thread_work(void *arg)
         }
 
         return NULL;
+}
+
+void ckpt_thread_reap(void)
+{
+        kern_return_t   ret;
+        mach_port_t     port;
+        uintptr_t       tls;
+        
+        tls = ckpt_thread.tls;
+        port = (mach_port_t)((uintptr_t *)tls)[__TSD_MACH_THREAD_SELF];
+        
+        if ((ret = thread_terminate(port)) != KERN_SUCCESS)
+                xnd_error("thread_terminate: %s\n", mach_error_string(ret));
+
+        pthread_mutex_destroy(&ckpt_thread.lock);
+        pthread_cond_destroy(&ckpt_thread.cond);
 }
 
 void barrier_arrival_wait(void)

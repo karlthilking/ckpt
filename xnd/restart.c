@@ -34,9 +34,7 @@ __noreturn noinline void restart(int fd)
 
         retval = read_ckpt(fd, &meta, headers, regions, &ctx);
         if (retval < 0) {
-                fprintf(stderr, 
-                        "Failed to read checkpoint file, "
-                        "aborting restart...\n");
+                xnd_error("Failed to read checkpoint file, aborting...\n");
                 exit(EXIT_FAILURE);
         }
         

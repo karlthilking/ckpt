@@ -16,10 +16,10 @@
  *                  reading the checkpoint image
  */
 typedef struct ckpt_metadata {
-        u32                     nr_headers;
-        u32                     nr_regions;
-        u32                     nr_contexts;
-        shared_cache_info_t     shared_cache_info;
+        u32                             nr_headers;
+        u32                             nr_regions;
+        u32                             nr_contexts;
+        struct shared_cache_info        shared_cache_info;
 } ckpt_metadata_t;
 
 /** 

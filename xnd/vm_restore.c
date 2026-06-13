@@ -2,6 +2,7 @@
 #include "xnd/xnd.h"
 #include "xnd/vm_region.h"
 #include "xnd/readckpt.h"
+#include <dlfcn.h>
 
 int ckpt_vm_mark_regions(void)
 {
@@ -11,6 +12,7 @@ int ckpt_vm_mark_regions(void)
         natural_t                       depth = 0;
         vm_region_submap_info_data_64_t info;
         mach_msg_type_number_t          count;
+        Dl_info                         dl_info;
 
         for (;;) {
                 count = VM_REGION_SUBMAP_INFO_COUNT_64;
@@ -25,13 +27,13 @@ int ckpt_vm_mark_regions(void)
                         depth++;
                         continue;
                 }
-                
-                /**
-                 * Don't bother marking regions which will be handled
-                 * exceptionally regardless.
-                 */
+
                 if (PAGEZERO(addr, size) ||
                     DYLD_SHARED_CACHE_REGION(addr, size)) {
+                        addr += size;
+                        continue;
+                } else if (dladdr((const void *)addr, &dl_info) == 0 ||
+                           !strstr(dl_info.dli_fname, "xnd_restart")) {
                         addr += size;
                         continue;
                 }
