@@ -67,6 +67,7 @@ $(BUILD)/xnd_restart: $(XND_RESTART_SOURCES) | $(BUILD)
 	-Wl,-segaddr,__DATA,$(__DATA) \
         -Wl,-segaddr,__DATA_CONST,$(__DATA_CONST) \
 	-Wl,-segaddr,__LINKEDIT,$(__LINKEDIT) \
+        -Wl,-ld_classic \
 	-o $@ $^
 
 $(BUILD)/xnd_run: $(XND_RUN_SOURCES) | $(BUILD)
@@ -75,6 +76,13 @@ $(BUILD)/xnd_run: $(XND_RUN_SOURCES) | $(BUILD)
 $(BUILD)/xnd_print: xnd/xnd_print.c | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ $^
 
+test:	
+	$(MAKE) -C test all
+
 clean:
-	rm -rf $(ALL) *.dSYM *.dylib *.o *.ckpt *.dat
+	rm -rf *.dSYM
+	rm -f $(ALL) *.dylib *.o *.ckpt *.dat
 	rm -f xnd.log xnd-debug.sh
+	$(MAKE) -C test clean
+
+.PHONY: all clean test

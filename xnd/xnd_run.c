@@ -169,9 +169,10 @@ static __noreturn void restart_from_checkpoint(char *ckptfile)
 
         retval = posix_spawn(&pid, xnd_restart_path, NULL,
                              &attr, argv, environ);
-        if (retval < 0) {
+        if (retval != 0) {
                 posix_spawnattr_destroy(&attr);
-                err(EXIT_FAILURE, "posix_spawn");
+                fprintf(stderr, "posix_spawn: %s\n", strerror(retval));
+                exit(EXIT_FAILURE);
         }
 
         unreachable();
