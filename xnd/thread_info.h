@@ -70,6 +70,8 @@ void    ckpt_thread_exit(void);
 void    ckpt_thread_wait(void);
 void    *ckpt_thread_work(void *);
 void    ckpt_thread_reap(void);
+void    ckpt_thread_join(void);
+void    ckpt_thread_terminate(void);
 
 void    barrier_arrival_wait(void);
 void    barrier_release(void);
