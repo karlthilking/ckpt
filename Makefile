@@ -83,6 +83,5 @@ clean:
 	rm -rf *.dSYM
 	rm -f $(ALL) *.dylib *.o *.ckpt *.dat
 	rm -f xnd.log xnd-debug.sh
-	$(MAKE) -C test clean
 
 .PHONY: all clean test

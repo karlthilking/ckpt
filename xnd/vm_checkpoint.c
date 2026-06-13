@@ -31,18 +31,10 @@ int ckpt_vm_valid_region(const vm_region_submap_info_data_64_t *info,
         case VM_MEMORY_MALLOC_LARGE_REUSABLE:
         case VM_MEMORY_MALLOC_LARGE_REUSED:
         case VM_MEMORY_MALLOC_PROB_GUARD:
-                if (info->pages_resident && info->pages_dirtied) {
-                        assert(info->max_protection & VM_PROT_WRITE);
-                        return 1;
-                }
-                return 0;
         case VM_MEMORY_STACK:
-                if (info->pages_resident && info->pages_dirtied) {
-                        assert((info->max_protection & VM_PROT_WRITE) &&
-                               VM_REGION_PRIVATE(info));
-                        return 1;
-                }
-                return 0;
+                if (info->protection == VM_PROT_NONE)
+                        return 0;
+                return 1;
         case VM_MEMORY_DYLD:
         case VM_MEMORY_DYLD_MALLOC:
                 if (info->pages_resident && info->pages_dirtied) {
@@ -154,14 +146,14 @@ void ckpt_vm_deallocate_regions(void)
                         continue;
                 }
                         
-                // ret = mach_vm_deallocate(mach_task_self(), addr, size);
-                // if (ret != KERN_SUCCESS) {
-                //         xnd_warn("mach_vm_deallocate: %s\n",
-                //                  mach_error_string(ret));
-                // } else {
-                //         xnd_trace("Deallocated restart region 0x%llx-0x%llx\n",
-                //                   addr, addr + size);
-                // }
+                ret = mach_vm_deallocate(mach_task_self(), addr, size);
+                if (ret != KERN_SUCCESS) {
+                        xnd_warn("mach_vm_deallocate: %s\n",
+                                 mach_error_string(ret));
+                } else {
+                        xnd_trace("Deallocated restart region 0x%llx-0x%llx\n",
+                                  addr, addr + size);
+                }
 
                 addr += size;
         }
