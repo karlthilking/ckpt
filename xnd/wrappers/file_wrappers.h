@@ -8,7 +8,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <limits.h>
-#include <pthread.h>
+#include <string.h>
 
 #define MAXFILES                512
 #define FD_STATE_NONE           0x0

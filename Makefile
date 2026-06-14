@@ -13,13 +13,14 @@ LIBXND_WRAPPERS := \
         xnd/wrappers/signal_wrappers.c
 
 LIBXND_SOURCES := \
-        xnd/libckpt.c \
+        xnd/xnd_lib.c \
         xnd/pac.c \
         xnd/vm_common.c \
         xnd/vm_checkpoint.c \
         xnd/writeckpt.c \
         xnd/shared_cache.c \
         xnd/thread_info.c \
+        xnd/ckptfile.c \
         xnd/util/log.c \
         xnd/util/path.c \
         xnd/util/debug.c \
@@ -31,6 +32,7 @@ XND_RESTART_SOURCES := \
         xnd/vm_common.c \
         xnd/vm_restore.c \
         xnd/readckpt.c \
+        xnd/ckptfile.c \
         xnd/shared_cache.c \
         xnd/util/log.c \
         xnd/util/path.c
@@ -39,7 +41,8 @@ XND_RUN_SOURCES := \
         xnd/xnd_run.c \
         xnd/ckptfile.c \
         xnd/platform/exe.c \
-        xnd/util/path.c
+        xnd/util/path.c \
+        xnd/shared_cache.c
 
 ALL := \
         $(BUILD)/xnd_run \

@@ -1,10 +1,33 @@
 /* ckptfile.c */
 #include "xnd/xnd.h"
+#include "xnd/ckptfile.h"
 #include "xnd/util/path.h"
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 #include <limits.h>
+
+bool xnd_ckptfile_valid(const struct xnd_ckpt_header *header)
+{
+        if (strcmp(header->magic, XND_HEADER_MAGIC)) {
+                xnd_error("Checkpoin header is invalid!\n"
+                          "magic: %s, expected: %s\n",
+                          header->magic, XND_HEADER_MAGIC);
+                return false;
+        }
+
+        if (shared_cache_check(&header->shared_cache_info) < 0)
+                return false;
+        
+        if (header->entry_count > XND_CKPT_ENTRY_MAX ||
+            header->region_count > XND_CKPT_VM_REGION_MAX) {
+                xnd_error("Checkpoint header is corrupted!\n");
+                return false;
+        }
+
+        return true;
+}
 
 /**
  * xnd_ckptfile_parse:
@@ -61,4 +84,13 @@ int xnd_ckptfile_parse(const char *path, char *program,
         strncpy(program, stem, len);
         program[len] = '\0';
         return 0;
+}
+
+void xnd_ckptfile_name(char *out, size_t outlen)
+{
+        char *prefix;
+        
+        prefix = getenv("XND_PROGRAM");
+        xnd_assert(prefix != NULL);
+        snprintf(out, outlen, "%s-%ld.ckpt", prefix, (long)time(NULL));
 }

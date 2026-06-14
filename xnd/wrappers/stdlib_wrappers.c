@@ -1,6 +1,6 @@
 /* exit_wrappers.c */
 #include "xnd/xnd.h"
-#include "xnd/ckpt.h"
+#include "xnd/xnd_lib.h"
 #include "xnd/pac.h"
 #include "xnd/tls.h"
 #include "xnd/thread_info.h"
@@ -9,6 +9,16 @@
 #define _XOPEN_SOURCE
 #include <stdlib.h>
 #include <stdio.h>
+
+static __always_inline bool skip_interpose(void)
+{
+        if (unlikely(get_xnd_state() == XND_UNINITIALIZED))
+                return true;
+        else if (unlikely(tlv_ok() == false))
+                return true;
+
+        return false;
+}
 
 extern void (*__cleanup)(void);
 

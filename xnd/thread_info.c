@@ -1,7 +1,7 @@
 /* thread_info.c */
 #include "xnd/xnd.h"
 #include "xnd/thread_info.h"
-#include "xnd/ckpt.h"
+#include "xnd/xnd_lib.h"
 #include "xnd/pac.h"
 #include "xnd/tls.h"
 #include "xnd/wrappers/signal_wrappers.h"
@@ -297,7 +297,7 @@ void ckpt_thread_wait(void)
 
         while (sig != SIGUSR2) {
                 err = sigwait(&set, &sig);
-                if (get_ckpt_state() == XND_EXITING)
+                if (get_xnd_state() == XND_EXITING)
                         ckpt_thread_exit();
                 else if (unlikely(err != 0))
                         xnd_warn("sigwait: %s\n", strerror(err));
@@ -334,7 +334,7 @@ void *ckpt_thread_work(void *arg)
         getcontext(&myself->uc);
 
         if (restart) {
-                postrestart();
+                xnd_postrestart();
 
                 tlv_init();
                 myself = &ckpt_thread;
@@ -346,7 +346,7 @@ void *ckpt_thread_work(void *arg)
                 thread_restore_sig_state();
                 sig_state_restore();
 
-                set_ckpt_state(XND_RUNNING);
+                set_xnd_state(XND_RUNNING);
                 barrier_release();
         }
         
@@ -357,17 +357,17 @@ void *ckpt_thread_work(void *arg)
                 thread_save_tls();
                 thread_save_sig_state();
 
-                set_ckpt_state(XND_CKPTINPROG);
+                set_xnd_state(XND_CKPTINPROG);
                 suspend_threads();
                 barrier_arrival_wait();
                 wait_for_exiting_threads();
 
-                precheckpoint();
+                xnd_precheckpoint();
                 set_tls_slot(TLS_TLV_FLAG_SLOT, 0);
-                docheckpoint(&myself->uc);
+                xnd_checkpoint(&myself->uc);
                 
                 set_tls_slot(TLS_TLV_FLAG_SLOT, TLS_TLV_INIT_MAGIC);
-                set_ckpt_state(XND_RUNNING);
+                set_xnd_state(XND_RUNNING);
                 barrier_release();
         }
 

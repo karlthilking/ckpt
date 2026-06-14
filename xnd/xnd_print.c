@@ -8,7 +8,7 @@
 #include <fcntl.h>
 #include <ucontext.h>
 #include "xnd/xnd.h"
-#include "xnd/ckpt.h"
+#include "xnd/ckptfile.h"
 #include "xnd/pac.h"
 #include "xnd/vm_region.h"
 
@@ -96,14 +96,16 @@ static const char *help =
 static void parse_region_options(char *);
 static void parse_region_info_options(char *);
 static void usage(void);
-static const char *vm_inherit_string(const ckpt_vm_region_t *);
-static const char *vm_share_mode_string(const ckpt_vm_region_t *);
-static const char *vm_user_tag_string(const ckpt_vm_region_t *);
+static const char *vm_inherit_string(const struct xnd_vm_region *);
+static const char *vm_share_mode_string(const struct xnd_vm_region *);
+static const char *vm_user_tag_string(const struct xnd_vm_region *);
 static int readall(int, void *, size_t);
-static int read_checkpoint(int, const ckpt_metadata_t *, ckpt_header_t *,
-                           ckpt_vm_region_t *, ucontext_t *);
-static bool skip_vm_region(const ckpt_vm_region_t *);
-static void print_vm_regions(const ckpt_vm_region_t *, u32);
+static int read_ckpt(int, const struct xnd_ckpt_header *,
+                     enum xnd_ckpt_entry *,
+                     struct xnd_vm_region *,
+                     ucontext_t *);
+static bool skip_vm_region(const struct xnd_vm_region *);
+static void print_vm_regions(const struct xnd_vm_region *, u32);
 static void print_user_context(ucontext_t *);
 static void print_checkpoint(int);
 
@@ -154,7 +156,7 @@ int main(int argc, char *argv[])
         exit(0);
 }
 
-static const char *vm_inherit_string(const ckpt_vm_region_t *region)
+static const char *vm_inherit_string(const struct xnd_vm_region *region)
 {
         static_assert(VM_INHERIT_COPY == VM_INHERIT_DEFAULT &&
                       VM_INHERIT_LAST_VALID == VM_INHERIT_NONE, "");
@@ -173,7 +175,7 @@ static const char *vm_inherit_string(const ckpt_vm_region_t *region)
         }
 }
 
-static const char *vm_share_mode_string(const ckpt_vm_region_t *region)
+static const char *vm_share_mode_string(const struct xnd_vm_region *region)
 {
         switch (region->mode) {
         case SM_COW:
@@ -197,7 +199,7 @@ static const char *vm_share_mode_string(const ckpt_vm_region_t *region)
         }
 }
 
-static const char *vm_user_tag_string(const ckpt_vm_region_t *region)
+static const char *vm_user_tag_string(const struct xnd_vm_region *region)
 {
         switch (region->tag) {
         case VM_MEMORY_MALLOC:
@@ -261,43 +263,47 @@ static int readall(int fd, void *buf, size_t size)
         return 0;
 }
 
-static int read_checkpoint(int fd, const ckpt_metadata_t *meta, 
-                           ckpt_header_t *headers, 
-                           ckpt_vm_region_t *regions,
-                           ucontext_t *uctx)
+static int read_ckpt(int fd, const struct xnd_ckpt_header *header,
+                     enum xnd_ckpt_entry *entries,
+                     struct xnd_vm_region *regions,
+                     ucontext_t *uctx)
 {
-        ckpt_vm_region_t        *rgn = regions;
+        struct xnd_vm_region    *rgn = regions;
         int                     retval;
 
-        for (u32 i = 0; i < meta->nr_headers; i++) {
-                if (readall(fd, headers + i, sizeof(headers[i])) != 0) {
-                        fprintf(stderr, "Failed to read checkpoint header!\n");
+        for (u32 i = 0; i < header->entry_count; i++) {
+                if (readall(fd, &entries[i], sizeof(entries[i])) < 0) {
+                        xnd_error("Failed to read checkpoint entry!\n");
                         return -1;
                 }
 
-                switch (headers[i]) {
-                case CKPT_VM_REGION_HEADER:
+                switch (entries[i]) {
+                case XND_VM_REGION_ENTRY:
                         retval = readall(fd, rgn, sizeof(*rgn));
                         assert(lseek(fd, rgn->size, SEEK_CUR) != -1);
                         rgn++;
                         break;
-                case CKPT_CONTEXT_HEADER:
+                case XND_UCONTEXT_ENTRY:
                         retval = readall(fd, uctx, sizeof(ucontext_t));
                         break;
                 default:
-                        __builtin_trap();
+                        xnd_abort();
                 }
 
-                if (retval != 0) {
-                        fprintf(stderr, "Failed to read checkpoint data!\n");
-                        return -1;
+                if (retval < 0) {
+                        xnd_error("Failed to read checkpoint data!\n");
+                        goto bad;
                 }
         }
 
+        close(fd);
         return 0;
+bad:
+        close(fd);
+        return -1;
 }
 
-static bool skip_vm_region(const ckpt_vm_region_t *region)
+static bool skip_vm_region(const struct xnd_vm_region *region)
 {
         if (region->prot == VM_PROT_NONE) {
                 if (print_options[PRINT_OTHER_REGIONS])
@@ -362,10 +368,10 @@ static bool skip_vm_region(const ckpt_vm_region_t *region)
         return true;
 }
 
-static void print_vm_regions(const ckpt_vm_region_t *regions, u32 nr_rgns)
+static void print_vm_regions(const struct xnd_vm_region *regions, u32 nr_rgns)
 {
-        const ckpt_vm_region_t  *rgn;
-        size_t                  nbyte = 0;
+        const struct xnd_vm_region      *rgn;
+        size_t                          nbyte = 0;
 
         for (rgn = regions; rgn < regions + nr_rgns; rgn++)
                 nbyte += rgn->size;
@@ -420,19 +426,19 @@ static void print_user_context(ucontext_t *uctx)
 
 static void print_checkpoint(int fd)
 {
-        ckpt_metadata_t meta;
+        struct xnd_ckpt_header header;
 
-        if (readall(fd, &meta, sizeof(meta)) < 0)
+        if (readall(fd, &header, sizeof(header)) < 0)
                 exit(EXIT_FAILURE);
 
-        ckpt_header_t           headers[meta.nr_headers];
-        ckpt_vm_region_t        regions[meta.nr_regions];
+        enum xnd_ckpt_entry     entries[header.entry_count];
+        struct xnd_vm_region    regions[header.region_count];
         ucontext_t              uctx;
-
-        if (read_checkpoint(fd, &meta, headers, regions, &uctx) < 0)
+        
+        if (read_ckpt(fd, &header, entries, regions, &uctx) < 0)
                 exit(EXIT_FAILURE);
 
-        print_vm_regions(regions, meta.nr_regions);
+        print_vm_regions(regions, header.region_count);
         if (print_options[PRINT_USER_CONTEXT])
                 print_user_context(&uctx);
 }

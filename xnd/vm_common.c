@@ -1,19 +1,18 @@
 /* vm_common.c */
+#include "xnd/vm_region.h"
 #include <stdio.h>
-#include "vm_region.h"
 
-int ckpt_vm_protect(const ckpt_vm_region_t *region,
-                    int set_max_prot, vm_prot_t new_prot)
+int ckpt_vm_protect(const struct xnd_vm_region *region,
+                    int set_max, vm_prot_t new_prot)
 {
-        kern_return_t ret;
+        kern_return_t kr;
 
-        ret = mach_vm_protect(mach_task_self(),
-                              (mach_vm_address_t)region->start,
-                              region->size, set_max_prot, new_prot);
+        kr = mach_vm_protect(mach_task_self(),
+                             (mach_vm_address_t)region->start,
+                             region->size, set_max, new_prot);
 
-        if (ret != KERN_SUCCESS) {
-                fprintf(stderr, "mach_vm_protect: %s\n",
-                        mach_error_string(ret));
+        if (kr != KERN_SUCCESS) {
+                xnd_warn("mach_vm_protect: %s\n", mach_error_string(kr));
                 return -1;
         }
 

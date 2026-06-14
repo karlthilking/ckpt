@@ -60,7 +60,7 @@ int ckpt_vm_mark_regions(void)
         return 0;
 }
 
-int ckpt_vm_restore_region(int fd, const ckpt_vm_region_t *region)
+int ckpt_vm_restore_region(int fd, const struct xnd_vm_region *region)
 {
         kern_return_t           ret;
         mach_vm_address_t       addr;

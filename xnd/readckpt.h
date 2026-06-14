@@ -3,11 +3,13 @@
 #define XND_READCKPT_H
 
 #include "xnd/xnd.h"
+#include "xnd/vm_region.h"
+#include "xnd/ckptfile.h"
 
 int readall(int, void *, size_t);
-int read_vm_region(int, ckpt_vm_region_t *);
+int read_vm_region(int, struct xnd_vm_region *);
 int read_context(int, ucontext_t *);
-int read_ckpt(int, const ckpt_metadata_t *, ckpt_header_t *,
-              ckpt_vm_region_t *, ucontext_t *);
+int read_ckpt(int, const struct xnd_ckpt_header *, enum xnd_ckpt_entry *,
+              struct xnd_vm_region *, ucontext_t *);
 
 #endif /* XND_READCKPT_H */

@@ -1,6 +1,6 @@
 /* libckpt.c */
 #include "xnd/xnd.h"
-#include "xnd/ckpt.h"
+#include "xnd/xnd_lib.h"
 #include "xnd/writeckpt.h"
 #include "xnd/vm_region.h"
 #include "xnd/pac.h"
@@ -8,7 +8,6 @@
 #include "xnd/thread_info.h"
 #include "xnd/shared_cache.h"
 #include "xnd/util/debug.h"
-#include "xnd/wrappers/pthread_wrappers.h"
 #include "xnd/wrappers/file_wrappers.h"
 #include "xnd/wrappers/signal_wrappers.h"
 
@@ -22,27 +21,27 @@
 #include <unistd.h>
 #include <signal.h>
 
-static _Atomic ckpt_state       libckpt_state = XND_UNINITIALIZED;
+static _Atomic enum xnd_state   libxnd_state = XND_UNINITIALIZED;
 static uintptr_t                _pthread_ptr_munge_token;
 
-ckpt_state get_ckpt_state(void)
+enum xnd_state get_xnd_state(void)
 {
-        return atomic_load(&libckpt_state);
+        return atomic_load(&libxnd_state);
 }
 
-void set_ckpt_state(ckpt_state new)
+void set_xnd_state(enum xnd_state new_state)
 {
-        atomic_store(&libckpt_state, new);
+        atomic_store(&libxnd_state, new_state);
 }
 
-void precheckpoint(void)
+void xnd_precheckpoint(void)
 {
         sig_state_save();
         fd_table_save_state();
         _pthread_ptr_munge_token = thread_munge_token();
 }
 
-void postrestart(void)
+void xnd_postrestart(void)
 {
         thread_sig_fixup(_pthread_ptr_munge_token);
         ckpt_vm_deallocate_regions();
@@ -55,36 +54,34 @@ void postrestart(void)
 #endif
 }
 
-void docheckpoint(ucontext_t *uctx)
+void xnd_checkpoint(ucontext_t *uctx)
 {
-        ckpt_header_t           headers[MAX_CKPT_HEADERS];
-        ckpt_vm_region_t        regions[MAX_CKPT_VM_REGIONS];
-        ckpt_metadata_t         meta;
+        struct xnd_ckpt_header  header;
+        struct xnd_vm_region    regions[XND_CKPT_VM_REGION_MAX];
+        enum xnd_ckpt_entry     entries[XND_CKPT_ENTRY_MAX];
 
-        bzero(&meta, sizeof(meta));
-        if (shared_cache_get_info(&meta.shared_cache_info) < 0) {
-                xnd_warn("Failed to get dyld shared cache info,"
-                         "aborting checkpoint...\n");
+        bzero(&header, sizeof(header));
+        strcpy(header.magic, XND_HEADER_MAGIC);
+        if (shared_cache_get_info(&header.shared_cache_info) < 0) {
+                xnd_error("Failed to get dyld shared cache info\n");
                 return;
         }
 
-        meta.nr_regions = ckpt_vm_save_regions(regions);
-        if (unlikely(meta.nr_regions > MAX_CKPT_VM_REGIONS)) {
-                xnd_error("Not enough space to save all memory regions!\n");
+        header.region_count = ckpt_vm_save_regions(regions);
+        if (unlikely(header.region_count > XND_CKPT_VM_REGION_MAX)) {
+                xnd_error("Not enough space to save all memory regions\n");
                 return;
-        }
-
-        meta.nr_headers += meta.nr_regions;
-        for (u32 i = 0; i < meta.nr_regions; i++) {
-                headers[i] = CKPT_VM_REGION_HEADER;
         }
         
-        headers[meta.nr_headers] = CKPT_CONTEXT_HEADER;
-        meta.nr_contexts++;
-        meta.nr_headers++;
+        header.entry_count += header.region_count;
+        for (u32 i = 0; i < header.region_count; i++)
+                entries[i] = XND_VM_REGION_ENTRY;
 
-        write_ckpt(&meta, headers, regions, uctx);
-}       
+        entries[header.entry_count] = XND_UCONTEXT_ENTRY;
+        header.entry_count += 1;
+
+        (void)write_ckpt(&header, entries, regions, uctx);
+}
 
 /**
  * setup():
@@ -92,7 +89,7 @@ void docheckpoint(ucontext_t *uctx)
  *  checkpoint thread, then enable thread_handler to run
  *  on SIGUSR1 for user threads.
  */
-__constructor() void setup()
+__constructor() void xnd_setup(void)
 {
         struct sigaction        sa;
         sigset_t                set;
@@ -110,7 +107,7 @@ __constructor() void setup()
         fd_table_init();
         thread_list_init();
         xnd_log_setup();
-        set_ckpt_state(XND_RUNNING);
+        set_xnd_state(XND_RUNNING);
 
 #if DEVELOPMENT || DEBUG
         xnd_log_shared_cache_info();
@@ -119,9 +116,9 @@ __constructor() void setup()
 #endif
 }
 
-__destructor() void cleanup()
+__destructor() void xnd_cleanup(void)
 {
-        set_ckpt_state(XND_EXITING);
+        set_xnd_state(XND_EXITING);
         fd_table_destroy();
         thread_list_destroy();
         xnd_log_cleanup();

@@ -1,8 +1,10 @@
 /* tls.h */
 #ifndef __CKPT_TLS_H__
 #define __CKPT_TLS_H__
-#include "xnd.h"
-#include "thread_info.h"
+#include "xnd/xnd.h"
+#include "xnd/pac.h"
+#include "xnd/thread_info.h"
+#include "xnd/wrappers/pthread_wrappers.h"
 
 #define __TSD_THREAD_SELF 0
 #define __TSD_ERRNO 1

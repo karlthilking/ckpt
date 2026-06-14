@@ -1,6 +1,7 @@
 /* shared_cache.c */
+#include "xnd/xnd.h"
+#include "xnd/shared_cache.h"
 #include <stdio.h>
-#include "shared_cache.h"
 
 static inline int shared_cache_cmp(const struct shared_cache_info *old,
                                    const struct shared_cache_info *new)

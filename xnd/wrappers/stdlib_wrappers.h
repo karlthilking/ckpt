@@ -4,11 +4,7 @@
 
 #include "xnd/xnd.h"
 #include "xnd/inject.h"
-
 #include <stdlib.h>
-
-#define skip_interpose() \
-        unlikely(get_ckpt_state() == LIBCKPT_UNINITIALIZED || !tlv_ok())
 
 void    __exit_hook(int);
 void    __abort_hook(void);

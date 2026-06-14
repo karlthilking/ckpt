@@ -1,17 +1,23 @@
 /* file_wrappers.c */
+#include "xnd/xnd.h"
+#include "xnd/xnd_lib.h"
+#include "file_wrappers.h"
+
 #include <unistd.h>
 #include <fcntl.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <stdatomic.h>
 #include <string.h>
-#include <errno.h>
-#include <assert.h>
 #include <unistd.h>
-#include "xnd/xnd.h"
-#include "xnd/ckpt.h"
-#include "file_wrappers.h"
+
+static __always_inline bool skip_fd_tracking(void)
+{
+        if (unlikely(get_xnd_state() == XND_UNINITIALIZED))
+                return true;
+
+        return false;
+}
 
 static struct fd_state fd_table[MAXFILES];
 
@@ -93,7 +99,7 @@ void fd_backing_restore(int fd)
                 if (retval < 0) {
                         perror("dup2");
                 } else {
-                        assert(retval == fd);
+                        xnd_assert(retval == fd);
                         backing->state = FD_STATE_RESTORED;
                 }
 
@@ -197,9 +203,8 @@ void fd_table_restore_state(void)
 
 void fd_table_open(int fd, const char *path, int flags, mode_t mode)
 {
-        if (get_ckpt_state() == LIBCKPT_UNINITIALIZED) {
+        if (skip_fd_tracking())
                 return;
-        }
 
         fd_table[fd].src = malloc(sizeof(struct fd_backing));
         fd_table[fd].type = FD_REGFILE;
@@ -213,14 +218,11 @@ void fd_table_open(int fd, const char *path, int flags, mode_t mode)
 
 void fd_table_dup(int oldfd, int newfd)
 {
-        if (get_ckpt_state() == LIBCKPT_UNINITIALIZED) {
+        if (skip_fd_tracking() || oldfd == newfd)
                 return;
-        } else if (oldfd == newfd) {
-                return;
-        }
 
-        assert(fd_table[oldfd].src != NULL &&
-               fd_table[oldfd].type != FD_UNUSED);
+        xnd_assert(fd_table[oldfd].src != NULL &&
+                   fd_table[oldfd].type != FD_UNUSED);
         
         /* newfd now points to the same underlying open file */
         fd_table[newfd].src     = fd_table[oldfd].src;
@@ -232,7 +234,7 @@ void fd_table_dup(int oldfd, int newfd)
 
 void fd_table_close(int fd)
 {
-        if (get_ckpt_state() == LIBCKPT_UNINITIALIZED) {
+        if (skip_fd_tracking()) {
                 return;
         } else if (fd_table[fd].type == FD_UNUSED) {
                 xnd_assert(fd_table[fd].src == NULL);
@@ -323,7 +325,7 @@ int __dup2_hook(int oldfd, int newfd)
         int retval;
 
         if ((retval = dup2(oldfd, newfd)) != -1) {
-                assert(retval == newfd);
+                xnd_assert(retval == newfd);
                 fd_table_dup(oldfd, newfd);
         }
 

@@ -3,7 +3,6 @@
 #include "xnd/thread_info.h"
 #include "xnd/pac.h"
 #include "xnd/tls.h"
-#include "xnd/ckpt.h"
 #include "pthread_wrappers.h"
 
 #include <stdlib.h>

@@ -66,16 +66,17 @@ int ckpt_vm_valid_region(const vm_region_submap_info_data_64_t *info,
         return 1;
 }
 
-u32 ckpt_vm_save_regions(ckpt_vm_region_t *regions)
+u32 ckpt_vm_save_regions(struct xnd_vm_region *regions)
 {
         kern_return_t                   ret;
-        u32                             nr_rgns = 0;
-        mach_vm_address_t               addr    = 0;
-        mach_vm_size_t                  size    = 0;
-        natural_t                       depth   = 0;
         vm_region_submap_info_data_64_t info;
         mach_msg_type_number_t          count;
-        
+        struct xnd_vm_region            *rgn;
+        u32                             region_count    = 0;
+        mach_vm_address_t               addr            = 0;
+        mach_vm_size_t                  size            = 0;
+        natural_t                       depth           = 0;
+
         for (;;) {
                 count = VM_REGION_SUBMAP_INFO_COUNT_64;
                 ret = mach_vm_region_recurse(
@@ -92,31 +93,32 @@ u32 ckpt_vm_save_regions(ckpt_vm_region_t *regions)
                         addr += size;
                         continue;
                 }
+
+                rgn = regions + region_count;
+                rgn->start = (void *)addr;
+                rgn->end = (void *)(addr + size);
+                rgn->size = (size_t)size;
+                rgn->inherit = info.inheritance;
+                rgn->prot = info.protection;
+                rgn->max_prot = info.max_protection;
+                rgn->mode = info.share_mode;
+                rgn->tag = info.user_tag;
                 
-                regions[nr_rgns].start          = (void *)addr;
-                regions[nr_rgns].end            = (void *)(addr + size);
-                regions[nr_rgns].size           = (size_t)size;
-                regions[nr_rgns].inherit        = info.inheritance;
-                regions[nr_rgns].prot           = info.protection;
-                regions[nr_rgns].max_prot       = info.max_protection;
-                regions[nr_rgns].mode           = info.share_mode;
-                regions[nr_rgns].tag            = info.user_tag;
-
+                region_count++;
                 addr += size;
-                nr_rgns++;
         }
-
-        return nr_rgns;
+        
+        return region_count;
 }
 
 void ckpt_vm_deallocate_regions(void)
 {
         kern_return_t                   ret;
+        vm_region_submap_info_data_64_t info;
+        mach_msg_type_number_t          count;
         mach_vm_address_t               addr    = 0;
         mach_vm_size_t                  size    = 0;
         natural_t                       depth   = 0;
-        vm_region_submap_info_data_64_t info;
-        mach_msg_type_number_t          count;
         
         for (;;) {
                 count = VM_REGION_SUBMAP_INFO_COUNT_64;

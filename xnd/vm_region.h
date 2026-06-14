@@ -1,6 +1,9 @@
 /* vm_region.h */
-#ifndef __CKPT_VM_REGION_H__
-#define __CKPT_VM_REGION_H__
+#ifndef XND_VM_REGION_H
+#define XND_VM_REGION_H
+
+#include "xnd/xnd.h"
+
 #include <mach/mach.h>
 #include <mach/mach_vm.h>
 #include <mach/vm_region.h>
@@ -10,9 +13,8 @@
 #include <mach/vm_inherit.h>
 #include <mach/vm_behavior.h>
 #include <mach/vm_param.h>
-#include "xnd.h"
 
-typedef struct ckpt_vm_region {
+struct xnd_vm_region {
         const void      *start;
         const void      *end;
         size_t          size;
@@ -21,7 +23,7 @@ typedef struct ckpt_vm_region {
         int             max_prot;
         u32             mode;
         u32             tag;
-} ckpt_vm_region_t;
+};
 
 #define VM_PROT_STRING(__prot) \
         (((__prot) == (VM_PROT_NONE))                   ? "---" : \
@@ -73,21 +75,15 @@ typedef struct ckpt_vm_region {
          ((__info)->behavior == RESTART_REGION_BEHAVIOR_FLAG)) ||       \
          ((__info)->user_tag == VM_MEMORY_RESTART_STACK))
 
-/* Functions implemented in vm_restore.c and used during restart */
 int ckpt_vm_mark_regions(void);
-int ckpt_vm_restore_region(int, const ckpt_vm_region_t *);
+int ckpt_vm_restore_region(int, const struct xnd_vm_region *);
 
-/* Functions implemented in vm_checkpoint.c and used by libckpt.dylib */
 int ckpt_vm_valid_region(const vm_region_submap_info_data_64_t *,
                          mach_vm_address_t, mach_vm_size_t);
-u32 ckpt_vm_save_regions(ckpt_vm_region_t *);
+u32 ckpt_vm_save_regions(struct xnd_vm_region *);
 void ckpt_vm_deallocate_regions(void);
 
-/**
- * General purpose virtual memory functions used during checkpoint
- * and restart phases, defined in vm_common.c.
- */
-int ckpt_vm_protect(const ckpt_vm_region_t *, int, vm_prot_t);
+int ckpt_vm_protect(const struct xnd_vm_region *, int, vm_prot_t);
 
 
-#endif // __CKPT_VM_REGION_H__
+#endif /* XND_VM_REGION_H */

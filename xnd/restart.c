@@ -1,6 +1,5 @@
 /* restart.c */
 #include "xnd/xnd.h"
-#include "xnd/ckpt.h"
 #include "xnd/readckpt.h"
 #include "xnd/pac.h"
 #include "xnd/vm_region.h"
@@ -10,7 +9,9 @@
 #include <ucontext.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <string.h>
 #include <err.h>
+#include <errno.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <ucontext.h>
@@ -20,37 +21,45 @@ __noreturn noinline void restart(int fd)
 {
         int                     retval;
         u64                     fp;
-        ckpt_metadata_t         meta;
-
+        struct xnd_ckpt_header  header;
+        
         retval = ckpt_vm_mark_regions();
-        if (retval < 0 || readall(fd, &meta, sizeof(meta)) < 0 ||
-            shared_cache_check(&meta.shared_cache_info) < 0) {
+        if (retval < 0)
+                xnd_warn("Failed to mark restart regions!\n");
+
+        retval = readall(fd, &header, sizeof(header));
+        if (retval < 0) {
+                xnd_error("Failed to read checkpoint header!\n");
                 exit(EXIT_FAILURE);
         }
 
-        ckpt_header_t           headers[meta.nr_headers];
-        ckpt_vm_region_t        regions[meta.nr_regions];
-        ucontext_t              ctx;
+        if (!xnd_ckptfile_valid(&header)) {
+                xnd_error("Checkpoint file is invalid!\n");
+                exit(EXIT_FAILURE);
+        }
 
-        retval = read_ckpt(fd, &meta, headers, regions, &ctx);
+        enum xnd_ckpt_entry     entries[header.entry_count];
+        struct xnd_vm_region    regions[header.region_count];
+        ucontext_t              uctx;
+
+        retval = read_ckpt(fd, &header, entries, regions, &uctx);
         if (retval < 0) {
                 xnd_error("Failed to read checkpoint file, aborting...\n");
                 exit(EXIT_FAILURE);
         }
-        
-        fp = get_ucontext_fp(&ctx);
-        if (PTRAUTH_SIGNED(fp)) {
+
+        fp = get_ucontext_fp(&uctx);
+        if (PTRAUTH_SIGNED(fp))
                 XPACD(fp);
-        }
 
         pac_resign_frames((u64 *)fp);
-        pac_patch_context(&ctx);
-        
-        if (setcontext(&ctx) < 0) {
-                err(EXIT_FAILURE, "setcontext");
+        pac_patch_context(&uctx);
+        if (setcontext(&uctx) < 0) {
+                xnd_error("setcontext: %s\n", strerror(errno));
+                exit(EXIT_FAILURE);
         }
-        
-        abort();
+
+        unreachable();
 }
 
 /**
@@ -104,16 +113,19 @@ __noreturn void jump(int fd)
 __noreturn int main(int argc, char **argv)
 {
         int fd;
-
+        
+        xnd_log_setup_direct(XND_MAX_LOG_LEVEL);
         if (argc != 2) {
-                fprintf(stderr, "Usage: ./ckpt -r [ckpt-file]\n");
+                xnd_error("restart should not be invoked directly!\n"
+                          "Usage: ./xnd_run -r <ckpt-file>\n");
                 exit(EXIT_FAILURE);
         }
         
-        xnd_log_setup_direct(XND_MAX_LOG_LEVEL);
         fd = open(argv[1], O_RDONLY);
-        if (fd < 0)
-                err(EXIT_FAILURE, "open (%s)", argv[1]);
+        if (fd < 0) {
+                xnd_error("open(%s, ...): %s\n", argv[1], strerror(errno));
+                exit(EXIT_FAILURE);
+        }
 
         printf("Restarting from %s (pid=%d)\n", argv[1], getpid());
         jump(fd);
