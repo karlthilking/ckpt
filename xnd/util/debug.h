@@ -4,6 +4,6 @@
 
 #include "xnd/xnd.h"
 
-void dump_debug_script(void);
+void dump_debug_info(void);
 
 #endif

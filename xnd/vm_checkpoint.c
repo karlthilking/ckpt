@@ -32,8 +32,6 @@ int ckpt_vm_valid_region(const vm_region_submap_info_data_64_t *info,
         case VM_MEMORY_MALLOC_LARGE_REUSED:
         case VM_MEMORY_MALLOC_PROB_GUARD:
         case VM_MEMORY_STACK:
-                if (info->protection == VM_PROT_NONE)
-                        return 0;
                 return 1;
         case VM_MEMORY_DYLD:
         case VM_MEMORY_DYLD_MALLOC:

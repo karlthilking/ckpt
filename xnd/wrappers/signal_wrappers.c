@@ -5,33 +5,35 @@
 #define _XOPEN_SOURCE
 #include <ucontext.h>
 #include <signal.h>
+#include <stdlib.h>
 #include <errno.h>
 #include <string.h>
 #include <stdio.h>
 #include <err.h>
 
-static struct sigaction         sa_table[NSIG];
-static struct __real_sigaction  __real_sigactions[NSIG];
+static struct sigaction                 sa_table[NSIG];
+static struct __internal_sigaction      __sigactions[NSIG];
 
 __noreturn void __internal_sigreturn(ucontext_t *ucp)
 {
-        if (ucp->uc_mcontext != &ucp->__mcontext_data) {
-                memmove(&ucp->__mcontext_data, ucp->uc_mcontext,
-                        sizeof(ucp->__mcontext_data));
-                ucp->uc_mcontext = &ucp->__mcontext_data;
-        }
+        u64 fp = get_ucontext_fp(ucp);
 
+#if defined(__arm64e__)
+        if (PTRAUTH_SIGNED(fp))
+                XPACD(fp);
+#endif
+        pac_resign_frames((u64 *)fp);
+        pac_patch_context(ucp);
         setcontext(ucp);
         unreachable();
 }
 
-void __internal_sigtramp(int sig, siginfo_t *info, void *uctx)
+__noreturn void __internal_sigtramp(int sig, siginfo_t *info, void *uctx)
 {
-        if (__real_sigactions[sig].sa_siginfo) {
-                __real_sigactions[sig].sa_sigaction(sig, info, uctx);
-        } else {
-                __real_sigactions[sig].sa_handler(sig);
-        }
+        if (__sigactions[sig].sa_siginfo)
+                __sigactions[sig].sa_sigaction(sig, info, uctx);
+        else
+                __sigactions[sig].sa_handler(sig);
 
         __internal_sigreturn(uctx);
         unreachable();
@@ -39,23 +41,24 @@ void __internal_sigtramp(int sig, siginfo_t *info, void *uctx)
 
 void sig_state_save(void)
 {
-        for (int signo = 1; signo < NSIG; signo++) {
-                if (signo == SIGKILL || signo == SIGSTOP) {
+        for (int sig = 1; sig < NSIG; sig++) {
+                if (sig == SIGKILL || sig == SIGSTOP) {
                         continue;
-                } else if (sigaction(signo, NULL, &sa_table[signo]) < 0) {
-                        warn("sigaction(%d, ...)", signo);
-                        bzero(&sa_table[signo], sizeof(struct sigaction));
+                } if (sigaction(sig, NULL, &sa_table[sig]) < 0) {
+                        xnd_warn("sigaction: %s\n", strerror(errno));
+                        bzero(&sa_table[sig], sizeof(struct sigaction));
                 }
         }
 }
 
 void sig_state_restore(void)
 {
-        for (int signo = 1; signo < NSIG; signo++) {
-                if (signo == SIGKILL || signo == SIGSTOP) {
+        for (int sig = 1; sig < NSIG; sig++) {
+                if (sig == SIGKILL || sig == SIGSTOP) {
                         continue;
-                } else if (sigaction(signo, &sa_table[signo], NULL) < 0) {
-                        warn("sigaction(%d, ...)", signo);
+                } else if (sigaction(sig, &sa_table[sig], NULL) < 0) {
+                        xnd_warn("sigaction: %s\n", strerror(errno));
+                        bzero(&sa_table[sig], sizeof(struct sigaction));
                 }
         }
 }
@@ -66,13 +69,10 @@ sig_t __signal_hook(int sig, sig_t handler)
         int                     err;
 
         if (sig == SIGUSR1 || sig == SIGUSR2) {
-                fprintf(stderr, "%s is reserved for libckpt\n",
-                        (sig == SIGUSR2) ? "SIGUSR2" : "SIGUSR1");
-                errno = EINVAL;
+                xnd_warn("%s is reserved for libckpt\n",
+                         (sig == SIGUSR2) ? "SIGUSR2" : "SIGUSR1");
                 return SIG_ERR;
-        }
-        
-        if (handler == SIG_DFL || handler == SIG_IGN) {
+        } else if (handler == SIG_DFL || handler == SIG_IGN) {
                 return signal(sig, handler);
         }
         
@@ -81,12 +81,11 @@ sig_t __signal_hook(int sig, sig_t handler)
         hook.sa_sigaction = __internal_sigtramp;
         
         err = sigaction(sig, &hook, NULL);
-        if (err != 0) {
+        if (err != 0)
                 return SIG_ERR;
-        }
-
-        __real_sigactions[sig].sa_handler = handler;
-        __real_sigactions[sig].sa_siginfo = false;
+        
+        __sigactions[sig].sa_handler = handler;
+        __sigactions[sig].sa_siginfo = false;
         xnd_trace("Handler installed for signal %d: %p\n", sig, handler);
 
         return handler;
@@ -112,16 +111,15 @@ int __sigaction_hook(int sig, const struct sigaction *act,
 {
         struct sigaction        hook;
         int                     err;
+        char                    *program;
         
         if (act == NULL) {
-                return sigaction(sig, act, oact);
+                return sigaction(sig, NULL, oact);
         } else if (sig == SIGUSR1 || sig == SIGUSR2) {
-                fprintf(stderr, "%s is reserved for libckpt\n",
-                        (sig == SIGUSR2) ? "SIGUSR2" : "SIGUSR1");
+                xnd_warn("%s is reserved for libckpt\n",
+                         (sig == SIGUSR2) ? "SIGUSR2" : "SIGUSR1");
                 return -1;
-        }
-
-        if (act->sa_handler == SIG_DFL || act->sa_handler == SIG_IGN) {
+        } else if (act->sa_handler == SIG_DFL || act->sa_handler == SIG_IGN) {
                 return sigaction(sig, act, oact);
         }
         
@@ -132,17 +130,20 @@ int __sigaction_hook(int sig, const struct sigaction *act,
         err = sigaction(sig, &hook, oact);
         if (err != 0)
                 return err;
+        
+        program = getenv("XND_PROGRAM");
+        xnd_assert(program != NULL);
 
         if (act->sa_flags & SA_SIGINFO) {
-                __real_sigactions[sig].sa_sigaction = act->sa_sigaction;
-                __real_sigactions[sig].sa_siginfo = true;
-                xnd_trace("Handler installed for signal %d: %p\n",
-                          sig, act->sa_sigaction);
+                __sigactions[sig].sa_sigaction = act->sa_sigaction;
+                __sigactions[sig].sa_siginfo = true;
+                xnd_trace("%s installed handler for signal %d: %p\n",
+                          program, sig, act->sa_sigaction);
         } else {
-                __real_sigactions[sig].sa_handler = act->sa_handler;
-                __real_sigactions[sig].sa_siginfo = false;
-                xnd_trace("Handler installed for signal %d: %p\n",
-                          sig, act->sa_handler);
+                __sigactions[sig].sa_handler = act->sa_handler;
+                __sigactions[sig].sa_siginfo = false;
+                xnd_trace("%s installed handler for signal %d: %p\n",
+                          program, sig, act->sa_handler);
         }
         
         return err;

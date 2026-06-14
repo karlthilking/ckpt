@@ -42,6 +42,8 @@ struct thread_info {
 
         ucontext_t                      uc;
         uintptr_t                       tls;
+
+        stack_t                         ss;
         sigset_t                        sigblocked;
 
         pthread_mutex_t                 lock;

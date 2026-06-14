@@ -4,6 +4,7 @@
 #include "xnd/ckpt.h"
 #include "xnd/pac.h"
 #include "xnd/tls.h"
+#include "xnd/wrappers/signal_wrappers.h"
 #include "xnd/wrappers/pthread_wrappers.h"
 
 #define _XOPEN_SOURCE
@@ -343,6 +344,7 @@ void *ckpt_thread_work(void *arg)
                 barrier_arrival_wait();
                 thread_restore_tls();
                 thread_restore_sig_state();
+                sig_state_restore();
 
                 set_ckpt_state(XND_RUNNING);
                 barrier_release();
@@ -746,10 +748,28 @@ __noreturn void thread_restore_context(void)
 
 void thread_save_sig_state(void)
 {
-        pthread_sigmask(SIG_SETMASK, NULL, &myself->sigblocked);
+        int err;
+
+        err = pthread_sigmask(SIG_SETMASK, NULL, &myself->sigblocked);
+        if (err != 0)
+                xnd_warn("pthread_sigmask: %s\n", strerror(err));
+
+        if (sigaltstack(NULL, &myself->ss) < 0)
+                xnd_warn("sigaltstack: %s\n", strerror(errno));
 }
 
 void thread_restore_sig_state(void)
 {
-        pthread_sigmask(SIG_SETMASK, &myself->sigblocked, NULL);
+        int err;
+
+        err = pthread_sigmask(SIG_SETMASK, &myself->sigblocked, NULL);
+        if (err != 0)
+                xnd_warn("pthread_sigmask: %s\n", strerror(err));
+
+        if (myself->ss.ss_sp == NULL || (myself->ss.ss_flags & SS_DISABLE))
+                return;
+        
+        err = sigaltstack(&myself->ss, NULL);
+        if (err < 0)
+                xnd_warn("sigaltstack: %s\n", strerror(errno));
 }

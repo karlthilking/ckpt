@@ -52,10 +52,8 @@ static __always_inline void ucontext_populate_mctx(ucontext_t *uctx)
  */
 void pac_patch_context(ucontext_t *uctx)
 {
-        u64 fp = get_ucontext_fp(uctx);
-        u64 lr = get_ucontext_lr(uctx);
-        u64 sp = get_ucontext_sp(uctx);
-        
+        u64 lr, fp, sp;
+
         /**
          * Unconditionally strip and resign link register
          * with constant discriminator used for auth in
@@ -67,15 +65,18 @@ void pac_patch_context(ucontext_t *uctx)
          * will manually re-sign the link register with the
          * correct stack pointer value.
          */
+        lr = get_ucontext_lr(uctx);
         XPACI(lr);
         PACIA(lr, LR_DISCRIMINATOR);
         set_ucontext_lr(uctx, lr);
         set_ucontext_flags(uctx, 0);
-        
+
+        fp = get_ucontext_fp(uctx);
         XPACD(fp);
         PACDA(fp, FP_DISCRIMINATOR);
         set_ucontext_fp(uctx, fp);
         
+        sp = get_ucontext_sp(uctx);
         XPACD(sp);
         PACDA(sp, SP_DISCRIMINATOR);
         set_ucontext_sp(uctx, sp);

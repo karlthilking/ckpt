@@ -11,7 +11,7 @@
 
 typedef void (*sig_t)(int);
 
-struct __real_sigaction {
+struct __internal_sigaction {
         union __sigaction_u     __sigaction_u;
         bool                    sa_siginfo;
 };

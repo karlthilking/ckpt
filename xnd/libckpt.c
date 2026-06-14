@@ -46,7 +46,6 @@ void postrestart(void)
 {
         thread_sig_fixup(_pthread_ptr_munge_token);
         ckpt_vm_deallocate_regions();
-        sig_state_restore();
         fd_table_restore_state();
         xnd_log_setup();
 
@@ -116,7 +115,7 @@ __constructor() void setup()
 #if DEVELOPMENT || DEBUG
         xnd_log_shared_cache_info();
         xnd_log_main_thread_info();
-        dump_debug_script();
+        dump_debug_info();
 #endif
 }
 
