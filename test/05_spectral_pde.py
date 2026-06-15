@@ -1,26 +1,14 @@
 # 05_spectral_pde.py
-import numpy as np
-from scipy.fft import rfft2, irfft2, rfftfreq, fftfreq
-import time
+import numpy as np from scipy.fft import rfft2, irfft2, rfftfreq, fftfreq import time
 
-N       = 256
-NU      = 1e-3
-DT      = 1e-2
-STEPS   = 5000 
-LOG_EVERY = 200
+                                                                  N = 256 NU = 1e-3 DT = 1e-2 STEPS = 5000 LOG_EVERY = 200
 
-x = np.linspace(0, 2*np.pi, N, endpoint=False)
-y = np.linspace(0, 2*np.pi, N, endpoint=False)
-dx = x[1] - x[0]
+                                                                  x = np.linspace(0, 2 * np.pi, N, endpoint = False) y = np.linspace(0, 2 * np.pi, N, endpoint = False) dx = x[1] - x[0]
 
-kx = fftfreq(N, d=1.0/N).astype(np.float64)
-ky = rfftfreq(N, d=1.0/N).astype(np.float64)
-KX, KY = np.meshgrid(kx, ky, indexing='ij')
-K2 = KX**2 + KY**2
-K2[0, 0] = 1.0
+                                                                                                                                     kx = fftfreq(N, d = 1.0 / N).astype(np.float64) ky = rfftfreq(N, d = 1.0 / N).astype(np.float64) KX, KY = np.meshgrid(kx, ky, indexing = 'ij') K2 = KX ** 2 + KY ** 2 K2[0, 0] = 1.0
 
-kmax = N // 3
-dealias = ((np.abs(KX) < kmax) & (np.abs(KY) < kmax)).astype(np.float64)
+                                                                                                                                                                                                                                                                                                              kmax = N // 3
+                                                                                                                                                                                                                                                                                                              dealias =((np.abs(KX) < kmax) & (np.abs(KY) < kmax)).astype(np.float64)
 
 XX, YY = np.meshgrid(x, y, indexing='ij')
 omega = (2 * np.cos(XX) * np.cos(YY)
@@ -77,10 +65,10 @@ for step in range(STEPS):
                 print(f"step {step:5d} | E = {e:.6e} | Z = {en:.6e} "
                       f"| dE/E0 = {(e-e0)/e0:+.3e} | {el:.1f}s")
                 fflush = lambda: None
-                import sys; sys.stdout.flush()
-                t0 = time.time()
+                import sys;
+sys.stdout.flush() t0 = time.time()
 
-omega_final = irfft2(omega_hat, s=(N, N))
-print(f"\nFinal vorticity: min={omega_final.min():.4f} "
-      f"max={omega_final.max():.4f} "
-      f"mean={omega_final.mean():.6e}")
+                                omega_final = irfft2(omega_hat, s = (N, N))
+        print(f "\nFinal vorticity: min={omega_final.min():.4f} " f
+                "max={omega_final.max():.4f} " f
+                "mean={omega_final.mean():.6e}")

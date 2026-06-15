@@ -13,9 +13,8 @@ void *xmalloc(size_t n)
 {
 	void *p = malloc(n);
 
-	if (!p) {
+	if (!p)
 		err(EXIT_FAILURE, "malloc");
-	}
 
 	return p;
 }
@@ -24,23 +23,20 @@ void gen_spd(double *A, ulong N)
 {
 	double *M = xmalloc(N * N * sizeof(double));
 
-	for (ulong i = 0; i < N * N; i++) {
+	for (ulong i = 0; i < N * N; i++)
 		M[i] = (double)rand() / RAND_MAX - 0.5;
-	}
 
 	for (ulong i = 0; i < N; i++) {
 		for (ulong j = 0; j < N; j++) {
 			double sum = 0;
-			for (ulong k = 0; k < N; k++) {
+			for (ulong k = 0; k < N; k++)
 				sum += M[k * N + i] * M[k * N + j];
-			}
 			A[i * N + j] = sum;
 		}
 	}
 
-	for (ulong i = 0; i < N; i++) {
+	for (ulong i = 0; i < N; i++)
 		A[i * N + i] += N;
-	}
 
 	free(M);
 }
@@ -49,9 +45,8 @@ void matvec(const double *A, const double *x, double *y, ulong N)
 {
 	for (ulong i = 0; i < N; i++) {
 		double sum = 0;
-		for (ulong j = 0; j < N; j++) {
+		for (ulong j = 0; j < N; j++)
 			sum += A[i * N + j] * x[j];
-		}
 		y[i] = sum;
 	}
 }
@@ -60,9 +55,8 @@ double dot(const double *a, const double *b, ulong N)
 {
 	double sum = 0;
 
-	for (ulong i = 0; i < N; i++) {
+	for (ulong i = 0; i < N; i++)
 		sum += a[i] * b[i];
-	}
 
 	return sum;
 }
@@ -102,18 +96,19 @@ void cg(ulong N, int iters, double tolerance)
 		if (residual < tolerance) {
 			printf("Converged at iteration %d: "
 			       "Residual=%.4e\n",
-			       iter, residual);
+			       iter,
+			       residual);
 			break;
 		}
 
-		for (ulong i = 0; i < N; i++) {
+		for (ulong i = 0; i < N; i++)
 			p[i] = r[i] + (rsnew / rsold) * p[i];
-		}
 		rsold = rsnew;
 	}
 
 	if (iter == iters) {
-		printf("Final iteration (%d): Residual=%.4e\n", iter,
+		printf("Final iteration (%d): Residual=%.4e\n",
+		       iter,
 		       sqrt(rsold));
 	}
 
@@ -127,8 +122,8 @@ void cg(ulong N, int iters, double tolerance)
 
 int main(int argc, char *argv[])
 {
-	int iters = 10000, epochs;
-	ulong N = 1u << 10;
+	int    iters = 10000, epochs;
+	ulong  N = 1u << 10;
 	double tolerance;
 
 	epochs = (argc > 1) ? atoi(argv[1]) : 20;

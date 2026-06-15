@@ -23,8 +23,8 @@ struct Body {
 	double mass;
 };
 
-static std::vector<Body>   bodies(N);
-static std::vector<double> fx(N), fy(N), fz(N);
+std::vector<Body>   bodies(N);
+std::vector<double> fx(N), fy(N), fz(N);
 
 static double total_energy(void)
 {
@@ -91,10 +91,10 @@ int main(void)
 	double e0 = total_energy();
 	printf("Initial energy: %.6e\n", e0);
 
-        int chunk = N / NTHREADS;
-        std::vector<std::thread> workers(NTHREADS);
+	int                      chunk = N / NTHREADS;
+	std::vector<std::thread> workers(NTHREADS);
 
-        for (int step = 0; step < STEPS; step++) {
+	for (int step = 0; step < STEPS; step++) {
 		for (int t = 0; t < NTHREADS; t++) {
 			int start = t * chunk;
 			int end = (t == NTHREADS - 1) ? N : start + chunk;
@@ -104,23 +104,26 @@ int main(void)
 			w.join();
 
 		for (int i = 0; i < N; i++) {
-        		bodies[i].vx += fx[i] * DT;
-        		bodies[i].vy += fy[i] * DT;
-        		bodies[i].vz += fz[i] * DT;
-        		bodies[i].x  += bodies[i].vx * DT;
-        		bodies[i].y  += bodies[i].vy * DT;
-        		bodies[i].z  += bodies[i].vz * DT;
+			bodies[i].vx += fx[i] * DT;
+			bodies[i].vy += fy[i] * DT;
+			bodies[i].vz += fz[i] * DT;
+			bodies[i].x += bodies[i].vx * DT;
+			bodies[i].y += bodies[i].vy * DT;
+			bodies[i].z += bodies[i].vz * DT;
 		}
 
 		if (step % LOG_EVERY == 0) {
 			double e = total_energy();
 			printf("step %5d | E = %.6e | dE/E0 = %.3e\n",
-			       step, e, (e - e0) / std::abs(e0));
+			       step,
+			       e,
+			       (e - e0) / std::abs(e0));
 			fflush(stdout);
 		}
-        }
+	}
 
-        printf("Final energy: %.6e | drift: %.3e\n",
-               total_energy(), (total_energy() - e0) / std::abs(e0));
-        return 0;
+	printf("Final energy: %.6e | drift: %.3e\n",
+	       total_energy(),
+	       (total_energy() - e0) / std::abs(e0));
+	return 0;
 }
