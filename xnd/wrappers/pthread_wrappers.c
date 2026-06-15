@@ -74,21 +74,16 @@ int __pthread_join_hook(pthread_t p, void **value_ptr)
         if (!validate_pthread(p))
                 return ESRCH;
         th = decode_pthread(p);
-
+        
         xnd_assert(pthread_mutex_lock(&th->lock) == 0);
-        th->joining = 1;
         while (!th->exiting) {
-                err = pthread_cond_wait(&th->cond, &th->lock);
-                if (unlikely(err != 0)) {
-                        pthread_mutex_unlock(&th->lock);
-                        return EINVAL;
-                }
+                xnd_assert(pthread_cond_wait(&th->cond, &th->lock) == 0);
         }
         xnd_assert(pthread_mutex_unlock(&th->lock) == 0);
         
         unsafe_enter();
         err = pthread_join(th->self, value_ptr);
-        th->joined = (err == 0);
+        th->joined = 1;
         unsafe_exit();
 
         return err;
@@ -178,44 +173,6 @@ int __pthread_detach_hook(pthread_t p)
         unsafe_exit();
 
         return err;
-}
-
-int __pthread_sigmask_hook(int how, const sigset_t *set, sigset_t *oset)
-{
-        sigset_t clean;
-
-        if (set) {
-                clean = *set;
-                
-                switch (how) {
-                case SIG_BLOCK:
-                        /**
-                         * Don't allow user threads to block SIGUSR1
-                         * (user for user thread checkpoint handler).
-                         */
-                        sigdelset(&clean, SIGUSR1);
-                        break;
-                case SIG_UNBLOCK:
-                        /**
-                         * Don't allow user threads to unblock SIGUSR2
-                         * (reserved for checkpoint thread to receive).
-                         */
-                        sigdelset(&clean, SIGUSR2);
-                        break;
-                case SIG_SETMASK:
-                        /**
-                         * If a user is replacing the signal mask,
-                         * SIGUSR1 must be kept unblocked, and SIGUSR2
-                         * must be kept block (see above).
-                         */
-                         sigaddset(&clean, SIGUSR2);
-                         sigdelset(&clean, SIGUSR1);
-                         break;
-                }
-                set = &clean;
-        }
-
-        return pthread_sigmask(how, set, oset);
 }
 
 int __pthread_setschedparam_hook(pthread_t p, int policy, 
@@ -410,7 +367,6 @@ INTERPOSE(__pthread_self_hook, pthread_self);
 INTERPOSE(__pthread_equal_hook, pthread_equal);
 INTERPOSE(__pthread_kill_hook, pthread_kill);
 INTERPOSE(__pthread_detach_hook, pthread_detach);
-INTERPOSE(__pthread_sigmask_hook, pthread_sigmask);
 INTERPOSE(__pthread_setschedparam_hook, pthread_setschedparam);
 INTERPOSE(__pthread_getschedparam_hook, pthread_getschedparam);
 INTERPOSE(__pthread_get_stackaddr_np_hook, pthread_get_stackaddr_np);

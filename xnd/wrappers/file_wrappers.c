@@ -1,6 +1,7 @@
 /* file_wrappers.c */
 #include "xnd/xnd.h"
 #include "xnd/xnd_lib.h"
+#include "xnd/tls.h"
 #include "file_wrappers.h"
 
 #include <unistd.h>
@@ -203,8 +204,10 @@ void fd_table_restore_state(void)
 
 void fd_table_open(int fd, const char *path, int flags, mode_t mode)
 {
-        if (skip_fd_tracking())
+        if (skip_fd_tracking()) {
+                xnd_trace("Ignoring opened fd: %d\n", fd);
                 return;
+        }
 
         fd_table[fd].src = malloc(sizeof(struct fd_backing));
         fd_table[fd].type = FD_REGFILE;
@@ -218,15 +221,21 @@ void fd_table_open(int fd, const char *path, int flags, mode_t mode)
 
 void fd_table_dup(int oldfd, int newfd)
 {
-        if (skip_fd_tracking() || oldfd == newfd)
+        if (skip_fd_tracking()) {
+                xnd_trace("Ignoring dup'd fd (old=%d, new=%d)\n",
+                          oldfd, newfd);
                 return;
+        }
 
-        xnd_assert(fd_table[oldfd].src != NULL &&
-                   fd_table[oldfd].type != FD_UNUSED);
-        
+        if (unlikely(fd_table[oldfd].src == NULL) ||
+            unlikely(fd_table[oldfd].type == FD_UNUSED)) {
+                xnd_warn("dup'd fd is not being tracked: %d\n", oldfd);
+                return;
+        }
+
         /* newfd now points to the same underlying open file */
-        fd_table[newfd].src     = fd_table[oldfd].src;
-        fd_table[newfd].type    = fd_table[oldfd].type;
+        fd_table[newfd].src = fd_table[oldfd].src;
+        fd_table[newfd].type = fd_table[oldfd].type;
         
         /* Increment reference count */
         fd_table[newfd].src->ref++;
@@ -235,6 +244,7 @@ void fd_table_dup(int oldfd, int newfd)
 void fd_table_close(int fd)
 {
         if (skip_fd_tracking()) {
+                xnd_trace("Ignoring closed fd: %d\n", fd);
                 return;
         } else if (fd_table[fd].type == FD_UNUSED) {
                 xnd_assert(fd_table[fd].src == NULL);
@@ -374,3 +384,13 @@ int __fclose_hook(FILE *stream)
 
         return retval;
 }
+
+INTERPOSE(__openat_hook, openat);
+INTERPOSE(__open_hook, open);
+INTERPOSE(__creat_hook, creat);
+INTERPOSE(__close_hook, close);
+INTERPOSE(__dup_hook, dup);
+INTERPOSE(__dup2_hook, dup2);
+INTERPOSE(__fcntl_hook, fcntl);
+INTERPOSE(__fopen_hook, fopen);
+INTERPOSE(__fclose_hook, fclose);

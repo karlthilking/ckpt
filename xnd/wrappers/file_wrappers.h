@@ -89,16 +89,6 @@ void fd_table_open(int, const char *, int, mode_t);
 void fd_table_dup(int, int);
 void fd_table_close(int);
 
-extern int      openat(int, const char *, int, ...);
-extern int      open(const char *, int, ...);
-extern int      creat(const char *, mode_t);
-extern int      close(int);
-extern int      dup(int);
-extern int      dup2(int, int);
-extern int      fcntl(int, int, ...);
-extern FILE     *fopen(const char *, const char *);
-extern int      fclose(FILE *);
-
 int     __openat_hook(int, const char *, int, ...);
 int     __open_hook(const char *, int, ...);
 int     __creat_hook(const char *, mode_t);
@@ -108,15 +98,5 @@ int     __dup2_hook(int, int);
 int     __fcntl_hook(int, int, ...);
 FILE    *__fopen_hook(const char *, const char *);
 int     __fclose_hook(FILE *);
-
-INTERPOSE(__openat_hook, openat);
-INTERPOSE(__open_hook, open);
-INTERPOSE(__creat_hook, creat);
-INTERPOSE(__close_hook, close);
-INTERPOSE(__dup_hook, dup);
-INTERPOSE(__dup2_hook, dup2);
-INTERPOSE(__fcntl_hook, fcntl);
-INTERPOSE(__fopen_hook, fopen);
-INTERPOSE(__fclose_hook, fclose);
 
 #endif /* FILE_WRAPPERS_H */

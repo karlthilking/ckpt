@@ -22,13 +22,9 @@ void __internal_sigtramp(int, siginfo_t *, void *);
 void sig_state_save(void);
 void sig_state_restore(void);
 
-extern sig_t  signal(int, sig_t);
-extern int    sigaction(int, const struct sigaction *, struct sigaction *);
-
-sig_t  __signal_hook(int, sig_t);
-int    __sigaction_hook(int, const struct sigaction *, struct sigaction *);
-
-INTERPOSE(__signal_hook, signal);
-INTERPOSE(__sigaction_hook, sigaction);
+sig_t __signal_hook(int, sig_t);
+int __sigaction_hook(int, const struct sigaction *, struct sigaction *);
+int __sigprocmask_hook(int, const sigset_t *, sigset_t *);
+int __pthread_sigmask_hook(int, const sigset_t *, sigset_t *);
 
 #endif // SIGNAL_WRAPPERS_H

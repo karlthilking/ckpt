@@ -1,6 +1,9 @@
 /* signal_wrappers.c */
 #include "signal_wrappers.h"
+#include "xnd/xnd.h"
 #include "xnd/pac.h"
+#include "xnd/xnd_lib.h"
+#include "xnd/platform/ucontext/ucontext.h"
 
 #define _XOPEN_SOURCE
 #include <ucontext.h>
@@ -14,17 +17,21 @@
 static struct sigaction                 sa_table[NSIG];
 static struct __internal_sigaction      __sigactions[NSIG];
 
-__noreturn void __internal_sigreturn(ucontext_t *ucp)
+__noreturn void __internal_sigreturn(ucontext_t *uctx)
 {
-        u64 fp = get_ucontext_fp(ucp);
+        u64 fp = get_ucontext_fp(uctx);
 
 #if defined(__arm64e__)
         if (PTRAUTH_SIGNED(fp))
                 XPACD(fp);
+#else
+        xnd_assert(!PTRAUTH_SIGNED(fp));
 #endif
+
         pac_resign_frames((u64 *)fp);
-        pac_patch_context(ucp);
-        setcontext(ucp);
+        pac_patch_context(uctx);
+        setcontext(uctx);
+
         unreachable();
 }
 
@@ -148,3 +155,40 @@ int __sigaction_hook(int sig, const struct sigaction *act,
         
         return err;
 }
+
+int __sigprocmask_hook(int how, const sigset_t *set, sigset_t *oset)
+{
+        if (get_xnd_state() != XND_RUNNING)
+                return pthread_sigmask(how, set, oset);
+        return __pthread_sigmask_hook(how, set, oset);
+}
+
+int __pthread_sigmask_hook(int how, const sigset_t *set, sigset_t *oset)
+{
+        sigset_t clean;
+        
+        if (set == NULL || get_xnd_state() != XND_RUNNING) {
+                return pthread_sigmask(how, NULL, oset);
+        }
+        
+        clean = *set;
+        switch (how) {
+        case SIG_BLOCK:
+                sigdelset(&clean, SIGUSR1);
+                break;
+        case SIG_UNBLOCK:
+                sigdelset(&clean, SIGUSR2);
+                break;
+        case SIG_SETMASK:
+                sigaddset(&clean, SIGUSR2);
+                sigdelset(&clean, SIGUSR1);
+                break;
+        }
+        
+        return pthread_sigmask(how, &clean, oset);
+}
+
+INTERPOSE(__signal_hook, signal);
+INTERPOSE(__sigaction_hook, sigaction);
+INTERPOSE(__sigprocmask_hook, sigprocmask);
+INTERPOSE(__pthread_sigmask_hook, pthread_sigmask);

@@ -32,34 +32,37 @@ struct thread_info {
         void                            *arg;
         
         _Atomic enum thread_state       state;
-        u8                              exiting : 1,
-                                        joining : 1,
-                                        joined  : 1,
-                                        unused  : 5;
+        u8                              exiting         : 1,
+                                        joined          : 1,
+                                        unused          : 6;
         void                            *exit_value;
 
         u32                             wrapper_depth;
-
-        ucontext_t                      uc;
+        ucontext_t                      uctx;
         uintptr_t                       tls;
-
         stack_t                         ss;
         sigset_t                        sigblocked;
 
         pthread_mutex_t                 lock;
         pthread_cond_t                  cond;
-
         struct thread_info              *next;
         struct thread_info              *prev;
 };
 
-void                    thread_list_init(void);
-void                    thread_list_destroy(void);
-void                    thread_list_acquire(void);
-void                    thread_list_release(void);
-struct thread_info      *thread_list_find(pthread_t);
-void                    thread_list_add(void);
-void                    thread_list_remove(struct thread_info *);
+void thread_list_init(void);
+void thread_list_destroy(void);
+void thread_list_acquire(void);
+void thread_list_release(void);
+void thread_list_add(void);
+void thread_list_remove(struct thread_info *);
+
+void zombie_list_init(void);
+void zombie_list_destroy(void);
+void zombie_list_acquire(void);
+void zombie_list_release(void);
+void zombie_list_filter(void);
+void zombie_list_add(struct thread_info *);
+void zombie_list_remove(struct thread_info *);
 
 struct thread_info      *thread_init(void *(*)(void *), void *);
 void                    thread_reap(struct thread_info *);
@@ -68,17 +71,17 @@ struct thread_info      *thread_self(void);
 struct thread_info      *thread_self_or_null(void);
 struct thread_info      *main_thread(void);
 
-void    ckpt_thread_exit(void);
-void    ckpt_thread_wait(void);
-void    *ckpt_thread_work(void *);
-void    ckpt_thread_reap(void);
-void    ckpt_thread_join(void);
-void    ckpt_thread_terminate(void);
+void ckpt_thread_init(void);
+void ckpt_thread_exit(void);
+void ckpt_thread_wait(void);
+void *ckpt_thread_work(void *);
+void ckpt_thread_reap(void);
+void ckpt_thread_join(void);
+void ckpt_thread_terminate(void);
 
 void    barrier_arrival_wait(void);
 void    barrier_release(void);
 
-bool    scan_threads(u32 *);
 void    suspend_threads(void);
 void    restore_threads(void);
 void    wait_for_exiting_threads(void);

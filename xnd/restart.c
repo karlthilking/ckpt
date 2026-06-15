@@ -54,10 +54,7 @@ __noreturn noinline void restart(int fd)
 
         pac_resign_frames((u64 *)fp);
         pac_patch_context(&uctx);
-        if (setcontext(&uctx) < 0) {
-                xnd_error("setcontext: %s\n", strerror(errno));
-                exit(EXIT_FAILURE);
-        }
+        setcontext(&uctx);
 
         unreachable();
 }

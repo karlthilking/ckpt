@@ -6,6 +6,7 @@
 #include "xnd/tls.h"
 #include "xnd/wrappers/signal_wrappers.h"
 #include "xnd/wrappers/pthread_wrappers.h"
+#include "xnd/platform/ucontext/ucontext.h"
 
 #define _XOPEN_SOURCE
 #include <ucontext.h>
@@ -21,19 +22,20 @@
 _Thread_local struct thread_info        *myself         = NULL;
 static struct thread_info               *_main_thread   = NULL;
 static struct thread_info               ckpt_thread;
+
 static struct thread_list               thread_list;
+static struct thread_list               zombie_list;
 
 static int              threads_expected;
 static int              threads_arrived;
-static u64              barrier_epoch = 0ull;
+static u64              barrier_epoch   = 0ull;
 static pthread_cond_t   cond_arrived    = PTHREAD_COND_INITIALIZER;
 static pthread_cond_t   cond_released   = PTHREAD_COND_INITIALIZER;
 static pthread_mutex_t  ckpt_mtx        = PTHREAD_MUTEX_INITIALIZER;
 
 void thread_list_init(void)
 {
-        pthread_mutexattr_t     attr;
-        uintptr_t               ckpt_thread_ready = 0;
+        pthread_mutexattr_t attr;
 
         pthread_mutexattr_init(&attr);
 #if DEVELOPMENT || DEBUG
@@ -43,40 +45,19 @@ void thread_list_init(void)
 
         /* Initialize main thread info */
         tlv_init();
-        thread_list.head = malloc(sizeof(struct thread_info));
+        thread_list.head = calloc(1, sizeof(struct thread_info));
         xnd_assert(thread_list.head != NULL);
 
         myself = thread_list.head;
         myself->self = pthread_self();
         myself->state = ST_RUNNING;
-        myself->exiting = 0;
-        myself->joining = 0;
-        myself->joined = 0;
-        myself->wrapper_depth = 0;
-        myself->next = NULL;
-        myself->prev = NULL;
         _main_thread = myself;
 
         pthread_mutex_init(&myself->lock, &attr);
         pthread_cond_init(&myself->cond, NULL);
         
-        /**
-         * Initialize and create the checkpoint thread, then
-         * wait for the checkpoint thread to start up before returning
-         */
-        ckpt_thread.state = ST_CKPT_THREAD;
-        pthread_mutex_init(&ckpt_thread.lock, &attr);
-        pthread_cond_init(&ckpt_thread.cond, NULL);
-
-        pthread_mutex_lock(&ckpt_thread.lock);
-        pthread_create(&ckpt_thread.self, NULL, ckpt_thread_work,
-                       (void *)&ckpt_thread_ready);
-
-        while (!ckpt_thread_ready) {
-                pthread_cond_wait(&ckpt_thread.cond, &ckpt_thread.lock);
-        }
-
-        pthread_mutex_unlock(&ckpt_thread.lock);
+        zombie_list_init();
+        ckpt_thread_init();
         pthread_mutexattr_destroy(&attr);
 }
 
@@ -94,8 +75,9 @@ void thread_list_destroy(void)
                 free(th);
         }
         thread_list_release();
-        
         pthread_mutex_destroy(&thread_list.lock);
+
+        zombie_list_destroy();
         tlv_exit();
 }
 
@@ -109,27 +91,10 @@ void thread_list_release(void)
         xnd_assert(pthread_mutex_unlock(&thread_list.lock) == 0);
 }
 
-struct thread_info *thread_list_find(pthread_t p)
-{
-        struct thread_info *th, *ret = NULL;
-        
-        thread_list_acquire();
-        for (th = thread_list.head; th; th = th->next) {
-                if (pthread_equal(th->self, p)) {
-                        ret = th;
-                        break;
-                }
-        }
-        
-        thread_list_release();
-        return ret;
-}
-
 /**
  * thread_list_add:
- *  Add a thread from the thread list and opportunistically remove dead
- *  threads from the list in order to free their resources. The lock is 
- *  acquired during thread_list_add and should not be held by the caller.
+ *  Add a thread to the thread list. The lock is acquired during
+ *  thread_list_add and should not be held by the caller.
  *
  *  Note: Caller of thread_list_add should be the new thread that is
  *  being insterted into the list (called during thread_start trampoline
@@ -137,24 +102,9 @@ struct thread_info *thread_list_find(pthread_t p)
  */
 void thread_list_add(void)
 {
-        struct thread_info *th, *next;
-        
         thread_list_acquire();
-        /**
-         * Find threads that have exited by sending signal 0 and
-         * removed zombie threads from the thread list.
-         */
-        for (th = thread_list.head; th; th = next) {
-                next = th->next;
-                if (th->joined)
-                        thread_list_remove(th);
-        }
-        
-        /**
-         * Add new thread to the thread list. The caller of
-         * thread_list_add should be the new thread itself.
-         */
         xnd_assert(myself != NULL);
+
         myself->next = thread_list.head;
         myself->prev = NULL;
 
@@ -167,8 +117,10 @@ void thread_list_add(void)
 
 /**
  * thread_list_remove:
- *  Remove a thread from the thread list. Assume the thread list mutex
- *  is already held by the caller.
+ *  Remove a thread from the thread list. Only the checkpoint thread
+ *  should ever call thread_list_remove; additionally, the checkpoint
+ *  thread should be have the lock acquired before calling
+ *  thread_list_remove.
  */
 void thread_list_remove(struct thread_info *th)
 {
@@ -181,9 +133,111 @@ void thread_list_remove(struct thread_info *th)
 
         if (th->next)
                 th->next->prev = th->prev;
-
+        
+        /**
+         * If the thread is joined, free all resources. Otherwise, a user
+         * thread will eventually call pthread_join and start executing
+         * in __pthread_join_hook. This user thread will need the thread
+         * descriptor to be around in order to call pthread_join with the
+         * correct pthread_t. In this case, add the thread to a zombie
+         * list to keep it around as long another user thread might need
+         * the thread descriptor.
+         */
         if (th->joined)
                 thread_reap(th);
+        else
+                zombie_list_add(th);
+}
+
+void zombie_list_init(void)
+{
+        zombie_list.head = NULL;
+#if DEVELOPMENT || DEBUG
+        pthread_mutexattr_t attr;
+        pthread_mutexattr_init(&attr);
+        pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_ERRORCHECK);
+        pthread_mutex_init(&zombie_list.lock, &attr);
+#else
+        pthread_mutex_init(&zombie_list.lock, NULL);
+#endif
+}
+
+void zombie_list_destroy(void)
+{
+        struct thread_info *th, *next;
+        
+        zombie_list_acquire();
+        for (th = zombie_list.head; th; th = next) {
+                next = th->next;
+                thread_reap(th);
+        }
+        zombie_list_release();
+        pthread_mutex_destroy(&zombie_list.lock);
+}
+
+void zombie_list_acquire(void)
+{
+        xnd_assert(pthread_mutex_lock(&zombie_list.lock) == 0);
+}
+
+void zombie_list_release(void)
+{
+        xnd_assert(pthread_mutex_unlock(&zombie_list.lock) == 0);
+}
+
+void zombie_list_filter(void)
+{
+        struct thread_info *th, *next;
+        
+        zombie_list_acquire();
+        for (th = zombie_list.head; th; th = next) {
+                next = th->next;
+                if (th->joined)
+                        zombie_list_remove(th);
+        }
+        zombie_list_release();
+}
+
+void zombie_list_add(struct thread_info *th)
+{
+        if (unlikely(th->joined)) {
+                thread_reap(th);
+                return;
+        }
+        
+        zombie_list_acquire();
+        th->next = zombie_list.head;
+        th->prev = NULL;
+
+        if (th->next)
+                th->next->prev = th;
+        
+        zombie_list.head = th;
+        zombie_list_release();
+}
+
+/**
+ * zombie_list_remove:
+ *  If a exited thread's thread descriptor isn't needed anymore, the
+ *  zombie thread can be removed the zombie list and its resources can
+ *  be freed. zombie_list_remove should only be called directly by
+ *  zombie_list_filter (to scan for thread desciptors that are no longer
+ *  needed), and the lock should be held by the caller.
+ */
+void zombie_list_remove(struct thread_info *zombie)
+{
+        xnd_assert(zombie->joined);
+        if (zombie->prev) {
+                zombie->prev->next = zombie->next;
+        } else {
+                xnd_assert(zombie == zombie_list.head);
+                zombie_list.head = zombie->next;
+        }
+
+        if (zombie->next)
+                zombie->next->prev = zombie->prev;
+
+        thread_reap(zombie);
 }
 
 /**
@@ -201,24 +255,17 @@ struct thread_info *thread_init(void *(*fn)(void *), void *arg)
         struct thread_info *    new;
         pthread_mutexattr_t     attr;
 
-        new = malloc(sizeof(struct thread_info));
+        new = calloc(1, sizeof(struct thread_info));
         xnd_assert(new != NULL);
         
         new->fn = fn;
         new->arg = arg;
         new->state = ST_EMBRYO;
-        new->exiting = 0;
-        new->joining = 0;
-        new->joined = 0;
-        new->wrapper_depth = 0;
-        new->next = NULL;
-        new->prev = NULL;
 
         pthread_mutexattr_init(&attr);
 #if DEVELOPMENT || DEBUG
         pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_ERRORCHECK);
 #endif
-
         xnd_assert(pthread_mutex_init(&new->lock, &attr) == 0);
         xnd_assert(pthread_cond_init(&new->cond, NULL) == 0);
 
@@ -271,6 +318,23 @@ struct thread_info *main_thread(void)
         return _main_thread;
 }
 
+void ckpt_thread_init(void)
+{
+        bool ready = false;
+
+        ckpt_thread.state = ST_CKPT_THREAD;
+        pthread_mutex_init(&ckpt_thread.lock, NULL);
+        pthread_cond_init(&ckpt_thread.cond, NULL);
+
+        pthread_mutex_lock(&ckpt_thread.lock);
+        pthread_create(&ckpt_thread.self, NULL, ckpt_thread_work,
+                       (void *)&ready);
+        while (!ready) {
+                pthread_cond_wait(&ckpt_thread.cond, &ckpt_thread.lock);
+        }
+        pthread_mutex_unlock(&ckpt_thread.lock);
+}
+
 __noreturn void ckpt_thread_exit(void)
 {
         xnd_assert(myself == &ckpt_thread);
@@ -304,7 +368,7 @@ void ckpt_thread_wait(void)
         }
 }
 
-void *ckpt_thread_work(void *arg)
+void *ckpt_thread_work(void *ready)
 {
         static volatile bool restart;
         {
@@ -313,7 +377,6 @@ void *ckpt_thread_work(void *arg)
                 sigemptyset(&set);
                 sigaddset(&set, SIGUSR1);
                 sigaddset(&set, SIGUSR2);
-                
                 pthread_sigmask(SIG_BLOCK, &set, NULL);
         }
        
@@ -326,12 +389,12 @@ void *ckpt_thread_work(void *arg)
          * initialized itself and is ready
          */
         pthread_mutex_lock(&myself->lock);
-        *(uintptr_t *)arg = 1;
+        *(bool *)ready = true;
         pthread_cond_signal(&myself->cond);
         pthread_mutex_unlock(&myself->lock);
 
         restart = false;
-        getcontext(&myself->uc);
+        getcontext(&myself->uctx);
 
         if (restart) {
                 xnd_postrestart();
@@ -345,6 +408,7 @@ void *ckpt_thread_work(void *arg)
                 thread_restore_tls();
                 thread_restore_sig_state();
                 sig_state_restore();
+                zombie_list_filter();
 
                 set_xnd_state(XND_RUNNING);
                 barrier_release();
@@ -364,7 +428,7 @@ void *ckpt_thread_work(void *arg)
 
                 xnd_precheckpoint();
                 set_tls_slot(TLS_TLV_FLAG_SLOT, 0);
-                xnd_checkpoint(&myself->uc);
+                xnd_checkpoint(&myself->uctx);
                 
                 set_tls_slot(TLS_TLV_FLAG_SLOT, TLS_TLV_INIT_MAGIC);
                 set_xnd_state(XND_RUNNING);
@@ -428,34 +492,29 @@ void barrier_release(void)
         pthread_mutex_unlock(&ckpt_mtx);
 }
 
-/**
- * scan_threads:
- *  Scan thread list and suspend thread by sending SIGUSR1, and increment
- *  a counter to indentify how many user threads are active and should
- *  be participating in the checkpoint.
- *
- * thread_list.lock should be held by the caller to scan_threads.
- * A positive integer will be returned if any threads are not suspended
- * or confirmed to have exited. Thus, a rescan will be necessary before
- * the suspend_threads phase can complete.
- */
-bool scan_threads(u32 *thread_count)
+void suspend_threads(void)
 {
         struct thread_info      *th, *next;
-        int                     err;
-        u32                     count = 0;
-        bool                    rescan = false;
+        int                     err, suspended;
+        bool                    rescan;
 
+        pthread_mutex_lock(&ckpt_mtx);
+        thread_list_acquire();
+
+        threads_arrived = 0;
+again:
+        suspended = 0;
+        rescan = false;
         for (th = thread_list.head; th; th = next) {
                 next = th->next;
-
-                if (th->exiting || unlikely(th->state == ST_CKPT_THREAD)) {
+                xnd_assert(th->state != ST_CKPT_THREAD);
+                if (th->exiting) {
                         continue;
                 } else if (th->joined) {
                         thread_list_remove(th);
                         continue;
                 }
-        
+
                 if (th->state == ST_RUNNING &&
                     thread_state_cas(th, ST_RUNNING, ST_SIGNALED)) {
                         err = pthread_kill(th->self, SIGUSR1);
@@ -477,30 +536,19 @@ bool scan_threads(u32 *thread_count)
                         rescan = true;
                 } else if (th->state == ST_SUSPENDED ||
                            th->state == ST_SUSPINPROG) {
-                        count++;
+                        suspended++;
                 } else if (th->state == ST_UNSAFE) {
                         rescan = true;
                 }
         }
-        
-        *thread_count = count;
-        return rescan;
-}
 
-void suspend_threads(void)
-{
-        u32 thread_count;
-        
-        pthread_mutex_lock(&ckpt_mtx);
-        threads_arrived = 0;
-        
-        thread_list_acquire();
-        while (scan_threads(&thread_count)) {
+        if (rescan) {
                 usleep(10);
+                goto again;
         }
+        
+        threads_expected = suspended;
         thread_list_release();
-
-        threads_expected = thread_count;
         pthread_mutex_unlock(&ckpt_mtx);
 }
 
@@ -511,7 +559,7 @@ void restore_threads(void)
 
         thread_list_acquire();
         pthread_mutex_lock(&ckpt_mtx);
-
+        
         threads_arrived = 0;
         threads_expected = 0;
 
@@ -519,9 +567,8 @@ void restore_threads(void)
                 xnd_assert(!th->exiting);
                 err = pthread_create(&th->self, NULL, thread_restart, th);
                 if (unlikely(err != 0)) {
-                        fprintf(stderr, "pthread_create: %s\n",
-                                strerror(err));
-                        exit(EXIT_FAILURE);
+                        xnd_error("pthread_create: %s\n", strerror(err));
+                        xnd_abort();
                 }
                 threads_expected++;
         }
@@ -534,27 +581,31 @@ void wait_for_exiting_threads(void)
 {
         struct thread_info      *th, *next;
         int                     exiting, killed;
-
+        
         thread_list_acquire();
-        do {
-                killed = 0;
-                exiting = 0;
-                for (th = thread_list.head; th; th = next) {
-                        next = th->next;
-                        if (th->joined) {
+again:
+        killed = 0;
+        exiting = 0;
+        for (th = thread_list.head; th; th = next) {
+                next = th->next;
+                if (th->joined) {
+                        thread_list_remove(th);
+                } else if (th->exiting) {
+                        exiting++;
+                        if (pthread_kill(th->self, 0) == ESRCH) {
                                 thread_list_remove(th);
-                        } else if (th->exiting) {
-                                exiting++;
-                                if (pthread_kill(th->self, 0) == ESRCH) {
-                                        killed++;
-                                        thread_list_remove(th);
-                                }
+                                killed++;
                         }
+                } else {
+                        xnd_assert(th->state == ST_SUSPENDED ||
+                                   th->state == ST_SUSPINPROG);
                 }
+        }
 
-                if (killed != exiting)
-                        usleep(10);
-        } while (killed != exiting);
+        if (exiting != killed) {
+                usleep(10);
+                goto again;
+        }
         thread_list_release();
 }
 
@@ -581,15 +632,7 @@ void thread_sighandler(int sig, siginfo_t *info, void *uctx)
         if (unlikely(myself->state == ST_CKPT_THREAD)) {
                 return;
         }
-
-        if (!thread_state_cas(myself, ST_SIGNALED, ST_SUSPINPROG)) {
-                /**
-                 * Prevent user threads from entering the signal handler
-                 * more than once. A user thread should only be here
-                 * if in state ST_SIGNALED (set by the checkpoint thread).
-                 */
-                return;
-        }
+        xnd_assert(thread_state_cas(myself, ST_SIGNALED, ST_SUSPINPROG));
         
         /* Save state and transition to suspended */
         thread_save_tls();
@@ -701,15 +744,7 @@ void thread_restore_tls(void)
 
         dst = (void **)tls;
         src = (void **)myself->tls;
-        
-        for (uint slot = 30; slot < 256; slot++) {
-                if (dst[slot] == NULL && src[slot] != NULL)
-                        dst[slot] = src[slot];
-                else if (dst[slot] != NULL && src[slot] == NULL)
-                        dst[slot] = NULL;
-        }
-
-        for (uint slot = 256; slot < 768; slot++) {
+        for (uint slot = 30; slot < 768; slot++) {
                 if (dst[slot] == NULL && src[slot] != NULL)
                         dst[slot] = src[slot];
                 else if (dst[slot] != NULL && src[slot] == NULL)
@@ -719,29 +754,24 @@ void thread_restore_tls(void)
 
 void thread_save_context(ucontext_t *ucp)
 {
-        memcpy(&myself->uc, ucp, sizeof(ucontext_t));
-        memcpy(&myself->uc.__mcontext_data, ucp->uc_mcontext,
-               sizeof(myself->uc.__mcontext_data));
+        memcpy(&myself->uctx, ucp, sizeof(ucontext_t));
+        memcpy(&myself->uctx.__mcontext_data, ucp->uc_mcontext,
+               sizeof(myself->uctx.__mcontext_data));
 
-        myself->uc.uc_mcontext = (mcontext_t)&myself->uc.__mcontext_data;
+        myself->uctx.uc_mcontext = &myself->uctx.__mcontext_data;
 }
 
 __noreturn void thread_restore_context(void)
 {
         u64 fp;
         
-        fp = get_ucontext_fp(&myself->uc);
+        fp = get_ucontext_fp(&myself->uctx);
         if (PTRAUTH_SIGNED(fp)) {
                 XPACD(fp);
         }
 
         pac_resign_frames((u64 *)fp);
-        pac_patch_context(&myself->uc);
-        
-        if (setcontext(&myself->uc) < 0) {
-                perror("setcontext");
-                thread_exit(NULL);
-        }
+        xnd_setcontext(&myself->uctx);
         
         unreachable();
 }

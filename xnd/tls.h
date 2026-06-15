@@ -42,6 +42,12 @@
          (struct __darwin_pthread_handler_rec *)(__handler);    \
 })
 
+#define get_thread_mach_port(__tls)                     \
+        ({                                              \
+                (mach_port_t)(__tls + sizeof(void *) +  \
+                              __TSD_MACH_THREAD_SELF);  \
+        })
+
 static __always_inline void set_tls_slot(uint __slot, uintptr_t __val)
 {
         uintptr_t __tls;

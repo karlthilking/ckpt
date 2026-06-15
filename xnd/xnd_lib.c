@@ -97,16 +97,16 @@ __constructor() void xnd_setup(void)
         /* Every thread blocks SIGUSR2 except for checkpoint thread */
         sigemptyset(&set);
         sigaddset(&set, SIGUSR2);
-        sigprocmask(SIG_BLOCK, &set, NULL);
+        pthread_sigmask(SIG_BLOCK, &set, NULL);
         
         sigfillset(&sa.sa_mask);
         sa.sa_flags = SA_SIGINFO | SA_RESTART;
         sa.sa_sigaction = thread_sighandler;
         sigaction(SIGUSR1, &sa, NULL);
         
+        xnd_log_setup();
         fd_table_init();
         thread_list_init();
-        xnd_log_setup();
         set_xnd_state(XND_RUNNING);
 
 #if DEVELOPMENT || DEBUG

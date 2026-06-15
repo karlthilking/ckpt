@@ -24,6 +24,8 @@ LIBXND_SOURCES := \
         xnd/util/log.c \
         xnd/util/path.c \
         xnd/util/debug.c \
+        xnd/platform/ucontext/_setcontext.s \
+        xnd/platform/ucontext/setcontext.c \
         $(LIBXND_WRAPPERS)
 
 XND_RESTART_SOURCES := \

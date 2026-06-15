@@ -8,6 +8,7 @@
 #define PTHREAD_MAGIC                   0x7770000000000000ULL
 #define PTHREAD_TAG_MASK                0xFFF0000000000000ULL
 
+extern mach_port_t      pthread_mach_thread_np(pthread_t);
 extern void             *pthread_get_stackaddr_np(pthread_t);
 extern size_t           pthread_get_stacksize_np(pthread_t);
 extern pthread_t        pthread_main_thread_np(void);
@@ -26,7 +27,6 @@ pthread_t       __pthread_self_hook(void);
 int             __pthread_equal_hook(pthread_t, pthread_t);
 int             __pthread_kill_hook(pthread_t, int);
 int             __pthread_detach_hook(pthread_t);
-int             __pthread_sigmask_hook(int, const sigset_t *, sigset_t *);
 int             __pthread_setschedparam_hook(pthread_t, int, 
                                              const struct sched_param *);
 int             __pthread_getschedparam_hook(pthread_t, int *, 
