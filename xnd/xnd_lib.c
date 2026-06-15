@@ -93,6 +93,7 @@ __constructor() void xnd_setup(void)
 {
         struct sigaction        sa;
         sigset_t                set;
+        int                     err;
         
         /* Every thread blocks SIGUSR2 except for checkpoint thread */
         sigemptyset(&set);
@@ -102,7 +103,12 @@ __constructor() void xnd_setup(void)
         sigfillset(&sa.sa_mask);
         sa.sa_flags = SA_SIGINFO | SA_RESTART;
         sa.sa_sigaction = thread_sighandler;
-        sigaction(SIGUSR1, &sa, NULL);
+
+        err = sigaction(SIGUSR1, &sa, NULL);
+        if (err != 0) {
+                xnd_error("sigaction: %s\n", strerror(err));
+                xnd_abort();
+        }
         
         xnd_log_setup();
         fd_table_init();

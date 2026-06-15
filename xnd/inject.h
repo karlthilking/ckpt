@@ -1,6 +1,6 @@
 /* inject.h */
-#ifndef __CKPT_INJECT_H__
-#define __CKPT_INJECT_H__
+#ifndef XND_INJECT_H 
+#define XND_INJECT_H
 
 struct __interpose_s {
         const void *__new_fn;
@@ -15,4 +15,4 @@ struct __interpose_s {
                 .__old_fn = (const void *)(uintptr_t)&(__old)   \
         };
 
-#endif // __CKPT_INJECT_H__
+#endif /* XND_INJECT_H */
