@@ -36,16 +36,5 @@ __xnd_setcontext:
         ldr d14, [x0, MCONTEXT_OFFSET_D14]
         ldr d15, [x0, MCONTEXT_OFFSET_D15]
         
-        // restore argument/scratch registers
-        ldp x1, x2, [x0, MCONTEXT_OFFSET_X1_X2]
-        ldp x3, x4, [x0, MCONTEXT_OFFSET_X3_X4]
-        ldp x5, x6, [x0, MCONTEXT_OFFSET_X5_X6]
-        ldp x7, x8, [x0, MCONTEXT_OFFSET_X7_X8]
-        ldp x9, x10, [x0, MCONTEXT_OFFSET_X9_X10]
-        ldp x11, x12, [x0, MCONTEXT_OFFSET_X11_X12]
-        ldp x13, x14, [x0, MCONTEXT_OFFSET_X13_X14]
-        ldp x15, x16, [x0, MCONTEXT_OFFSET_X15_X16]
-        ldr x17, [x0, MCONTEXT_OFFSET_X17]
-        ldr x0, [x0, MCONTEXT_OFFSET_X0]
-
+        mov x0, xzr
         ret 

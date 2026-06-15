@@ -3,6 +3,7 @@
 #include "xnd/xnd.h"
 #include "xnd/pac.h"
 #include "xnd/xnd_lib.h"
+#include "xnd/platform/signal.h"
 #include "xnd/platform/ucontext/ucontext.h"
 
 #define _XOPEN_SOURCE
@@ -14,45 +15,20 @@
 #include <stdio.h>
 #include <err.h>
 
-static struct sigaction                 sa_table[NSIG];
-static struct __internal_sigaction      __sigactions[NSIG];
-
-__noreturn void __internal_sigreturn(ucontext_t *uctx)
-{
-        u64 fp = get_ucontext_fp(uctx);
-
-#if defined(__arm64e__)
-        if (PTRAUTH_SIGNED(fp))
-                XPACD(fp);
-#else
-        xnd_assert(!PTRAUTH_SIGNED(fp));
-#endif
-
-        pac_resign_frames((u64 *)fp);
-        pac_patch_context(uctx);
-        setcontext(uctx);
-
-        unreachable();
-}
-
-__noreturn void __internal_sigtramp(int sig, siginfo_t *info, void *uctx)
-{
-        if (__sigactions[sig].sa_siginfo)
-                __sigactions[sig].sa_sigaction(sig, info, uctx);
-        else
-                __sigactions[sig].sa_handler(sig);
-
-        __internal_sigreturn(uctx);
-        unreachable();
-}
+static struct sigaction sa_table[NSIG];
 
 void sig_state_save(void)
 {
+        int err;
+
         for (int sig = 1; sig < NSIG; sig++) {
                 if (sig == SIGKILL || sig == SIGSTOP) {
                         continue;
-                } if (sigaction(sig, NULL, &sa_table[sig]) < 0) {
-                        xnd_warn("sigaction: %s\n", strerror(errno));
+                } 
+                err = __xnd_sigaction(sig, NULL, &sa_table[sig]);
+                if (err != 0) {
+                        xnd_warn("Failed to save signal disposition "
+                                 "for signal %d\n", sig);
                         bzero(&sa_table[sig], sizeof(struct sigaction));
                 }
         }
@@ -60,95 +36,81 @@ void sig_state_save(void)
 
 void sig_state_restore(void)
 {
+        int err;
+
         for (int sig = 1; sig < NSIG; sig++) {
                 if (sig == SIGKILL || sig == SIGSTOP) {
                         continue;
-                } else if (sigaction(sig, &sa_table[sig], NULL) < 0) {
-                        xnd_warn("sigaction: %s\n", strerror(errno));
-                        bzero(&sa_table[sig], sizeof(struct sigaction));
+                } 
+                err = __xnd_sigaction(sig, &sa_table[sig], NULL);
+                if (err != 0) {
+                        xnd_warn("Failed to restore signal disposition "
+                                 "for signal %d\n", sig);
                 }
         }
 }
 
 sig_t __signal_hook(int sig, sig_t handler)
 {
-        struct sigaction        hook;
+        struct sigaction        sa;
         int                     err;
+        char                    *program;
 
         if (sig == SIGUSR1 || sig == SIGUSR2) {
-                xnd_warn("%s is reserved for libckpt\n",
-                         (sig == SIGUSR2) ? "SIGUSR2" : "SIGUSR1");
+                xnd_warn("signal %d is reserved (%s)\n",
+                         sig, (sig == SIGUSR2) ? "SIGUSR2" : "SIGUSR1");
                 return SIG_ERR;
         } else if (handler == SIG_DFL || handler == SIG_IGN) {
                 return signal(sig, handler);
         }
         
-        sigemptyset(&hook.sa_mask);
-        hook.sa_flags = SA_SIGINFO;
-        hook.sa_sigaction = __internal_sigtramp;
-        
-        err = sigaction(sig, &hook, NULL);
-        if (err != 0)
+        sigemptyset(&sa.sa_mask);
+        sa.sa_flags = 0;
+        sa.sa_handler = handler;
+        err = __xnd_sigaction(sig, &sa, NULL);
+        if (err != 0) {
                 return SIG_ERR;
-        
-        __sigactions[sig].sa_handler = handler;
-        __sigactions[sig].sa_siginfo = false;
-        xnd_trace("Handler installed for signal %d: %p\n", sig, handler);
+        }
 
+        if ((program = getenv("XND_PROGRAM")) != NULL) {
+                xnd_trace("%s installed handler for signal %d: %p\n",
+                          program, sig, handler);
+        }
+        
         return handler;
 }
 
 /**
  * __sigaction_hook:
  *  Protect against users setting up signal handlers for SIGUSR1 or
- *  SIGUSR2; these signals will be reserved for the implementation of
- *  libckpt.
- *
- *  Secondly, to avoid the _sigtramp to __sigreturn failure path, user
- *  signal handlers will be called with an libckpt internal signal
- *  trampoline with calls setcontext() to avoid to __sigreturn path.
- *
- *  Therefore, whenever a user calls sigaction() to set up a handler
- *  or sigaction for a signal (using a user handler), the real signal
- *  handler will be saved, but sigaction will be called with the internal
- *  signal trampoline that protects from __sigreturn.
+ *  SIGUSR2; these signals will be reserved for the implementation of xnd.
  */
 int __sigaction_hook(int sig, const struct sigaction *act,
                      struct sigaction *oact)
 {
-        struct sigaction        hook;
-        int                     err;
-        char                    *program;
+        int     err;
+        char    *program;
         
-        if (act == NULL) {
+        if (!act) {
                 return sigaction(sig, NULL, oact);
-        } else if (sig == SIGUSR1 || sig == SIGUSR2) {
-                xnd_warn("%s is reserved for libckpt\n",
-                         (sig == SIGUSR2) ? "SIGUSR2" : "SIGUSR1");
+        }
+
+        if (sig == SIGUSR1 || sig == SIGUSR2) {
+                xnd_warn("signal %d is reserved (%s)\n",
+                         sig, (sig == SIGUSR2) ? "SIGUSR2" : "SIGUSR1");
                 return -1;
-        } else if (act->sa_handler == SIG_DFL || act->sa_handler == SIG_IGN) {
+        }
+
+        if (act->sa_handler == SIG_DFL || act->sa_handler == SIG_IGN) {
                 return sigaction(sig, act, oact);
         }
         
-        hook.sa_mask = act->sa_mask;
-        hook.sa_flags = act->sa_flags | SA_SIGINFO;
-        hook.sa_sigaction = __internal_sigtramp;
-
-        err = sigaction(sig, &hook, oact);
-        if (err != 0)
+        err = __xnd_sigaction(sig, act, oact);
+        if (err != 0) {
                 return err;
+        }
         
-        program = getenv("XND_PROGRAM");
-        xnd_assert(program != NULL);
-
-        if (act->sa_flags & SA_SIGINFO) {
-                __sigactions[sig].sa_sigaction = act->sa_sigaction;
-                __sigactions[sig].sa_siginfo = true;
-                xnd_trace("%s installed handler for signal %d: %p\n",
-                          program, sig, act->sa_sigaction);
-        } else {
-                __sigactions[sig].sa_handler = act->sa_handler;
-                __sigactions[sig].sa_siginfo = false;
+        if ((program = getenv("XND_PROGRAM")) != NULL) {
                 xnd_trace("%s installed handler for signal %d: %p\n",
                           program, sig, act->sa_handler);
         }
@@ -158,30 +120,49 @@ int __sigaction_hook(int sig, const struct sigaction *act,
 
 int __sigprocmask_hook(int how, const sigset_t *set, sigset_t *oset)
 {
-        if (get_xnd_state() != XND_RUNNING)
-                return pthread_sigmask(how, set, oset);
         return __pthread_sigmask_hook(how, set, oset);
 }
 
 int __pthread_sigmask_hook(int how, const sigset_t *set, sigset_t *oset)
 {
         sigset_t clean;
-        
-        if (set == NULL || get_xnd_state() != XND_RUNNING) {
+
+        if (!set) {
                 return pthread_sigmask(how, NULL, oset);
+        }
+
+        if (sigismember(set, SIGUSR1) || sigismember(set, SIGUSR2)) {
+                xnd_trace("User thread is attempting to manipulate "
+                          "a xnd reserved signal number\n");
         }
         
         clean = *set;
         switch (how) {
         case SIG_BLOCK:
-                sigdelset(&clean, SIGUSR1);
+                if (sigismember(set, SIGUSR1)) {
+                        xnd_trace("SIGUSR1 can not be blocked for the "
+                                  "implementation of xnd\n");
+                        sigdelset(&clean, SIGUSR1);
+                }
                 break;
         case SIG_UNBLOCK:
-                sigdelset(&clean, SIGUSR2);
+                if (sigismember(set, SIGUSR2)) {
+                        xnd_trace("SIGUSR2 must be kept blocked for the"
+                                  "implementation of xnd\n");
+                        sigdelset(&clean, SIGUSR2);
+                }
                 break;
         case SIG_SETMASK:
-                sigaddset(&clean, SIGUSR2);
-                sigdelset(&clean, SIGUSR1);
+                if (sigismember(set, SIGUSR1)) {
+                        xnd_trace("SIGUSR1 can not be blocked for the "
+                                  "implementation of xnd\n");
+                        sigdelset(&clean, SIGUSR1);
+                }
+                if (!sigismember(set, SIGUSR2)) {
+                        xnd_trace("SIGUSR2 must be kept blocked for the "
+                                  "implementation of xnd\n");
+                        sigaddset(&clean, SIGUSR2);
+                }
                 break;
         }
         

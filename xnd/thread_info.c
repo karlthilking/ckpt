@@ -499,10 +499,10 @@ void suspend_threads(void)
         bool                    rescan;
 
         pthread_mutex_lock(&ckpt_mtx);
-        thread_list_acquire();
-
         threads_arrived = 0;
+
 again:
+        thread_list_acquire();
         suspended = 0;
         rescan = false;
         for (th = thread_list.head; th; th = next) {
@@ -542,13 +542,13 @@ again:
                 }
         }
 
+        thread_list_release();
         if (rescan) {
-                usleep(10);
+                usleep(50);
                 goto again;
         }
         
         threads_expected = suspended;
-        thread_list_release();
         pthread_mutex_unlock(&ckpt_mtx);
 }
 
@@ -628,6 +628,8 @@ void thread_barrier(void)
 
 void thread_sighandler(int sig, siginfo_t *info, void *uctx)
 {
+        static _Thread_local volatile bool is_restart;
+
         xnd_assert(myself != NULL);
         if (unlikely(myself->state == ST_CKPT_THREAD)) {
                 return;
@@ -637,7 +639,14 @@ void thread_sighandler(int sig, siginfo_t *info, void *uctx)
         /* Save state and transition to suspended */
         thread_save_tls();
         thread_save_sig_state();
-        thread_save_context((ucontext_t *)uctx);
+
+        is_restart = false;
+        getcontext(&myself->uctx);
+        if (is_restart) {
+                return;
+        }
+        
+        is_restart = true;
         set_tls_slot(TLS_TLV_FLAG_SLOT, 0);
         xnd_assert(thread_state_cas(myself, ST_SUSPINPROG, ST_SUSPENDED));
         
@@ -660,6 +669,12 @@ __noreturn void *thread_start(void *thread)
         myself = (struct thread_info *)thread;
         myself->self = pthread_self();
         thread_list_add();
+        {
+                sigset_t set;
+                pthread_sigmask(SIG_SETMASK, NULL, &set);
+                xnd_assert(!sigismember(&set, SIGUSR1));
+                xnd_assert(sigismember(&set, SIGUSR2));
+        }
         
         /**
          * Signal to thread that spawned this thread in 

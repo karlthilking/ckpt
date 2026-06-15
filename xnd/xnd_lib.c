@@ -8,6 +8,7 @@
 #include "xnd/thread_info.h"
 #include "xnd/shared_cache.h"
 #include "xnd/util/debug.h"
+#include "xnd/platform/signal.h"
 #include "xnd/wrappers/file_wrappers.h"
 #include "xnd/wrappers/signal_wrappers.h"
 
@@ -98,15 +99,18 @@ __constructor() void xnd_setup(void)
         /* Every thread blocks SIGUSR2 except for checkpoint thread */
         sigemptyset(&set);
         sigaddset(&set, SIGUSR2);
-        pthread_sigmask(SIG_BLOCK, &set, NULL);
+        err = pthread_sigmask(SIG_BLOCK, &set, NULL);
+        if (err != 0) {
+                xnd_error("pthread_sigmask: %s\n", strerror(err));
+                xnd_abort();
+        }
         
         sigfillset(&sa.sa_mask);
-        sa.sa_flags = SA_SIGINFO | SA_RESTART;
+        sa.sa_flags = SA_SIGINFO;
         sa.sa_sigaction = thread_sighandler;
-
-        err = sigaction(SIGUSR1, &sa, NULL);
+        err = __xnd_sigaction(SIGUSR1, &sa, NULL);
         if (err != 0) {
-                xnd_error("sigaction: %s\n", strerror(err));
+                xnd_error("__xnd_sigaction failed!\n");
                 xnd_abort();
         }
         
