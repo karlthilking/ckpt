@@ -174,6 +174,6 @@ static __noreturn void restart_from_checkpoint(char *ckptfile)
                 fprintf(stderr, "posix_spawn: %s\n", strerror(retval));
                 exit(EXIT_FAILURE);
         }
-
+        
         unreachable();
 }

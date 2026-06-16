@@ -71,9 +71,11 @@ int __pthread_join_hook(pthread_t p, void **value_ptr)
         int                     err;
         struct thread_info      *th;
         
-        if (!validate_pthread(p))
+        if (validate_pthread(p)) {
+                th = decode_pthread(p);
+        } else {
                 return ESRCH;
-        th = decode_pthread(p);
+        }
         
         xnd_assert(pthread_mutex_lock(&th->lock) == 0);
         while (!th->exiting) {
@@ -97,18 +99,9 @@ void __pthread_exit_hook(void *value_ptr)
 pthread_t __pthread_self_hook(void)
 {
         struct thread_info *self = thread_self_or_null();
-
-        if (unlikely(!tlv_ok())) {
-                /**
-                 * If thread locals have been dealloacted through _tlv_exit,
-                 * (indicated by the return value of tlv_ok), just return
-                 * the real pthread_t of the thread. It is likely the case
-                 * that destructors are running and libraries need the
-                 * real pthread_t.
-                 */
-                return pthread_self();
-        } else if (unlikely(self == NULL)) {
-                xnd_error("thread_self_or_null() returned NULL!\n");
+        
+        if (unlikely(self == NULL)) {
+                xnd_error("thread_self returned null\n");
                 xnd_abort();
         }
 
@@ -117,14 +110,9 @@ pthread_t __pthread_self_hook(void)
 
 int __pthread_equal_hook(pthread_t p1, pthread_t p2)
 {
-        /**
-         * Validate that the pthread_t passed into pthread_equal
-         * is a real tagged thread_info pointer from libckpt.
-         */
-        if (unlikely(!tlv_ok()))
-                return pthread_equal(p1, p2);
-        else if (!validate_pthread(p1) || !validate_pthread(p2))
+        if (!validate_pthread(p1) || !validate_pthread(p2)) {
                 return 0;
+        }
 
         return (uintptr_t)p1 == (uintptr_t)p2;
 }
@@ -134,22 +122,23 @@ int __pthread_kill_hook(pthread_t p, int sig)
         struct thread_info      *th;
         int                     err;
 
-        if (!validate_pthread(p))
-                return pthread_kill(p, sig);
-        
+        if (!validate_pthread(p)) {
+                xnd_warn("Unidentified pthread: 0x%lx\n", (uintptr_t)p);
+                return ESRCH;
+        }
+
         if (sig == SIGUSR1 || sig == SIGUSR2) {
-                fprintf(stderr, "%s is reserved for libckpt\n",
-                        (sig == SIGUSR1) ? "SIGUSR1" : "SIGUSR2");
+                xnd_warn("signal %d is reserved\n", sig);
                 return EINVAL;
         }
         
-        th = decode_pthread(p);
         /**
          * pthread_kill uses __pthread_kill internally which uses a mach 
          * port to identify the target thread, so pthread_kill is not safe 
          * to restart after a checkpoint (the mach port will be invalid 
          * by then).
          */
+        th = decode_pthread(p);
         unsafe_enter();
         err = pthread_kill(th->self, sig);
         unsafe_exit();
@@ -167,7 +156,6 @@ int __pthread_detach_hook(pthread_t p)
         }
         
         th = decode_pthread(p);
-        
         unsafe_enter();
         err = pthread_detach(th->self);
         unsafe_exit();
@@ -186,7 +174,6 @@ int __pthread_setschedparam_hook(pthread_t p, int policy,
         }
 
         th = decode_pthread(p);
-        
         unsafe_enter();
         err = pthread_setschedparam(th->self, policy, param);
         unsafe_exit();
@@ -271,7 +258,6 @@ int __pthread_cancel_hook(pthread_t p)
         }
 
         th = decode_pthread(p);
-        
         unsafe_enter();
         err = pthread_cancel(th->self);
         unsafe_exit();
@@ -286,13 +272,6 @@ int __pthread_cancel_hook(pthread_t p)
  */
 pthread_t __pthread_main_thread_np_hook(void)
 {
-        /**
-         * If destructors are being run, just return the real main thread's
-         * pthread_t.
-         */
-        if (unlikely(!tlv_ok()))
-                return pthread_main_thread_np();
-
         return encode_pthread(main_thread());
 }
 
@@ -303,61 +282,7 @@ pthread_t __pthread_main_thread_np_hook(void)
  */
 int __pthread_main_np_hook(void)
 {
-        if (unlikely(!tlv_ok()))
-                return pthread_main_np();
-
         return pthread_self() == main_thread()->self;
-}
-
-/**
- * Examples of how libpthread uses ptrauth:
- *
- * void _pthread_init_signature(pthread_t thread) 
- * {
- *      ...
- *      th = ptrauth_sign_unauthenticated(
- *           th, ptrauth_key_process_dependent_data,
- *           ptrauth_string_discriminator("pthread.signature")
- *      );
- *      thread->sig = (uintptr_t)th ^ _pthread_ptr_munge_token
- *      ...
- * }
- *
- * thread->sig is the first field in struct pthread_s (long)
- * _pthread_ptr_munge_token = tsd[6] (slot 6 in thread specific data)
- *
- * Discriminator = ptrauth_string_discriminator("pthread.signature")
- * Key = APDBKey_EL1
- */
-
-static uintptr_t pthread_xor_cookie;
-
-void __pthread_cookie()
-{
-        uintptr_t tls, self, signed_ptr, slot;
-        
-        asm volatile("mrs %0, tpidrro_el0" : "=r" (tls) :: "memory");
-        self = tls + TLS_PTHREAD_T_OFFSET;
-        slot = *(uintptr_t *)self;
-        
-        signed_ptr = self;
-        PACDB(signed_ptr, PTHREAD_SELF_DISCRIMINATOR);
-        pthread_xor_cookie = slot ^ signed_ptr;
-}
-
-void __pthread_slot_fixup()
-{
-        uintptr_t tls, *slot_ptr, old_ptr, new_ptr;
-
-        asm volatile("mrs %0, tpidrro_el0" : "=r" (tls) :: "memory");
-        slot_ptr = (uintptr_t *)(tls + TLS_PTHREAD_T_OFFSET);
-        old_ptr = pthread_xor_cookie ^ slot_ptr[0];
-
-        new_ptr = old_ptr;
-        XPACD(new_ptr);
-        PACDB(new_ptr, PTHREAD_SELF_DISCRIMINATOR);
-
-        slot_ptr[0] = new_ptr ^ pthread_xor_cookie;
 }
 
 INTERPOSE(__pthread_create_hook, pthread_create);

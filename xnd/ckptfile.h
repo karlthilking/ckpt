@@ -6,8 +6,8 @@
 #include "xnd/shared_cache.h"
 
 #define XND_HEADER_MAGIC        "xnd_ckptfile_v0"
-#define XND_CKPT_ENTRY_MAX      513
-#define XND_CKPT_VM_REGION_MAX  512
+#define XND_CKPT_ENTRY_MAX      1024
+#define XND_CKPT_VM_REGION_MAX  1023
 
 struct xnd_ckpt_header {
         char                            magic[16];

@@ -158,6 +158,7 @@
  *  autda, authenticate with DA key + modifier
  *  autdb, authenticate with DB key + modifier
  */
+
 #define XPACI(__ptr) do {               \
         __asm__ __volatile__ (          \
                 "xpaci %[ptr]"          \
@@ -248,10 +249,12 @@
         );                              \
 } while (0)
 
-#define APIAKey 0
-#define APIBKey 1
-#define APDAKey 2
-#define APDBKey 3
+enum {
+        APIAKey = 0,
+        APIBKey = 1,
+        APDAKey = 2,
+        APDBKey = 4,
+};
 
 #define pac_strip_resign(__ptr, __key, __constant, __blend) do { \
         u64 __mod, __result;                                     \
@@ -279,6 +282,8 @@
         for (__fp = first_signed_frame(__fp); __fp != NULL; \
              __fp = next_signed_frame(__fp))
 
+void pac_strip_uctx(ucontext_t *);
+void pac_patch_siguctx(ucontext_t *);
 void pac_patch_context(ucontext_t *);
 void pac_resign_frames(u64 *);
 

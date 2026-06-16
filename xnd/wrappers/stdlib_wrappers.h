@@ -6,6 +6,8 @@
 #include "xnd/inject.h"
 #include <stdlib.h>
 
+#define __CLEANUP_PAC_DISCRIMINATOR 0x211B
+
 void    __exit_hook(int);
 void    __abort_hook(void);
 void    *__calloc_hook(size_t, size_t);

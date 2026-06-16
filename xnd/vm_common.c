@@ -12,7 +12,10 @@ int ckpt_vm_protect(const struct xnd_vm_region *region,
                              region->size, set_max, new_prot);
 
         if (kr != KERN_SUCCESS) {
-                xnd_warn("mach_vm_protect: %s\n", mach_error_string(kr));
+                xnd_warn("mach_vm_protect: %s\n\t(%p-%p %zu %s/%s)\n",
+                         mach_error_string(kr), region->start, region->end,
+                         region->size, VM_PROT_STRING(region->prot),
+                         VM_PROT_STRING(region->max_prot));
                 return -1;
         }
 

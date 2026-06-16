@@ -20,7 +20,6 @@
 __noreturn noinline void restart(int fd)
 {
         int                     retval;
-        u64                     fp;
         struct xnd_ckpt_header  header;
         
         retval = ckpt_vm_mark_regions();
@@ -48,11 +47,7 @@ __noreturn noinline void restart(int fd)
                 exit(EXIT_FAILURE);
         }
 
-        fp = get_ucontext_fp(&uctx);
-        if (PTRAUTH_SIGNED(fp))
-                XPACD(fp);
-
-        pac_resign_frames((u64 *)fp);
+        pac_resign_frames((u64 *)get_ucontext_fp(&uctx));
         pac_patch_context(&uctx);
         setcontext(&uctx);
 
@@ -71,7 +66,7 @@ __noreturn void jump(int fd)
 #if defined(XND_RESTART_STACKADDR)
         mach_vm_address_t       addr = XND_RESTART_STACKADDR;
 #else
-        mach_vm_address_t       addr = 0x500000010000ULL;
+# error "XND_RESTART_STACKADDR is undefined"
 #endif
         
         xnd_trace("Allocating temporary stack 0x%llx-0x%llx\n",

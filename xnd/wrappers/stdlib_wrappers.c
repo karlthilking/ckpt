@@ -24,16 +24,20 @@ extern void (*__cleanup)(void);
 
 void __exit_hook(int status)
 {
-        if (PTRAUTH_SIGNED((uintptr_t)__cleanup))
-                pac_strip_resign(__cleanup, APIBKey, 0x211b, 1);
+        if (PTRAUTH_SIGNED((uintptr_t)__cleanup)) {
+                pac_strip_resign(__cleanup, APIBKey,
+                                 __CLEANUP_PAC_DISCRIMINATOR, 1);
+        }
         
         exit(status);
 }
 
 void __abort_hook(void)
 {
-        if (PTRAUTH_SIGNED((uintptr_t)__cleanup))
-                pac_strip_resign(__cleanup, APIBKey, 0x211b, 1);
+        if (PTRAUTH_SIGNED((uintptr_t)__cleanup)) {
+                pac_strip_resign(__cleanup, APIBKey,
+                                 __CLEANUP_PAC_DISCRIMINATOR, 1);
+        }
 
         abort();
 }

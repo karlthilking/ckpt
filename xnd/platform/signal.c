@@ -10,38 +10,12 @@
 __noreturn void __xnd_sigreturn(ucontext_t *uctx, int ctxstyle,
                                 uintptr_t token)
 {
-        u64 fp, lr;
-        
-        lr = get_ucontext_lr(uctx);
-        if (PTRAUTH_SIGNED(lr)) {
-                if (get_ucontext_flags(uctx) != LR_SIGNED_WITH_IB) {
-                        xnd_error("ucontext lr/flags mismatch:\n"
-                                  "lr:\t0x%llx, flags:\t0x%x\n",
-                                  lr, get_ucontext_flags(uctx));
-                }
-                XPACI(lr);
-                PACIB(lr, get_ucontext_sp(uctx));
-                set_ucontext_lr(uctx, lr);
-        } else {
-                xnd_assert(get_ucontext_flags(uctx) ==
-                           __DARWIN_ARM_THREAD_STATE64_FLAGS_NO_PTRAUTH);
-        }
-
-        fp = get_ucontext_fp(uctx);
-#if defined(__arm64e__)
-        if (PTRAUTH_SIGNED(fp)) {
-                XPACD(fp);
-        }
-#else
-        xnd_assert(!PTRAUTH_SIGNED(fp));
-#endif
-
-        pac_resign_frames((u64 *)fp);
+        pac_patch_siguctx(uctx);
+        pac_resign_frames((u64 *)get_ucontext_fp(uctx));
         __sigreturn(uctx, ctxstyle, token);
 
         xnd_error("__sigreturn failed!\n");
         xnd_abort();
-
         unreachable();
 }
 

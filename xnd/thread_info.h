@@ -64,12 +64,12 @@ void zombie_list_filter(void);
 void zombie_list_add(struct thread_info *);
 void zombie_list_remove(struct thread_info *);
 
-struct thread_info      *thread_init(void *(*)(void *), void *);
-void                    thread_reap(struct thread_info *);
-void                    thread_exit(void *);
-struct thread_info      *thread_self(void);
-struct thread_info      *thread_self_or_null(void);
-struct thread_info      *main_thread(void);
+void thread_reap(struct thread_info *);
+void thread_exit(void *);
+struct thread_info *thread_init(void *(*)(void *), void *);
+struct thread_info *thread_self(void);
+struct thread_info *thread_self_or_null(void);
+struct thread_info *main_thread(void);
 
 void ckpt_thread_init(void);
 void ckpt_thread_exit(void);
@@ -79,24 +79,23 @@ void ckpt_thread_reap(void);
 void ckpt_thread_join(void);
 void ckpt_thread_terminate(void);
 
-void    barrier_arrival_wait(void);
-void    barrier_release(void);
+void barrier_arrival_wait(void);
+void barrier_release(void);
 
-void    suspend_threads(void);
-void    restore_threads(void);
-void    wait_for_exiting_threads(void);
+void suspend_threads(void);
+void restore_threads(void);
+void wait_for_exiting_threads(void);
 
-void    thread_barrier(void);
-void    thread_sighandler(int, siginfo_t *, void *);
-void    *thread_start(void *);
-void    *thread_restart(void *);
+void thread_barrier(void);
+void thread_sighandler(int, siginfo_t *, void *);
+void *thread_start(void *);
+void *thread_restart(void *);
 
-void    thread_save_tls(void);
-void    thread_restore_tls(void);
-void    thread_save_context(ucontext_t *);
-void    thread_restore_context(void);
-void    thread_save_sig_state(void);
-void    thread_restore_sig_state(void);
+void thread_save_tls(void);
+void thread_restore_tls(void);
+void thread_restore_context(void);
+void thread_save_sig_state(void);
+void thread_restore_sig_state(void);
 
 static __always_inline bool thread_state_cas(struct thread_info *th,
                                              enum thread_state expected,

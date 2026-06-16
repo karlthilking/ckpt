@@ -669,12 +669,15 @@ __noreturn void *thread_start(void *thread)
         myself = (struct thread_info *)thread;
         myself->self = pthread_self();
         thread_list_add();
+
+#if DEVELOPMENT || DEBUG
         {
                 sigset_t set;
                 pthread_sigmask(SIG_SETMASK, NULL, &set);
                 xnd_assert(!sigismember(&set, SIGUSR1));
                 xnd_assert(sigismember(&set, SIGUSR2));
         }
+#endif
         
         /**
          * Signal to thread that spawned this thread in 
@@ -767,27 +770,15 @@ void thread_restore_tls(void)
         }
 }
 
-void thread_save_context(ucontext_t *ucp)
-{
-        memcpy(&myself->uctx, ucp, sizeof(ucontext_t));
-        memcpy(&myself->uctx.__mcontext_data, ucp->uc_mcontext,
-               sizeof(myself->uctx.__mcontext_data));
-
-        myself->uctx.uc_mcontext = &myself->uctx.__mcontext_data;
-}
-
 __noreturn void thread_restore_context(void)
 {
-        u64 fp;
-        
-        fp = get_ucontext_fp(&myself->uctx);
-        if (PTRAUTH_SIGNED(fp)) {
-                XPACD(fp);
-        }
 
-        pac_resign_frames((u64 *)fp);
+        pac_resign_frames((u64 *)get_ucontext_fp(&myself->uctx));
+        /**
+         * The user context does not need to be probed for pac-signed
+         * pointers, xnd_setcontext will handle this transparently.
+         */
         xnd_setcontext(&myself->uctx);
-        
         unreachable();
 }
 
