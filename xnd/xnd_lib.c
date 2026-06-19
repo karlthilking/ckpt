@@ -84,6 +84,24 @@ void xnd_checkpoint(ucontext_t *uctx)
         (void)write_ckpt(&header, entries, regions, uctx);
 }
 
+void xnd_atfork(void)
+{
+        pid_table_atfork();
+        /* TODO: thread_list_atfork(); */
+}
+
+void xnd_postfork_child(void)
+{
+        pid_table_postfork_child();
+        /* TODO: thread_list_postfork_child(); */
+}
+
+void xnd_postfork_parent(void)
+{
+        pid_table_postfork_parent();
+        /* TODO: thread_list_postfork_parent(); */
+}
+
 /**
  * setup():
  *  Block SIGUSR2 process-wide so it only arrives for the

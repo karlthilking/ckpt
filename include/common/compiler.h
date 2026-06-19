@@ -40,6 +40,8 @@
                 __x > __y ? __x : __y;  \
         })
 
+#define array_len(a) (sizeof(a) / sizeof(a[0]))
+
 #define concat(a, b) a##b
 
 #ifndef likely

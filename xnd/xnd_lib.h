@@ -18,6 +18,10 @@ void xnd_precheckpoint(void);
 void xnd_postrestart(void);
 void xnd_checkpoint(ucontext_t *);
 
+void xnd_atfork(void);
+void xnd_postfork_child(void);
+void xnd_postfork_parent(void);
+
 void xnd_setup(void);
 void xnd_cleanup(void);
 
