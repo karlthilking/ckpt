@@ -57,29 +57,35 @@ ersch:
 
 pid_t __fork_hook(void)
 {
-        pid_t real_cpid, virt_cpid;
+        pid_t real_cpid, virt_cpid, virt_pid, retval;
 
         unsafe_enter();
+        virt_pid = pid_table_getpid();
+
+        pid_table_acquire();
         virt_cpid = pid_table_next_virtual();
-        xnd_atfork_prepare(virt_cpid);
+        pid_table_release();
+
+        xnd_atfork_prepare();
         real_cpid = fork();
 
         switch (real_cpid) {
         case -1:
-                virt_cpid = -1;
                 xnd_atfork_failed();
+                retval = -1;
                 break;
         case 0:
-                virt_cpid = 0;
-                xnd_atfork_child();
+                xnd_atfork_child(virt_cpid, virt_pid);
+                retval = 0;
                 break;
         default:
                 xnd_atfork_parent(virt_cpid, real_cpid);
+                retval = virt_cpid;
                 break;
         }
 
         unsafe_exit();
-        return virt_cpid;
+        return retval;
 }
 
 pid_t __wait_hook(int *status)

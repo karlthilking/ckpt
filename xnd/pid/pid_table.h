@@ -23,6 +23,8 @@ struct pid_table {
 
 void pid_table_init(void);
 void pid_table_destroy(void);
+void pid_table_acquire(void);
+void pid_table_release(void);
 void pid_table_reset(void);
 void pid_table_refresh(void);
 void pid_table_update(pid_t, pid_t);
@@ -30,8 +32,8 @@ void pid_table_erase(pid_t);
 pid_t pid_table_add(pid_t);
 
 void pid_table_postrestart(void);
-void pid_table_atfork_prepare(pid_t);
-void pid_table_atfork_child(void);
+void pid_table_atfork_prepare(void);
+void pid_table_atfork_child(pid_t, pid_t);
 void pid_table_atfork_parent(pid_t, pid_t);
 void pid_table_atfork_failed(void);
 

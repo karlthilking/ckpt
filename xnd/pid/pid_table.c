@@ -19,13 +19,13 @@ void pid_table_init(void)
         p->_real_pid = _real_getpid();
         p->_real_ppid = _real_getppid();
 
-        p->virt_pid = VIRTUAL_PID_INIT;
-        p->virt_ppid = VIRTUAL_PID_INIT + 1;
+        p->_virt_pid = VIRTUAL_PID_INIT;
+        p->_virt_ppid = VIRTUAL_PID_INIT + 1;
         p->next = VIRTUAL_PID_INIT + 2;
 
         p->table[p->_virt_pid] = p->_real_pid;
         p->table[p->_virt_ppid] = p->_real_ppid;
-
+        
         set_bit(p->_virt_pid, p->bitmap);
         set_bit(p->_virt_ppid, p->bitmap);
 
@@ -35,6 +35,16 @@ void pid_table_init(void)
 void pid_table_destroy(void)
 {
         pthread_mutex_destroy(&p->lock);
+}
+
+void pid_table_acquire(void)
+{
+        xnd_assert(pthread_mutex_lock(&p->lock) == 0);
+}
+
+void pid_table_release(void)
+{
+        xnd_assert(pthread_mutex_unlock(&p->lock) == 0);
 }
 
 void pid_table_reset(void)
@@ -109,27 +119,9 @@ void pid_table_postrestart(void)
         pthread_mutex_unlock(&p->lock);
 }
 
-void pid_table_atfork_prepare(pid_t virt)
+void pid_table_atfork_prepare(void)
 {
-        int     err;
-        char    virt_pid[11], virt_ppid[11];
-
         pthread_mutex_lock(&p->lock);
-
-        snprintf(virt_pid, sizeof(virt_pid), "%d", virt);
-        snprintf(virt_ppid, sizeof(virt_ppid), "%d", p->_virt_pid);
-
-        err = setenv("XND_VIRT_PID", child_virt_pid, 1);
-        if (unlikely(err != 0)) {
-                xnd_error("setenv(\"XND_VIRT_PID\"): %s\n", strerror(errno));
-                xnd_abort();
-        }
-
-        err = setenv("XND_VIRT_PPID", child_virt_ppid, 1);
-        if (unlikely(err != 0)) {
-                xnd_error("setenv(\"XND_VIRT_PPID\"): %s\n", strerror(errno));
-                xnd_abort();
-        }
 }
 
 /**
@@ -138,56 +130,36 @@ void pid_table_atfork_prepare(pid_t virt)
  *  The pid table mutex was acquired in pid_table_atfork_prepare, and
  *  should be released once the pid table is reset.
  */
-void pid_table_atfork_child(void)
+void pid_table_atfork_child(pid_t virt_pid, pid_t virt_ppid)
 {
-        char *virt_pid, *virt_ppid;
-
         pid_table_reset();
-
-        virt_pid = getenv("XND_VIRT_PID");
-        if (!virt_pid) {
-                xnd_error("getenv(\"XND_VIRT_PID\"): %s\n", strerror(errno));
-                xnd_abort();
-        }
-
-        virt_ppid = getenv("XND_VIRT_PPID");
-        if (!virt_ppid) {
-                xnd_error("getenv(\"XND_VIRT_PPID\"): %s\n", strerror(errno));
-                xnd_abort();
-        }
-        
-        p->_virt_pid = atoi(virt_pid);
-        p->_virt_ppid = atoi(virt_ppid);
+        p->_virt_pid = virt_pid;
+        p->_virt_ppid = virt_ppid;
 
         p->_real_pid = _real_getpid();
         p->_real_ppid = _real_getppid();
-        
         p->table[p->_virt_pid] = p->_real_pid;
         p->table[p->_virt_ppid] = p->_real_ppid;
 
         set_bit(p->_virt_pid, p->bitmap);
         set_bit(p->_virt_ppid, p->bitmap);
-        
+
         p->next = p->_virt_ppid + 1;
-        xnd_assert(pthread_mutex_unlock(&p->lock) == 0);
+        pid_table_release();
         xnd_assert(pthread_mutex_init(&p->lock, NULL) == 0);
 }
 
-void pid_table_atfork_parent(pid_t virt_cpid, pid_t real_cpid)
+void pid_table_atfork_parent(pid_t virt_cpid, real_cpid)
 {
-        /**
-         * Add mapping from virtual child pid -> real child pid after
-         * fork.
-         */
         p->table[virt_cpid] = real_cpid;
         set_bit(virt_cpid, p->bitmap);
-        pthread_mutex_unlock(&p->lock);
+        pid_table_release();
 }
 
 void pid_table_atfork_failed(void)
 {
         pid_table_refresh();
-        pthread_mutex_unlock(&p->lock);
+        pid_table_release();
 }
 
 bool pid_table_virtual_pid_exists(pid_t virt)

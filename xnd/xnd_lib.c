@@ -87,40 +87,24 @@ void xnd_checkpoint(ucontext_t *uctx)
 
 void xnd_atfork_prepare(void)
 {
-        /* TODO
-        pid_table_atfork_prepare();
-        thread_list_atfork_prepare();
-        */
         pid_table_atfork_prepare();
         thread_list_atfork_prepare();
 }
 
-void xnd_atfork_child(void)
+void xnd_atfork_child(pid_t virt_pid, pid_t virt_ppid)
 {
-        /* TODO
-        pid_table_atfork_child();
-        thread_list_atfork_child();
-        */
-        pid_table_atfork_child();
+        pid_table_atfork_child(virt_pid, virt_ppid);
         thread_list_atfork_child();
 }
 
-void xnd_atfork_parent(void)
+void xnd_atfork_parent(pid_t virt_cpid, pid_t real_cpid)
 {
-        /* TODO
-        pid_table_atfork_parent();
-        thread_list_atfork_parent();
-        */
-        pid_table_atfork_parent();
+        pid_table_atfork_parent(virt_cpid, real_cpid);
         thread_list_atfork_parent();
 }
 
 void xnd_atfork_failed(void)
 {
-        /* TODO
-        pid_table_atfork_failed();
-        thread_list_atfork_failed();
-        */
         pid_table_atfork_failed();
         thread_list_atfork_failed();
 }

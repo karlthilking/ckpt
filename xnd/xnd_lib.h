@@ -3,6 +3,7 @@
 #define XND_LIB_H
 
 #include "xnd/xnd.h"
+#include <sys/types.h>
 
 enum xnd_state {
         XND_UNINITIALIZED,
@@ -20,8 +21,13 @@ void xnd_postrestart(void);
 void xnd_checkpoint(ucontext_t *);
 
 void xnd_atfork_prepare(void);
+void xnd_atfork_child(pid_t, pid_t);
+void xnd_atfork_parent(pid_t, pid_t);
+void xnd_atfork_failed(void);
+
+void xnd_atfork_prepare(void);
 void xnd_atfork_child(void);
-void xnd_atfork_parent(void);
+void xnd_atfork_parent(pid_t);
 void xnd_atfork_failed(void);
 
 void xnd_setup(void);
