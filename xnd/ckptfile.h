@@ -4,6 +4,7 @@
 
 #include "xnd/xnd.h"
 #include "xnd/shared_cache.h"
+#include <sys/types.h>
 
 #define XND_HEADER_MAGIC        "xnd_ckptfile_v0"
 #define XND_CKPT_ENTRY_MAX      1024
@@ -11,6 +12,8 @@
 
 struct xnd_ckpt_header {
         char                            magic[16];
+        pid_t                           pid;
+        pid_t                           ppid;
         u32                             entry_count;
         u32                             region_count;
         struct shared_cache_info        shared_cache_info;

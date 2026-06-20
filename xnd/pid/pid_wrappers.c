@@ -3,8 +3,12 @@
 #include "xnd/inject.h"
 #include "xnd/pid/pid_table.h"
 #include "xnd/pid/pid_wrappers.h"
+#include "xnd/wrappers/time_wrappers.h"
 #include <unistd.h>
+#include <signal.h>
+#include <errno.h>
 #include <sys/types.h>
+#include <sys/wait.h>
 
 pid_t __getpid_hook(void)
 {
@@ -28,36 +32,54 @@ pid_t __getpgrp_hook(void)
 
 pid_t __getpgid_hook(pid_t pid)
 {
-        pid_t real_pgid, virt_pgid;
+        pid_t real_pid, real_pgid, virt_pgid;
 
-        real_pgid = _real_getpgid();
+        if (pid == 0 || pid == pid_table_getpid()) {
+                return __getpgrp_hook();
+        }
+
+        unsafe_enter();
+        real_pid = pid_table_virtual_to_real(pid);
+        if (unlikely(real_pid == -1)) {
+                goto esrch;
+        }
+
+        real_pgid = _real_getpgid(real_pid);
         virt_pgid = pid_table_real_to_virtual(real_pgid);
 
+        unsafe_exit();
         return virt_pgid;
+ersch:
+        unsafe_exit();
+        errno = ESRCH;
+        return -1;
 }
 
 pid_t __fork_hook(void)
 {
-        pid_t child_pid, retval;
-        
-        unsafe_enter();
-        xnd_atfork();
-        child_pid = fork();
+        pid_t real_cpid, virt_cpid;
 
-        switch (child_pid) {
+        unsafe_enter();
+        virt_cpid = pid_table_next_virtual();
+        xnd_atfork_prepare(virt_cpid);
+        real_cpid = fork();
+
+        switch (real_cpid) {
         case -1:
-                retval = -1;
+                virt_cpid = -1;
+                xnd_atfork_failed();
                 break;
         case 0:
-                retval = 0;
-                xnd_postfork_child();
+                virt_cpid = 0;
+                xnd_atfork_child();
+                break;
         default:
-                retval = child_pid;
-                xnd_postfork_parent();
+                xnd_atfork_parent(virt_cpid, real_cpid);
+                break;
         }
 
         unsafe_exit();
-        return retval;
+        return virt_cpid;
 }
 
 pid_t __wait_hook(int *status)
@@ -75,7 +97,7 @@ pid_t __wait3_hook(int *status, int options, struct rusage *rusage)
         return __wait4_hook(-1, status, options, rusage);
 }
 
-pid_t __wait4_hook(pid_t pid, int *status, int options, struct rusage *rusage)
+pid_t __wait4_hook(pid_t pid, int *status, int options, struct rusage *ru)
 {
         pid_t                   real_pid, real_ret, virt_ret;
         int                     stat, sv_errno;
@@ -86,33 +108,95 @@ pid_t __wait4_hook(pid_t pid, int *status, int options, struct rusage *rusage)
                 status = &stat;
         }
 
-again:
-        real_pid = pid_table_virtual_to_real(pid);
-        unsafe_enter();
-        real_ret = wait4(real_pid, status, options | WNOHANG, rusage);
-        if (real_ret <= 0) {
-                virt_ret = real_ret;
-                if (real_ret < 0) {
+        for (;;) {
+                unsafe_enter();
+                real_pid = pid_table_virtual_to_real(pid);
+                real_ret = wait4(real_pid, status, options | WNOHANG, ru);
+                if (real_ret == -1) {
+                        virt_ret = -1;
                         sv_errno = errno;
+                } else if (real_ret == 0) {
+                        virt_ret = 0;
+                } else {
+                        virt_ret = pid_table_real_to_virtual(real_ret);
+                        if (WIFEXITED(*status) || WIFSIGNALED(*status)) {
+                                pid_table_erase(virt_ret);
+                        }
                 }
-        } else {
-                virt_ret = pid_table_real_to_virtual(real_ret);
-                if (WIFEXITED(stat) || WIFSIGNALED(stat)) {
-                        pid_table_erase(virt_ret);
+                unsafe_exit();
+
+                if ((options & WNOHANG) || virt_ret != 0) {
+                        break;
                 }
-        }
-        unsafe_exit();
-
-        if ((options & WNOHANG) || virt_ret != 0) {
-                goto done;
-        } else {
-                nanosleep(&ts, NULL);
-                goto again;
+                __nanosleep_hook(&ts, NULL);
         }
 
-done:
         errno = sv_errno;
         return virt_ret;
+}
+
+int __kill_hook(pid_t pid, int sig)
+{
+        int     retval;
+        pid_t   real_pid;
+        
+        if (unlikely(sig == SIGUSR1 || sig == SIGUSR2)) {
+                /*** xnd reserved signal ***/
+                return -1;
+        }
+
+        /**
+         * if pid > 0, sig is sent to process whose id = pid
+         * if pid == 0, sig is sent to pgrp of sender
+         * if pid == -1, sig is sent to processes whose uid = getuid()
+         *  - or if user == super-user, all processes excluding system
+         *    processes
+         * if pid < -1, sig is sent to all processes whose pgid = abs(pid)
+         *
+         * Therefore, only perform virtual -> real translation if
+         * pid > 0. For pid == 0 or pid < -1, kill can be translated to
+         * killpg(-pid, sig). For pid == -1, no translation is needed.
+         */
+        if (pid == 0 || pid < -1) {
+                return __killpg_hook(-pid, sig);
+        } else if (pid == -1) {
+                unsafe_enter();
+                retval = kill(-1, sig);
+                unsafe_exit();
+                return retval;
+        }
+
+        unsafe_enter();
+        real_pid = pid_table_virtual_to_real(pid);
+        if (real_pid == -1) {
+                return -1;
+        }
+        retval = kill(real_pid, sig);
+        unsafe_exit();
+
+        return retval;
+}
+
+int __killpg_hook(pid_t pgrp, int sig)
+{
+        int     retval;
+        pid_t   real_pgrp;
+
+        if (unlikely(sig == SIGUSR1 || sig == SIGUSR2)) {
+                /*** xnd reserved signal ***/
+                return -1;
+        }
+
+        unsafe_enter();
+        if (pgrp == 0) {
+                real_pgrp = _real_getpgrp();
+        } else {
+                real_pgrp = pid_table_virtual_to_real(pgrp);
+        }
+        retval = killpg(real_pgrp, sig);
+        unsafe_exit();
+
+        return retval;
 }
 
 INTERPOSE(__getpid_hook, getpid);
@@ -125,4 +209,5 @@ INTERPOSE(__waitpid_hook, waitpid);
 INTERPOSE(__wait3_hook, wait3);
 INTERPOSE(__wait4_hook, wait4);
 INTERPOSE(__kill_hook, kill);
+INTERPOSE(__killpg_hook, killpg);
 

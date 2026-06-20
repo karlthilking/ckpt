@@ -9,6 +9,7 @@
 #include "xnd/shared_cache.h"
 #include "xnd/util/debug.h"
 #include "xnd/platform/signal.h"
+#include "xnd/pid/pid_table.h"
 #include "xnd/wrappers/file_wrappers.h"
 #include "xnd/wrappers/signal_wrappers.h"
 
@@ -84,22 +85,44 @@ void xnd_checkpoint(ucontext_t *uctx)
         (void)write_ckpt(&header, entries, regions, uctx);
 }
 
-void xnd_atfork(void)
+void xnd_atfork_prepare(void)
 {
-        pid_table_atfork();
-        /* TODO: thread_list_atfork(); */
+        /* TODO
+        pid_table_atfork_prepare();
+        thread_list_atfork_prepare();
+        */
+        pid_table_atfork_prepare();
+        thread_list_atfork_prepare();
 }
 
-void xnd_postfork_child(void)
+void xnd_atfork_child(void)
 {
-        pid_table_postfork_child();
-        /* TODO: thread_list_postfork_child(); */
+        /* TODO
+        pid_table_atfork_child();
+        thread_list_atfork_child();
+        */
+        pid_table_atfork_child();
+        thread_list_atfork_child();
 }
 
-void xnd_postfork_parent(void)
+void xnd_atfork_parent(void)
 {
-        pid_table_postfork_parent();
-        /* TODO: thread_list_postfork_parent(); */
+        /* TODO
+        pid_table_atfork_parent();
+        thread_list_atfork_parent();
+        */
+        pid_table_atfork_parent();
+        thread_list_atfork_parent();
+}
+
+void xnd_atfork_failed(void)
+{
+        /* TODO
+        pid_table_atfork_failed();
+        thread_list_atfork_failed();
+        */
+        pid_table_atfork_failed();
+        thread_list_atfork_failed();
 }
 
 /**

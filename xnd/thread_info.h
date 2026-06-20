@@ -56,6 +56,11 @@ void thread_list_release(void);
 void thread_list_add(void);
 void thread_list_remove(struct thread_info *);
 
+void thread_list_atfork_prepare(void);
+void thread_list_atfork_child(void);
+void thread_list_atfork_parent(void);
+void thread_list_atfork_failed(void);
+
 void zombie_list_init(void);
 void zombie_list_destroy(void);
 void zombie_list_acquire(void);

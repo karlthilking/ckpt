@@ -7,6 +7,7 @@
 enum xnd_state {
         XND_UNINITIALIZED,
         XND_RUNNING,
+        XND_SUSPINPROG,
         XND_CKPTINPROG,
         XND_EXITING
 };
@@ -18,9 +19,10 @@ void xnd_precheckpoint(void);
 void xnd_postrestart(void);
 void xnd_checkpoint(ucontext_t *);
 
-void xnd_atfork(void);
-void xnd_postfork_child(void);
-void xnd_postfork_parent(void);
+void xnd_atfork_prepare(void);
+void xnd_atfork_child(void);
+void xnd_atfork_parent(void);
+void xnd_atfork_failed(void);
 
 void xnd_setup(void);
 void xnd_cleanup(void);

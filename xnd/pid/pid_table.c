@@ -18,16 +18,16 @@ void pid_table_init(void)
 
         p->_real_pid = _real_getpid();
         p->_real_ppid = _real_getppid();
-        p->_virt_pid = p->_real_pid;
-        p->_virt_ppid = p->_real_pid + 1;
 
-        p->table[PID_TABLE_PID_SLOT] = p->_real_pid;
-        p->table[PID_TABLE_PPID_SLOT] = p->_real_ppid;
-        set_bit(PID_TABLE_PID_SLOT, p->bitmap);
-        set_bit(PID_TABLE_PPID_SLOT, p->bitmap);
-        
-        p->next = p->_virt_ppid + 1;
-        p->base = p->_real_pid;
+        p->virt_pid = VIRTUAL_PID_INIT;
+        p->virt_ppid = VIRTUAL_PID_INIT + 1;
+        p->next = VIRTUAL_PID_INIT + 2;
+
+        p->table[p->_virt_pid] = p->_real_pid;
+        p->table[p->_virt_ppid] = p->_real_ppid;
+
+        set_bit(p->_virt_pid, p->bitmap);
+        set_bit(p->_virt_ppid, p->bitmap);
 
         pthread_mutex_unlock(&p->lock);
 }
@@ -39,19 +39,18 @@ void pid_table_destroy(void)
 
 void pid_table_reset(void)
 {
-        size_t size;
+        bzero(p->bitmap, sizeof(p->bitmap));
+        p->next = 0;
+}
 
-        pthread_mutex_lock(&p->lock);
-        
-        /**
-         * leave p->table[0] and p->table[1] reserved for this process's
-         * pid and ppid mappings
-         */
-        size = (array_len(a) - 2) * sizeof(p->bitmap[0]);
-        bzero(p->bitmap + 2, size);
-        p->next = p->base + 2;
-
-        pthread_mutex_unlock(&p->lock);
+void pid_table_refresh(void)
+{
+        for (uint idx = p->next - 1; idx >= 0; idx--) {
+                if (test_bit(idx, p->bitmap)) {
+                        break;
+                }
+                p->next = idx;
+        }
 }
 
 /**
@@ -61,8 +60,13 @@ void pid_table_reset(void)
  */
 void pid_table_update(pid_t virt, pid_t real)
 {
-        xnd_assert(test_bit(virt - p->base, p->bitmap));
-        p->table[virt - p->base] = real;
+        p->table[virt] = real;
+        set_bit(virt, p->bitmap);
+}
+
+void pid_table_erase(pid_t virt)
+{
+        clear_bit(virt, p->bitmap);
 }
 
 /**
@@ -73,67 +77,129 @@ void pid_table_update(pid_t virt, pid_t real)
  */
 pid_t pid_table_add(pid_t real)
 {
-        pid_t   virt;
-        uint    idx;
+        pid_t virt;
 
         virt = pid_table_next_virtual();
-        idx = virt - p->base;
-        p->table[idx] = real;
-        set_bit(idx, p->bitmap);
-        
+        p->table[virt] = real;
+        set_bit(virt, p->bitmap);
+
         return virt;
 }
 
 /**
  * pid_table_postrestart:
- *  Refresh real pid and ppid. Exchange new pid with other processes and
- *  update mappings with new pids of other processes.
+ *  Refresh real pid and ppid. Send new virt_pid -> new_real_pid to
+ *  coordinator.
  */
 void pid_table_postrestart(void)
 {
         pthread_mutex_lock(&p->lock);
-        
+
         p->_real_pid = _real_getpid();
         p->_real_ppid = _real_getppid();
-        p->table[PID_TABLE_PID_SLOT] = p->_real_pid;
-        p->table[PID_TABLE_PPID_SLOT] = p->_real_ppid;
-
+        p->table[p->_virt_pid] = p->_real_pid;
+        p->table[p->_virt_ppid] = p->_real_ppid;
+        
         /**
-         * TODO: coordinate with other processes and update virtual to
-         * real pid mappings
+         * TODO:
+         *  Send updated virt -> real mappings to coordinator so they
+         *  can be discovered on demand.
          */
 
         pthread_mutex_unlock(&p->lock);
 }
 
-void pid_table_atfork(void)
+void pid_table_atfork_prepare(pid_t virt)
+{
+        int     err;
+        char    virt_pid[11], virt_ppid[11];
+
+        pthread_mutex_lock(&p->lock);
+
+        snprintf(virt_pid, sizeof(virt_pid), "%d", virt);
+        snprintf(virt_ppid, sizeof(virt_ppid), "%d", p->_virt_pid);
+
+        err = setenv("XND_VIRT_PID", child_virt_pid, 1);
+        if (unlikely(err != 0)) {
+                xnd_error("setenv(\"XND_VIRT_PID\"): %s\n", strerror(errno));
+                xnd_abort();
+        }
+
+        err = setenv("XND_VIRT_PPID", child_virt_ppid, 1);
+        if (unlikely(err != 0)) {
+                xnd_error("setenv(\"XND_VIRT_PPID\"): %s\n", strerror(errno));
+                xnd_abort();
+        }
+}
+
+/**
+ * pid_table_atfork_child:
+ *  Child resets its pid table based on its real pid and ppid.
+ *  The pid table mutex was acquired in pid_table_atfork_prepare, and
+ *  should be released once the pid table is reset.
+ */
+void pid_table_atfork_child(void)
+{
+        char *virt_pid, *virt_ppid;
+
+        pid_table_reset();
+
+        virt_pid = getenv("XND_VIRT_PID");
+        if (!virt_pid) {
+                xnd_error("getenv(\"XND_VIRT_PID\"): %s\n", strerror(errno));
+                xnd_abort();
+        }
+
+        virt_ppid = getenv("XND_VIRT_PPID");
+        if (!virt_ppid) {
+                xnd_error("getenv(\"XND_VIRT_PPID\"): %s\n", strerror(errno));
+                xnd_abort();
+        }
+        
+        p->_virt_pid = atoi(virt_pid);
+        p->_virt_ppid = atoi(virt_ppid);
+
+        p->_real_pid = _real_getpid();
+        p->_real_ppid = _real_getppid();
+        
+        p->table[p->_virt_pid] = p->_real_pid;
+        p->table[p->_virt_ppid] = p->_real_ppid;
+
+        set_bit(p->_virt_pid, p->bitmap);
+        set_bit(p->_virt_ppid, p->bitmap);
+        
+        p->next = p->_virt_ppid + 1;
+        xnd_assert(pthread_mutex_unlock(&p->lock) == 0);
+        xnd_assert(pthread_mutex_init(&p->lock, NULL) == 0);
+}
+
+void pid_table_atfork_parent(pid_t virt_cpid, pid_t real_cpid)
 {
         /**
-         * TODO:
+         * Add mapping from virtual child pid -> real child pid after
+         * fork.
          */
+        p->table[virt_cpid] = real_cpid;
+        set_bit(virt_cpid, p->bitmap);
+        pthread_mutex_unlock(&p->lock);
 }
 
-void pid_table_postfork_parent(pid_t child)
+void pid_table_atfork_failed(void)
 {
-        /* TODO */
-}
-
-void pid_table_postfork_child(void)
-{
-        /* TODO */
+        pid_table_refresh();
+        pthread_mutex_unlock(&p->lock);
 }
 
 bool pid_table_virtual_pid_exists(pid_t virt)
 {
-        bool            present;
-        const uint      idx = virt - p->base;
+        bool present;
 
-        if (unlikely(idx >= MAX_PIDS)) {
+        if (unlikely(virt >= MAX_PIDS)) {
                 return false;
         }
-        
+
         pthread_mutex_lock(&p->lock);
-        present = test_bit(idx, p->bitmap);
+        present = test_bit(virt, p->bitmap);
         pthread_mutex_unlock(&p->lock);
 
         return present;
@@ -160,16 +226,20 @@ bool pid_table_real_pid_exists(pid_t real)
 
 pid_t pid_table_virtual_to_real(pid_t virt)
 {
-        pid_t           real = -1;
-        const uint      idx = virt - p->base;
+        pid_t real = -1;
 
-        if (unlikely(idx >= MAX_PIDS)) {
+        if (unlikely(virt >= MAX_PIDS)) {
                 return -1;
         }
 
         pthread_mutex_lock(&p->lock);
-        if (test_bit(idx, p->bitmap)) {
-                real = p->bitmap[idx];
+        if (test_bit(virt, p->bitmap)) {
+                real = p->table[virt];
+        } else {
+                /* TODO:
+                real = get new real pid... (from coordinator presumably)
+                pid_table_update(virt, real)
+                */
         }
         pthread_mutex_unlock(&p->lock);
 
@@ -186,11 +256,11 @@ pid_t pid_table_real_to_virtual(pid_t real)
                         continue;
                 }
                 if (test_bit(idx, p->bitmap)) {
-                        virt = p->base + idx;
+                        virt = idx;
                         break;
                 }
         }
-        
+
         if (unlikely(virt == -1)) {
                 virt = pid_table_add(real);
         }
@@ -206,17 +276,15 @@ pid_t pid_table_real_to_virtual(pid_t real)
  */
 pid_t pid_table_next_virtual(void)
 {
-        pid_t   virt;
-        uint    idx;
-        
+        pid_t virt;
+
         for (;;) {
                 virt = p->next++;
-                idx = virt - p->base;
-                if (unlikely(idx >= MAX_PIDS)) {
+                if (unlikely(virt >= MAX_PIDS)) {
                         xnd_error("pid table size exceeded!\n");
                         xnd_abort();
                 }
-                if (test_bit(idx, p->bitmap)) {
+                if (test_bit(virt, p->bitmap)) {
                         continue;
                 }
                 break;
