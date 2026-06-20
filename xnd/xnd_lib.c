@@ -7,6 +7,7 @@
 #include "xnd/tls.h"
 #include "xnd/thread_info.h"
 #include "xnd/shared_cache.h"
+#include "xnd/pid/pid.h"
 #include "xnd/util/debug.h"
 #include "xnd/platform/signal.h"
 #include "xnd/pid/pid_table.h"
@@ -68,6 +69,9 @@ void xnd_checkpoint(ucontext_t *uctx)
                 xnd_error("Failed to get dyld shared cache info\n");
                 return;
         }
+
+        header.pid = _real_getpid();
+        header.ppid = _real_getppid();
 
         header.region_count = ckpt_vm_save_regions(regions);
         if (unlikely(header.region_count > XND_CKPT_VM_REGION_MAX)) {
@@ -142,6 +146,7 @@ __constructor() void xnd_setup(void)
         xnd_log_setup();
         fd_table_init();
         thread_list_init();
+        pid_table_init();
         set_xnd_state(XND_RUNNING);
 
 #if DEVELOPMENT || DEBUG
@@ -156,5 +161,6 @@ __destructor() void xnd_cleanup(void)
         set_xnd_state(XND_EXITING);
         fd_table_destroy();
         thread_list_destroy();
+        pid_table_destroy();
         xnd_log_cleanup();
 }

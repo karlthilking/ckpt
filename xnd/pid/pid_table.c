@@ -2,6 +2,7 @@
 #include "xnd/xnd.h"
 #include "xnd/pid/pid.h"
 #include "xnd/pid/pid_table.h"
+#include <string.h>
 #include <sys/types.h>
 
 static struct pid_table pid_table = {
@@ -76,7 +77,9 @@ void pid_table_update(pid_t virt, pid_t real)
 
 void pid_table_erase(pid_t virt)
 {
+        pid_table_acquire();
         clear_bit(virt, p->bitmap);
+        pid_table_release();
 }
 
 /**
@@ -149,7 +152,7 @@ void pid_table_atfork_child(pid_t virt_pid, pid_t virt_ppid)
         xnd_assert(pthread_mutex_init(&p->lock, NULL) == 0);
 }
 
-void pid_table_atfork_parent(pid_t virt_cpid, real_cpid)
+void pid_table_atfork_parent(pid_t virt_cpid, pid_t real_cpid)
 {
         p->table[virt_cpid] = real_cpid;
         set_bit(virt_cpid, p->bitmap);

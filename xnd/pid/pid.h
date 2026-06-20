@@ -6,7 +6,8 @@
 #include <sys/types.h>
 #include <sys/syscall.h>
 
-#define _real_id_0(type) ({     \
+#define _real_id_0(type) ({                                     \
+        extern int errno;                                       \
         register s64 x0 __asm__("x0");                          \
         register s64 x16 __asm__("x16") = SYS_get ##type;       \
         register s64 x17 __asm__("x17");                        \
@@ -25,6 +26,7 @@
 })
 
 #define _real_id_1(type, pid) ({                                \
+        extern int errno;                                       \
         register s64 x0 __asm__("x0") = (s64)(pid);             \
         register s64 x16 __asm__("x16") = SYS_get ##type;       \
         register s64 x17 __asm__("x17");                        \
@@ -42,9 +44,9 @@
         (pid_t)x0;                                              \
 })
 
-#define _real_getpid()  _real_id_0(pid)
-#define _real_getppid() _real_id_0(ppid)
-#define _real_getpgrp() _real_id_0(pgrp)
-#define _real_getpgid() _real_id_1(pgid)
+#define _real_getpid()          _real_id_0(pid)
+#define _real_getppid()         _real_id_0(ppid)
+#define _real_getpgrp()         _real_id_0(pgrp)
+#define _real_getpgid(pid)      _real_id_1(pgid, pid)
 
 #endif /* XND_PID_H */

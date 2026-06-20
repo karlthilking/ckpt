@@ -10,7 +10,8 @@ LIBXND_WRAPPERS := \
         xnd/wrappers/stdlib_wrappers.c \
         xnd/wrappers/pthread_wrappers.c \
         xnd/wrappers/file_wrappers.c \
-        xnd/wrappers/signal_wrappers.c
+        xnd/wrappers/signal_wrappers.c \
+        xnd/pid/pid_wrappers.c
 
 LIBXND_SOURCES := \
         xnd/xnd_lib.c \
@@ -27,6 +28,7 @@ LIBXND_SOURCES := \
         xnd/platform/signal.c \
         xnd/platform/ucontext/_setcontext.s \
         xnd/platform/ucontext/setcontext.c \
+        xnd/pid/pid_table.c \
         $(LIBXND_WRAPPERS)
 
 XND_RESTART_SOURCES := \

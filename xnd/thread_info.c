@@ -28,7 +28,7 @@ static struct thread_list               zombie_list;
 
 static int              threads_expected;
 static int              threads_arrived;
-static u64              barrier_epoch   = 0ull;
+// static u64              barrier_epoch   = 0ull;
 static pthread_cond_t   cond_arrived    = PTHREAD_COND_INITIALIZER;
 static pthread_cond_t   cond_released   = PTHREAD_COND_INITIALIZER;
 static pthread_mutex_t  ckpt_mtx        = PTHREAD_MUTEX_INITIALIZER;

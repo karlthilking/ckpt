@@ -1,6 +1,9 @@
 /* pid_wrappers.c */
 #include "xnd/xnd.h"
+#include "xnd/xnd_lib.h"
 #include "xnd/inject.h"
+#include "xnd/thread_info.h"
+#include "xnd/pid/pid.h"
 #include "xnd/pid/pid_table.h"
 #include "xnd/pid/pid_wrappers.h"
 #include "xnd/wrappers/time_wrappers.h"
@@ -49,7 +52,7 @@ pid_t __getpgid_hook(pid_t pid)
 
         unsafe_exit();
         return virt_pgid;
-ersch:
+esrch:
         unsafe_exit();
         errno = ESRCH;
         return -1;
@@ -117,20 +120,33 @@ pid_t __wait4_hook(pid_t pid, int *status, int options, struct rusage *ru)
         for (;;) {
                 unsafe_enter();
                 real_pid = pid_table_virtual_to_real(pid);
+                if (unlikely(real_pid == -1)) {
+                        xnd_warn("No virtual to real translation for "
+                                 "virtual pid: %d\n", pid);
+                        sv_errno = ECHILD;
+                        virt_ret = -1;
+                        unsafe_exit();
+                        break;
+                }
+
                 real_ret = wait4(real_pid, status, options | WNOHANG, ru);
-                if (real_ret == -1) {
+                switch (real_ret) {
+                case -1:
                         virt_ret = -1;
                         sv_errno = errno;
-                } else if (real_ret == 0) {
+                        break;
+                case 0:
                         virt_ret = 0;
-                } else {
+                        break;
+                default:
                         virt_ret = pid_table_real_to_virtual(real_ret);
                         if (WIFEXITED(*status) || WIFSIGNALED(*status)) {
                                 pid_table_erase(virt_ret);
                         }
+                        break;
                 }
-                unsafe_exit();
 
+                unsafe_exit();
                 if ((options & WNOHANG) || virt_ret != 0) {
                         break;
                 }
@@ -148,7 +164,6 @@ int __kill_hook(pid_t pid, int sig)
         
         if (unlikely(sig == SIGUSR1 || sig == SIGUSR2)) {
                 /*** xnd reserved signal ***/
-                return -1;
         }
 
         /**
@@ -175,9 +190,10 @@ int __kill_hook(pid_t pid, int sig)
         unsafe_enter();
         real_pid = pid_table_virtual_to_real(pid);
         if (real_pid == -1) {
-                return -1;
+                retval = -1;
+        } else {
+                retval = kill(real_pid, sig);
         }
-        retval = kill(real_pid, sig);
         unsafe_exit();
 
         return retval;
