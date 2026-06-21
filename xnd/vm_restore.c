@@ -2,6 +2,7 @@
 #include "xnd/xnd.h"
 #include "xnd/vm_region.h"
 #include "xnd/readckpt.h"
+#include "xnd/util/io.h"
 #include <dlfcn.h>
 
 int ckpt_vm_mark_regions(void)
@@ -64,6 +65,7 @@ int ckpt_vm_restore_region(int fd, const struct xnd_vm_region *region)
 {
         kern_return_t           ret;
         mach_vm_address_t       addr;
+        ssize_t                 bytes;
         
         xnd_assert(region->start != NULL && region->end != NULL);
         addr = (mach_vm_address_t)region->start;
@@ -81,15 +83,22 @@ int ckpt_vm_restore_region(int fd, const struct xnd_vm_region *region)
         }
         
         xnd_assert((void *)addr == region->start);
-        if (readall(fd, (void *)addr, region->size) < 0)
+        bytes = readall(fd, (void *)addr, region->size);
+        if (bytes != region->size) {
                 return -1;
+        }
 
-        if (region->prot != VM_PROT_DEFAULT &&
-            ckpt_vm_protect(region, 0, region->prot) < 0)
-                return -1;
-        else if (region->max_prot != VM_PROT_ALL &&
-                 ckpt_vm_protect(region, 1, region->max_prot) < 0)
-                return -1;
+        if (region->prot != VM_PROT_DEFAULT) {
+                if (ckpt_vm_protect(region, 0, region->prot) < 0) {
+                        return -1;
+                }
+        }
+
+        if (region->max_prot != VM_PROT_ALL) {
+                if (ckpt_vm_protect(region, 1, region->max_prot) < 0) {
+                        return -1;
+                }
+        }
 
         return 0;
 }

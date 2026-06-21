@@ -16,6 +16,7 @@ enum xnd_state {
 enum xnd_state get_xnd_state(void);
 void set_xnd_state(enum xnd_state);
 
+void xnd_suspend_until_ckpt(void);
 void xnd_precheckpoint(void);
 void xnd_postrestart(void);
 void xnd_checkpoint(ucontext_t *);

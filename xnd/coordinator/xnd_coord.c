@@ -1,211 +1,440 @@
 /* xnd_coord.c */
 #include "xnd/xnd.h"
-#include "xnd/coordinator/coord_common.h"
-#include "xnd/coordinator/coord_server.h"
+#include "xnd/util/io.h"
+#include "xnd/coordinator/xnd_coord.h"
+#include "xnd/coordinator/xnd_coord_api.h"
 
-static struct coord_info *coord_info = NULL;
-static struct proc_list proc_list;
+#include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
+#include <unistd.h>
+#include <errno.h>
+#include <signal.h>
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <sys/un.h>
+#include <sys/select.h>
 
-static ssize_t readall(int fd, void *buf, size_t nbyte)
-{
-        size_t  bytes;
-        ssize_t retval;
-
-        for (bytes = 0; bytes < nbyte; bytes += retval) {
-                retval = read(fd, buf + bytes, nbyte - bytes);
-                if (retval < 0) {
-                        xnd_error("read: %s\n", strerror(errno));
-                        return -1;
-                } else if (retval == 0) {
-                        return 0;
-                }
-        }
-        
-        return (ssize_t)bytes;
-}
-
-static ssize_t writeall(int fd, const void *buf, size_t nbyte)
-{
-        size_t  bytes;
-        ssize_t retval;
-
-        for (bytes = 0; bytes < nbyte; bytes += retval) {
-                retval = write(fd, buf + bytes, nbyte - bytes);
-                if (retval < 0) {
-                        xnd_error("write: %s\n", strerror(errno));
-                        return (ssize_t)-1;
-                } else if (retval == 0) {
-                        return 0;
-                }
-        }
-        
-        return (ssize_t)bytes;
-}
+static struct proc_list *proc_list      = NULL;
+static pid_t            next_virt_pid   = 1;
+static int              listen_fd       = -1;
+static enum coord_state coord_state     = COORD_NULL;
 
 void proc_list_init(void)
 {
-        proc_list.list = malloc(sizeof(struct proc_info));
-        proc_list.size = 0;
-        proc_list.capacity = 1;
+        proc_list = calloc(1, sizeof(struct proc_list));
+        xnd_assert(proc_list != NULL);
 }
 
 void proc_list_destroy(void)
 {
-        free(proc_list.list);
-}
+        struct proc *p, *next;
 
-void proc_list_resize(size_t new_cap)
-{
-        struct proc_info *new_list, *old_list;
-
-        old_list = proc_list.list;
-        new_list = malloc(sizeof(struct proc_info) * new_cap);
-
-        for (size_t i = 0; i < proc_list.size; i++) {
-                memcpy(&new_list[i], &old_list[i], sizeof(struct proc_info));
+        for (p = proc_list->head; p; p = next) {
+                next = p->next;
+                close(p->fd);
+                free(p);
         }
-        
-        free(old_list);
-        proc_list.list = new_list;
-        proc_list.capacity = new_cap;
+
+        free(proc_list);
 }
 
-struct proc_info *proc_list_find(pid_t real_pid)
+void proc_list_add(struct proc *p)
 {
-        struct proc_info *p, *list;
-        
-        p = NULL;
-        list = proc_list.list;
-        
-        for (size_t i = 0; i < proc_list.size; i++) {
-                if (list[i].real_pid == real_pid) {
-                        p = &list[i];
-                        break;
+        p->next = proc_list->head;
+        proc_list->head = p;
+
+        if (p->next) {
+                p->next->prev = p;
+        }
+
+        proc_list->size++;
+}
+
+void proc_list_remove(struct proc *p)
+{
+        if (p->next) {
+                p->next->prev = p->prev;
+        }
+
+        if (p->prev) {
+                p->prev->next = p->next;
+        }
+
+        if (proc_list->head == p) {
+                proc_list->head = p->next;
+        }
+
+        close(p->fd);
+        free(p);
+        proc_list->size--;
+}
+
+struct proc *proc_list_find_real(pid_t real_pid)
+{
+        struct proc *p;
+
+        for (p = proc_list->head; p; p = p->next) {
+                if (p->real_pid == real_pid) {
+                        return p;
                 }
         }
-        
-        return p;
+
+        return NULL;
 }
 
-void proc_init(int fd)
+struct proc *proc_list_find_virt(pid_t virt_pid)
 {
-        struct proc_info        *p, *parent;
-        enum xnd_msghdr         hdr;
-        struct pid_info         info;
-        ssize_t                 bytes;
+        struct proc *p;
 
-        if (proc_list.size == proc_list.capacity) {
-                proc_list_resize(proc_list.capacity * 2);
-        }
-        
-        p = proc_list.list + proc_list.size;
-        p->fd = fd;
-        p->root = proc_list.size == 0 ? true : false;
-        p->state = XND_PROC_EMBRYO;
-
-        /**
-         * Receive process's real pid and ppid, then send virtual pid
-         * and ppid to process.
-         */
-        coord_recv_pid_info(p);
-        if (p->root) {
-                p->virt_ppid = coord_next_virtual_pid();
-        } else {
-                parent = proc_list_find(p->real_ppid);
-                xnd_assert(parent != NULL);
-                p->virt_ppid = parent->virt_pid;
+        for (p = proc_list->head; p; p = p->next) {
+                if (p->virt_pid == virt_pid) {
+                        return p;
+                }
         }
 
-        p->virt_pid = coord_next_virtual_pid();
-        coord_send_pid_info(p);
-        proc_list.size++;
-}
-
-void proc_exited(struct proc_info *p)
-{
-        close(p->fd);
-        p->state = XND_PROC_EXITED;
+        return NULL;
 }
 
 void coord_init(void)
 {
-        int                     fd, err;
-        struct sockaddr_un      *addr;
+        int                     err;
+        struct sockaddr_un      addr;
 
-        coord_info = calloc(1, sizeof(struct coord_info));
-        coord_info->next_virtual_pid = 1;
-
-        coord_info->fd = socket(AF_UNIX, SOCK_STREAM, 0);
-        if (coord_info->fd < 0) {
-                xnd_error("Failed to create coordinator socket!\n");
-                coord_exit();
+        listen_fd = socket(AF_UNIX, SOCK_STREAM, 0);
+        if (listen_fd < 0) {
+                xnd_error("socket: %s\n", strerror(errno));
+                coord_exit(COORD_EXIT_FAILURE);
         }
 
-        addr = &coord_info->addr;
-        bzero(addr, sizeof(*addr));
-        addr->sun_family = AF_UNIX;
-        strncpy(addr->sun_path, XND_COORD_PATH, sizeof(addr->sun_path) - 1);
+        bzero(&addr, sizeof(addr));
+        addr.sun_family = AF_UNIX;
+        strncpy(addr.sun_path, XND_COORD_PATH, sizeof(addr.sun_path) - 1);
 
-        err = bind(coord_info->fd, (struct sockaddr *)addr, sizeof(*addr));
-        if (err < 0) {
-                xnd_error("Failed to bind coordinator socket!\n");
-                coord_exit();
+retry:
+        err = bind(listen_fd, (struct sockaddr *)&addr, sizeof(addr));
+        if (err != 0) {
+                if (errno == EADDRINUSE) {
+                        unlink(XND_COORD_PATH);
+                        goto retry;
+                }
+                xnd_error("bind: %s\n", strerror(errno));
+                xnd_abort();
         }
 
-        err = listen(coord_info->fd, MAX_PROC);
-        if (err < 0) {
-                xnd_error("Failed to listen on coordinator socket!\n");
-                coord_exit();
+        err = listen(listen_fd, COORD_MAX_PROC);
+        if (err != 0) {
+                xnd_error("listen: %s\n", strerror(errno));
+                coord_exit(COORD_EXIT_FAILURE);
         }
 
-        proc_list_init();
+        coord_state = COORD_RUNNING;
 }
 
-void coord_exit(void)
+void coord_exit(int status)
 {
         proc_list_destroy();
+        close(listen_fd);
+        unlink(XND_COORD_PATH);
         
-        if (coord_info) {
-                close(coord_info->fd);
-                unlink(coord_info->addr.sun_path);
-        }
+        exit(status);
 }
 
 void coord_event_loop(void)
 {
-        /* Wait for the root process to connect with the coordinator */
-        coord_await_connection();
+        while (proc_list->size == 0) {
+                coord_await_connection();
+        }
+        
+        while (coord_state != COORD_EXITING) {
+                for (int iter = 0; iter < 10; iter++) {
+                        coord_await_connection();
+                        coord_await_msg();
+                }
+                coord_check_status();
+        }
+        
+        xnd_assert(coord_state == COORD_EXITING);
+        xnd_assert(proc_list->size == 0);
+}
 
-        for (;;) {
-                coord_await_msg();
+void coord_check_status(void)
+{
+        int             err;
+        struct proc     *p, *next;
+
+        for (p = proc_list->head; p; p = next) {
+                next = p->next;
+                err = kill(p->real_pid, 0);
+                if (err != 0 && errno == ESRCH) {
+                        proc_list_remove(p);
+                }
+        }
+
+        if (proc_list->size == 0) {
+                coord_state = COORD_EXITING;
         }
 }
 
 void coord_await_connection(void)
 {
-        int fd;
+        fd_set          set;
+        int             fd, err, nfds;
+        ssize_t         bytes;
+        struct xnd_msg  msg;
+        struct timeval  tv = { 0, 1000 };
 
-        fd = accept(coord_info->fd, NULL, NULL);
-        if (fd != -1) {
-                proc_init(fd);
+        nfds = listen_fd + 1;
+        FD_ZERO(&set);
+        FD_SET(listen_fd, &set);
+
+        err = select(nfds, &set, NULL, NULL, &tv);
+        if (err < 0) {
+                xnd_error("select: %s\n", strerror(errno));
+                return;
+        } else if (err == 0) {
+                return;
         }
+
+        fd = accept(listen_fd, NULL, NULL);
+        if (fd < 0) {
+                xnd_error("accept: %s\n", strerror(errno));
+                return;
+        }
+
+        bytes = readall(fd, &msg, sizeof(msg));
+        if (bytes != sizeof(msg)) {
+                xnd_warn("Failed to receive message from new connection");
+                return;
+        }
+
+        switch (msg.hdr) {
+        case XND_PROC_CONNECT_LAUNCH:
+                coord_proc_connect(fd, &msg);
+                break;
+        case XND_PROC_CONNECT_RESTART:
+                coord_state = COORD_RESTART;
+                coord_proc_connect(fd, &msg);
+                break;
+        case XND_COMMAND:
+                coord_handle_command(&msg);
+                break;
+        default:
+                break;
+        }
+}
+
+void coord_proc_connect(int fd, struct xnd_msg *msg)
+{
+        ssize_t         bytes;
+        struct xnd_msg  resp;
+        struct proc     *p, *parent;
+
+        p = malloc(sizeof(struct proc));
+        xnd_assert(p != NULL);
+
+        p->fd = fd;
+        p->real_pid = msg->real_pid;
+        p->real_ppid = msg->real_ppid;
+        
+        if (proc_list->size == 0) {
+                p->root_of_tree = true;
+        } else {
+                p->root_of_tree = false;
+        }
+
+        if (coord_state == COORD_RESTART) {
+                p->virt_pid = msg->virt_pid;
+                p->virt_ppid = msg->virt_ppid;
+                if (p->virt_pid + 1 > next_virt_pid) {
+                        next_virt_pid = p->virt_pid + 1;
+                }
+        } else {
+                if (p->root_of_tree) {
+                        p->virt_ppid = next_virt_pid++;
+                } else {
+                        parent = proc_list_find_real(p->real_pid);
+                        xnd_assert(parent != NULL);
+                        p->virt_ppid = parent->virt_pid;
+                }
+                p->virt_pid = next_virt_pid++;
+        }
+
+        p->state = PROC_RUNNING;
+        p->next = NULL;
+        p->prev = NULL;
+        proc_list_add(p);
+
+        resp.hdr = XND_COORD_ACK;
+        resp.ret = XND_SUCCESS;
+        resp.real_pid = p->real_pid;
+        resp.real_ppid = p->real_ppid;
+        resp.virt_pid = p->virt_pid;
+        resp.virt_ppid = p->virt_ppid;
+        
+        bytes = writeall(p->fd, &resp, sizeof(resp));
+        xnd_assert(bytes == sizeof(resp));
+}
+
+void coord_handle_command(struct xnd_msg *msg)
+{
+        xnd_assert(msg->hdr == XND_COMMAND);
+        switch (msg->cmd) {
+        case XND_CKPT_CMD:
+                coord_broadcast_ckpt();
+                break;
+        case XND_EXIT_CMD:
+                coord_broadcast_exit();
+                break;
+        case XND_KILL_CMD:
+                coord_kill_processes();
+                break;
+        default:
+                __builtin_trap();
+        }
+}
+
+void coord_broadcast_ckpt(void)
+{
+        int             err, total, acked;
+        fd_set          set;
+        ssize_t         bytes;
+        struct proc     *p, *next;
+        struct xnd_msg  msg, resp;
+        struct timeval  tv = { 0, 100 };
+        
+        coord_state = COORD_CKPT;
+        msg.hdr = XND_COMMAND;
+        msg.cmd = XND_CKPT_CMD;
+        
+        total = 0;
+        for (p = proc_list->head; p; p = next) {
+                next = p->next;
+                err = kill(p->real_pid, 0);
+                if (err != 0 && errno == ESRCH) {
+                        proc_list_remove(p);
+                        continue;
+                }
+                bytes = writeall(p->fd, &msg, sizeof(msg));
+                xnd_assert(bytes == sizeof(msg));
+                total++;
+        }
+
+again:
+        acked = 0;
+        for (p = proc_list->head; p; p = next) {
+                next = p->next;
+                if (p->state == PROC_CHECKPOINTED) {
+                        continue;
+                }
+                FD_ZERO(&set);
+                FD_SET(p->fd, &set);
+                err = select(p->fd + 1, &set, NULL, NULL, &tv);
+                if (err <= 0) {
+                        continue;
+                }
+                xnd_assert(FD_ISSET(p->fd, &set));
+                bytes = readall(p->fd, &resp, sizeof(resp));
+                if (resp.hdr == XND_CLIENT_ACK && resp.cmd == XND_CKPT_CMD) {
+                        p->state = PROC_CHECKPOINTED;
+                        acked++;
+                }
+        }
+
+        if (acked != total) {
+                usleep(10);
+                goto again;
+        }
+
+        for (p = proc_list->head; p; p = p->next) {
+                xnd_assert(p->state == PROC_CHECKPOINTED);
+                p->state = PROC_RUNNING;
+        }
+        coord_state = COORD_RUNNING;
+}
+
+void coord_broadcast_exit(void)
+{
+        int             err, exited, total;
+        ssize_t         bytes;
+        struct proc     *p, *next;
+        struct xnd_msg  msg, resp;
+
+        msg.hdr = XND_COMMAND;
+        msg.cmd = XND_EXIT_CMD;
+        coord_state = COORD_EXITING;
+
+        do {
+                total = 0;
+                exited = 0;
+                for (p = proc_list->head; p; p = next) {
+                        next = p->next;
+                        err = kill(p->real_pid, 0);
+                        if (err != 0 && errno == ESRCH) {
+                                proc_list_remove(p);
+                                continue;
+                        }
+                        bytes = writeall(p->fd, &msg, sizeof(msg));
+                        xnd_assert(bytes == sizeof(msg));
+                        total++;
+                }
+
+                for (p = proc_list->head; p; p = next) {
+                        next = p->next;
+                        bytes = readall(p->fd, &resp, sizeof(resp));
+                        xnd_assert(bytes == sizeof(resp));
+                        if (resp.hdr == XND_PROC_EXIT) {
+                                proc_list_remove(p);
+                                exited++;
+                        }
+                }
+        } while (exited != total);
+
+        xnd_assert(proc_list->size == 0);
+}
+
+void coord_kill_processes(void)
+{
+        struct proc     *p, *next;
+        int             err, killed, total;
+        
+        coord_state = COORD_EXITING;
+again:
+        total = 0;
+        killed = 0;
+
+        for (p = proc_list->head; p; p = next) {
+                next = p->next;
+                err = kill(p->real_pid, 0);
+                if (err != 0 && errno == ESRCH) {
+                        proc_list_remove(p);
+                        continue;
+                }
+
+                total++;
+                err = kill(p->real_pid, SIGKILL);
+                if (err == 0) {
+                        killed++;
+                        proc_list_remove(p);
+                }
+        }
+
+        if (total != killed) {
+                goto again;
+        }
+
+        xnd_assert(proc_list->size == 0);
 }
 
 void coord_await_msg(void)
 {
-        int                     err, nfds;
-        fd_set                  set;
-        struct proc_info        *p;
-        struct timeval          tv = { 0, 1000 };
+        struct proc     *p, *next;
+        fd_set          set;
+        int             nfds, err;
+        struct timeval  tv = { 0, 1000 };
 
-        nfds = 0;
         FD_ZERO(&set);
-        
-        for (size_t i = 0; i < proc_list.size; i++) {
-                p = proc_list.list + i;
-                if (p->state == XND_PROC_EXITED) {
-                        continue;
-                }
+        for (p = proc_list->head; p; p = p->next) {
                 FD_SET(p->fd, &set);
                 if (p->fd + 1 > nfds) {
                         nfds = p->fd + 1;
@@ -213,87 +442,42 @@ void coord_await_msg(void)
         }
 
         err = select(nfds, &set, NULL, NULL, &tv);
-        if (err <= 0) {
+        if (err < 0) {
+                xnd_error("select: %s\n", strerror(errno));
+                return;
+        } else if (err == 0) {
                 return;
         }
 
-        for (size_t i = 0; i < proc_list.size; i++) {
-                p = proc_list.list + i;
-                if (p->state == XND_PROC_EXITED) {
-                        continue;
-                }
+        for (p = proc_list->head; p; p = next) {
+                next = p->next;
                 if (FD_ISSET(p->fd, &set)) {
-                        coord_recv_msg(p);
+                        coord_handle_proc_msg(p);
                 }
         }
 }
 
-void coord_recv_msg(struct proc_info *p)
+void coord_handle_proc_msg(struct proc *p)
 {
-        enum xnd_msghdr hdr;
         ssize_t         bytes;
+        struct xnd_msg  msg;
 
-        bytes = readall(p->fd, &hdr, sizeof(hdr));
-        xnd_assert(bytes == sizeof(hdr));
+        bytes = readall(p->fd, &msg, sizeof(msg));
+        xnd_assert(bytes == sizeof(msg));
 
-        switch (hdr) {
-        case XND_PROC_EXIT:
-                proc_exited(p);
-                break;
-        default:
-                break;
+        if (msg.hdr == XND_PROC_EXIT) {
+                proc_list_remove(p);
         }
-}
 
-/**
- * coord_recv_pid_info:
- *  Get the real pid and ppid of the process that just connected with
- *  the coordinator.
- */
-void coord_recv_pid_info(struct proc_info *p)
-{
-        enum xnd_msghdr         hdr;
-        struct pid_info         pid_info;
-        ssize_t                 bytes;
-
-        bytes = readall(p->fd, &hdr, sizeof(hdr));
-        xnd_assert(bytes == sizeof(hdr) && hdr == XND_REAL_PID_INFO);
-
-        bytes = readall(p->fd, &pid_info, sizeof(struct pid_info));
-        xnd_assert(bytes == sizeof(struct pid_info));
-
-        p->real_pid = pid_info.pid;
-        p->real_ppid = pid_info.ppid;
-}
-
-/**
- * coord_send_pid_info:
- *  Send the elected virtual pid and ppid for the process that connected
- *  with the coordinator.
- */
-void coord_send_pid_info(struct proc_info *p)
-{
-        enum xnd_msghdr         hdr;
-        struct pid_info         pid_info;
-        ssize_t                 bytes;
-
-        hdr = XND_VIRT_PID_INFO;
-        pid_info.pid = p->virt_pid;
-        pid_info.ppid = p->virt_ppid;
-
-        bytes = writeall(p->fd, &hdr, sizeof(hdr));
-        xnd_assert(bytes == sizeof(hdr));
-
-        bytes = writeall(p->fd, &pid_info, sizeof(struct pid_info));
-        xnd_assert(bytes == sizeof(struct pid_info));
-}
-
-pid_t coord_next_virtual_pid(void)
-{
-        return coord_info->next_virtual_pid++;
+        if (proc_list->size == 0) {
+                coord_state = COORD_EXITING;
+        }
 }
 
 int main(int argc, char *argv[])
 {
+        proc_list_init();
         coord_init();
+        coord_event_loop();
+        coord_exit(COORD_EXIT_SUCCESS);
 }

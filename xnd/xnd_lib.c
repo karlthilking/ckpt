@@ -13,6 +13,7 @@
 #include "xnd/pid/pid_table.h"
 #include "xnd/wrappers/file_wrappers.h"
 #include "xnd/wrappers/signal_wrappers.h"
+#include "xnd/coordinator/xnd_coord_api.h"
 
 #define _XOPEN_SOURCE
 #include <ucontext.h>
@@ -37,6 +38,27 @@ void set_xnd_state(enum xnd_state new_state)
         atomic_store(&libxnd_state, new_state);
 }
 
+void xnd_suspend_until_ckpt(void)
+{
+        struct xnd_msg msg;
+
+        xnd_assert(recv_msg_from_coord(&msg) == 0);
+        xnd_assert(msg.hdr == XND_COMMAND);
+
+        switch (msg.cmd) {
+        case XND_CKPT_CMD:
+                msg.hdr = XND_CLIENT_ACK;
+                msg.cmd = XND_CKPT_CMD;
+                xnd_assert(send_msg_to_coord(&msg) == 0);
+                return;
+        case XND_EXIT_CMD:
+                set_xnd_state(XND_EXITING);
+                break;
+        default:
+                break;
+        }
+}
+
 void xnd_precheckpoint(void)
 {
         sig_state_save();
@@ -46,6 +68,9 @@ void xnd_precheckpoint(void)
 
 void xnd_postrestart(void)
 {
+        connect_to_coord();
+        register_with_coord_on_restart();
+
         thread_sig_fixup(_pthread_ptr_munge_token);
         ckpt_vm_deallocate_regions();
         fd_table_restore_state();
@@ -91,26 +116,38 @@ void xnd_checkpoint(ucontext_t *uctx)
 
 void xnd_atfork_prepare(void)
 {
-        pid_table_atfork_prepare();
-        thread_list_atfork_prepare();
+        /**
+         * TODO
+         * pid_table_atfork_prepare();
+         * thread_list_atfork_prepare();
+         */
 }
 
 void xnd_atfork_child(pid_t virt_pid, pid_t virt_ppid)
 {
-        pid_table_atfork_child(virt_pid, virt_ppid);
-        thread_list_atfork_child();
+        /**
+         * TODO
+         * pid_table_atfork_child(virt_pid, virt_ppid);
+         * thread_list_atfork_child();
+         */
 }
 
 void xnd_atfork_parent(pid_t virt_cpid, pid_t real_cpid)
 {
-        pid_table_atfork_parent(virt_cpid, real_cpid);
-        thread_list_atfork_parent();
+        /**
+         * TODO
+         * pid_table_atfork_parent(virt_cpid, real_cpid);
+         * thread_list_atfork_parent();
+         */
 }
 
 void xnd_atfork_failed(void)
 {
-        pid_table_atfork_failed();
-        thread_list_atfork_failed();
+        /**
+         * TODO
+         * pid_table_atfork_failed();
+         * thread_list_atfork_failed();
+         */
 }
 
 /**
@@ -124,6 +161,9 @@ __constructor() void xnd_setup(void)
         struct sigaction        sa;
         sigset_t                set;
         int                     err;
+        
+        connect_to_coord();
+        register_with_coord_on_launch();
         
         /* Every thread blocks SIGUSR2 except for checkpoint thread */
         sigemptyset(&set);
@@ -163,4 +203,6 @@ __destructor() void xnd_cleanup(void)
         thread_list_destroy();
         pid_table_destroy();
         xnd_log_cleanup();
+
+        send_exit_to_coord();
 }

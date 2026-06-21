@@ -2,11 +2,13 @@
 #include "xnd/xnd.h"
 #include "xnd/ckptfile.h"
 #include "xnd/util/path.h"
+#include "xnd/util/log.h"
 #include "xnd/platform/exe.h"
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
+#include <errno.h>
 #include <err.h>
 #include <spawn.h>
 #include <limits.h>
@@ -34,12 +36,14 @@ static const char *help =
 "    context that was serialized to the checkpoint image file.\n";
 
 static void usage(void);
+static void launch_coordinator(void);
 static void print_checkpoint(char **);
 static void launch_checkpoint_target(char **);
 static void restart_from_checkpoint(char *);
 
 int main(int argc, char *argv[])
 {
+        xnd_log_setup();
         if (argc < 3) {
                 usage();
                 exit(0);
@@ -63,7 +67,34 @@ int main(int argc, char *argv[])
 
 static void usage(void)
 {
-        fprintf(stderr, "%s", help);
+        xnd_error("%s", help);
+}
+
+static void launch_coordinator(void)
+{
+        char    buf[PATH_MAX], exe[PATH_MAX];
+        pid_t   coord_pid;
+        int     err;
+
+        coord_pid = fork();
+        switch (coord_pid) {
+        case -1:
+                xnd_error("fork: %s\n", strerror(errno));
+                xnd_abort();
+        case 0:
+                xnd_exe_dir(buf, sizeof(buf));
+                xnd_path_join(exe, sizeof(exe), buf, "xnd_coordinator");
+                err = execl(exe, exe, NULL);
+                if (err != 0) {
+                        xnd_error("execl(%s, ...): %s\n",
+                                  exe, strerror(errno));
+                        xnd_abort();
+                }
+        default:
+                snprintf(buf, sizeof(buf), "%d", coord_pid);
+                xnd_assert(setenv("XND_COORD_PID", buf, 1) == 0);
+                break;
+        }
 }
 
 static __noreturn void print_checkpoint(char **argv)
@@ -100,6 +131,8 @@ static __noreturn void launch_checkpoint_target(char **argv)
          */
         char    libxnd_path[PATH_MAX], xnd_program[PATH_MAX];
         int     retval;
+
+        launch_coordinator();
 
         retval = xnd_exe_path_of("libxnd.dylib", libxnd_path, PATH_MAX);
         if (retval < 0) {
@@ -141,6 +174,7 @@ static __noreturn void restart_from_checkpoint(char *ckptfile)
         char                    xnd_program[PATH_MAX];
         int                     retval;
         
+        launch_coordinator();
         retval = xnd_exe_path_of("xnd_restart", xnd_restart_path, PATH_MAX);
         if (retval < 0) {
                 fprintf(stderr, "Failed to get path of xnd_restart!\n");

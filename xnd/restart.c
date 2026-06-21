@@ -4,6 +4,7 @@
 #include "xnd/pac.h"
 #include "xnd/vm_region.h"
 #include "xnd/shared_cache.h"
+#include "xnd/util/io.h"
 
 #define _XOPEN_SOURCE
 #include <ucontext.h>

@@ -101,8 +101,11 @@ pthread_t __pthread_self_hook(void)
         struct thread_info *self = thread_self_or_null();
         
         if (unlikely(self == NULL)) {
-                xnd_error("thread_self returned null\n");
-                xnd_abort();
+                if (tlv_ok()) {
+                        xnd_error("thread_self returned null\n");
+                        xnd_abort();
+                }
+                return pthread_self();
         }
 
         return encode_pthread(self);

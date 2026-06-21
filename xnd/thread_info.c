@@ -4,6 +4,7 @@
 #include "xnd/xnd_lib.h"
 #include "xnd/pac.h"
 #include "xnd/tls.h"
+#include "xnd/coordinator/xnd_coord_api.h"
 #include "xnd/wrappers/signal_wrappers.h"
 #include "xnd/wrappers/pthread_wrappers.h"
 #include "xnd/platform/ucontext/ucontext.h"
@@ -423,6 +424,12 @@ __noreturn void ckpt_thread_exit(void)
 
 void ckpt_thread_wait(void)
 {
+#if XND_COORDINATOR
+        xnd_suspend_until_ckpt();
+        if (get_xnd_state() == XND_EXITING) {
+                ckpt_thread_exit();
+        }
+#else
         sigset_t        set;
         int             err, sig = 0;
 
@@ -436,6 +443,7 @@ void ckpt_thread_wait(void)
                 else if (unlikely(err != 0))
                         xnd_warn("sigwait: %s\n", strerror(err));
         }
+#endif
 }
 
 void *ckpt_thread_work(void *ready)

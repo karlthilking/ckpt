@@ -2,6 +2,7 @@
 #ifndef TIME_WRAPPERS_H
 #define TIME_WRAPPERS_H
 #include "xnd/inject.h"
+#include <time.h>
 #include <unistd.h>
 
 #define TIMESPEC_TO_TIMEVAL(__tsp, __tvp) do {                  \
@@ -20,14 +21,12 @@
 #define TIMESPEC_NSEC_DIFF(__first, __second) \
         (TIMESPEC_TO_NSEC((__first))) - (TIMESPEC_TO_NSEC((__second)))
 
+#define MSEC_PER_SEC    (1000L)
 #define NSEC_PER_USEC   (1000L)
+#define USEC_PER_MSEC   (1000L)
 #define NSEC_PER_MSEC   (1000000L)
 #define USEC_PER_SEC    (1000000L)
 #define NSEC_PER_SEC    (1000000000L)
-
-extern unsigned int sleep(unsigned int);
-extern int nanosleep(const struct timespec *, struct timespec *);
-extern int usleep(useconds_t);
 
 unsigned int __sleep_hook(unsigned int);
 int __usleep_hook(useconds_t);

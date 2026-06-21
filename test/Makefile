@@ -5,7 +5,8 @@ TESTS := \
         01_conjugate_gradient \
         02_heat_diffusion \
         03_nbody \
-        04_jacobi
+        04_jacobi \
+        07_pid
 
 all: $(TESTS)
 

@@ -9,7 +9,6 @@
 #define _XOPEN_SOURCE
 #include <ucontext.h>
 
-int writeall(int, const void *, size_t);
 int write_vm_region(int, const struct xnd_vm_region *);
 int write_context(int, const ucontext_t *);
 int write_ckpt(const struct xnd_ckpt_header *,

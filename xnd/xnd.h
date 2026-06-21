@@ -7,4 +7,4 @@
 #include "common/compiler.h"
 #include "common/bits.h"
 
-#endif
+#endif /* XND_H */
