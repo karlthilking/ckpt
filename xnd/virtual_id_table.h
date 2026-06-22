@@ -28,6 +28,11 @@ public:
 
         virtual_id_table(const virtual_id_table &) = delete;
         virtual_id_table &operator=(const virtual_id_table &) = delete;
+        
+        std::unordered_map<ID, ID> &get(void) noexcept
+        {
+                return table;
+        }
 
         void acquire(void) const noexcept
         {

@@ -63,8 +63,7 @@ void thread_list_init(void)
 
 void thread_list_destroy(void)
 {
-        int                     err;
-        struct thread_info      *th, *next;
+        struct thread_info *th, *next;
         
         xnd_assert(get_xnd_state() == XND_EXITING);
         xnd_assert(myself != &ckpt_thread);
@@ -73,7 +72,6 @@ void thread_list_destroy(void)
         thread_list_acquire();
         for (th = thread_list.head; th; th = next) {
                 next = th->next;
-                
                 pthread_mutex_destroy(&th->lock);
                 pthread_cond_destroy(&th->cond);
                 free(th);

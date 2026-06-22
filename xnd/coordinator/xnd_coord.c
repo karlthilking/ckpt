@@ -468,14 +468,63 @@ void coord_handle_proc_msg(struct proc *p)
 
         bytes = readall(p->fd, &msg, sizeof(msg));
         xnd_assert(bytes == sizeof(msg));
-
-        if (msg.hdr == XND_PROC_EXIT) {
+        
+        switch (msg.hdr) {
+        case XND_PROC_EXIT:
                 proc_list_remove(p);
+                if (proc_list->size == 0) {
+                        coord_state = COORD_EXITING;
+                }
+                break;
+        case XND_VIRT_TO_REAL_REQ:
+                coord_send_virt_to_real(p, &msg);
+                break;
+        case XND_REAL_TO_VIRT_REQ:
+                coord_send_real_to_virt(p, &msg);
+                break;
+        default:
+                break;
+        }
+}
+
+void coord_send_virt_to_real(struct proc *p, struct xnd_msg *msg)
+{
+        struct proc     *target;
+        struct xnd_msg  resp;
+        ssize_t         bytes;
+        
+        resp.hdr = XND_COORD_ACK;
+        target = proc_list_find_virt(msg->virt_pid);
+        if (target) {
+                resp.real_pid = target->real_pid;
+                resp.ret = XND_SUCCESS;
+        } else {
+                resp.real_pid = -1;
+                resp.ret = XND_FAILURE;
         }
 
-        if (proc_list->size == 0) {
-                coord_state = COORD_EXITING;
+        bytes = writeall(p->fd, &resp, sizeof(resp));
+        xnd_assert(bytes == sizeof(resp));
+}
+
+void coord_send_real_to_virt(struct proc *p, struct xnd_msg *msg)
+{
+        struct proc     *target;
+        struct xnd_msg  resp;
+        ssize_t         bytes;
+        
+        resp.hdr = XND_COORD_ACK;
+        target = proc_list_find_real(msg->real_pid);
+        if (target) {
+                resp.virt_pid = target->virt_pid;
+                resp.ret = XND_SUCCESS;
+        } else {
+                resp.virt_pid = -1;
+                resp.ret = XND_FAILURE;
         }
+
+        bytes = writeall(p->fd, &resp, sizeof(resp));
+        xnd_assert(bytes == sizeof(resp));
 }
 
 int main(int argc, char *argv[])

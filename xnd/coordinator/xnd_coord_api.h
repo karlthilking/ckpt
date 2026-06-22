@@ -14,7 +14,9 @@ enum xnd_msghdr {
         XND_PROC_EXIT,
         XND_COMMAND,
         XND_COORD_ACK,
-        XND_CLIENT_ACK
+        XND_CLIENT_ACK,
+        XND_VIRT_TO_REAL_REQ,
+        XND_REAL_TO_VIRT_REQ
 };
 
 enum xnd_command {
@@ -40,10 +42,20 @@ struct xnd_msg {
         pid_t                   virt_ppid;
 };
 
+#ifdef __cplusplus
+extern "C" {
+#endif /* __cplusplus */
+
 void connect_to_coord(void);
 void disconnect_from_coord(void);
+
+pid_t recv_virt_to_real_pid(pid_t);
+pid_t recv_real_to_virt_pid(pid_t);
 
 int send_msg_to_coord(struct xnd_msg *);
 int recv_msg_from_coord(struct xnd_msg *);
 
+#ifdef __cplusplus
+}
+#endif /* __cplusplus */
 #endif /* XND_COORD_API_H */

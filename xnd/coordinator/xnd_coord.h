@@ -64,5 +64,7 @@ void coord_kill_processes(void);
 
 void coord_await_msg(void);
 void coord_handle_proc_msg(struct proc *);
+void coord_send_virt_to_real(struct proc *, struct xnd_msg *);
+void coord_send_real_to_virt(struct proc *, struct xnd_msg *);
 
 #endif /* XND_COORD_H */

@@ -65,6 +65,60 @@ void disconnect_from_coord(void)
         }
 }
 
+pid_t recv_virt_to_real_pid(pid_t virt)
+{
+        struct xnd_msg  msg;
+        int             err;
+
+        msg.hdr = XND_VIRT_TO_REAL_REQ;
+        msg.virt_pid = virt;
+        err = send_msg_to_coord(&msg);
+        if (err != 0) {
+                xnd_error("Failed to send request to coordinator\n");
+                return -1;
+        }
+        
+        err = recv_msg_from_coord(&msg);
+        if (err != 0) {
+                xnd_error("Failed to receive response from coordinator\n");
+                return -1;
+        }
+
+        if (msg.hdr != XND_COORD_ACK || msg.ret != XND_SUCCESS) {
+                xnd_error("Virtual to real pid translation failed\n");
+                return -1;
+        }
+        
+        return msg.real_pid;
+}
+
+pid_t recv_real_to_virt_pid(pid_t real)
+{
+        struct xnd_msg  msg;
+        int             err;
+
+        msg.hdr = XND_REAL_TO_VIRT_REQ;
+        msg.real_pid = real;
+        err = send_msg_to_coord(&msg);
+        if (err != 0) {
+                xnd_error("Failed to send request to coordinator\n");
+                return -1;
+        }
+
+        err = recv_msg_from_coord(&msg);
+        if (err != 0) {
+                xnd_error("Failed to receive response from coordinator\n");
+                return -1;
+        }
+
+        if (msg.hdr != XND_COORD_ACK || msg.ret != XND_SUCCESS) {
+                xnd_error("Real to virtual pid translation failed!\n");
+                return -1;
+        }
+
+        return msg.virt_pid;
+}
+
 int send_msg_to_coord(struct xnd_msg *msg)
 {
         ssize_t bytes;

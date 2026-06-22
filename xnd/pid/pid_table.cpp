@@ -3,6 +3,7 @@
 #include "xnd/virtual_id_table.h"
 #include "xnd/pid/pid.h"
 #include "xnd/pid/pid_table.h"
+#include "xnd/coordinator/xnd_coord_api.h"
 #include <sys/types.h>
 
 using namespace xnd;
@@ -23,11 +24,11 @@ extern "C" void pid_table_init(void)
 
         _real_pid = _real_getpid();
         _real_ppid = _real_getppid();
+
         /**
-         * TODO:
-         * Get virtual pid and ppid from coordinator
-         * pid_table->update(_virt_pid, _real_pid)
-         * pid_table->update(_virt_pppid, _real_ppid)
+         * Coordinator sends selected virtual pid and ppid after
+         * connection, then XND_VIRT_PID and XND_VIRT_PPID are set
+         * to the pids select by the coordinator.
          */
         virt_pid_str = getenv("XND_VIRT_PID");
         virt_ppid_str = getenv("XND_VIRT_PPID");
@@ -91,16 +92,34 @@ extern "C" size_t pid_table_size(void)
 
 extern "C" void pid_table_postrestart(void)
 {
-        /**
-         * TODO:
-         * Get new real pids from coordinator (or maybe do it lazily
-         * instead of right after restart).
-         */
+        pid_t new_real_pid;
+
         _real_pid = _real_getpid();
         _real_ppid = _real_getppid();
-
+        
+        pid_table->acquire();
         pid_table->update(_virt_pid, _real_pid);
         pid_table->update(_virt_ppid, _real_ppid);
+        
+        /**
+         * Consult coordinator for new real pids of virtuable pids
+         * stored in the table
+         */
+        auto table = pid_table->get();
+        for (auto it = table.begin(); it != table.end(); ++it) {
+                if (it->first == _virt_pid || it->first == _virt_ppid) {
+                        continue;
+                }
+                new_real_pid = recv_virt_to_real_pid(it->first);
+                if (new_real_pid == -1) {
+                        xnd_error("Couldn't find new real pid for "
+                                  "virtual pid %d\n", it->first);
+                        continue;
+                }
+                it->second = new_real_pid;
+        }
+
+        pid_table->release();
 }
 
 extern "C" void pid_table_atfork_prepare(void)
@@ -159,14 +178,18 @@ extern "C" pid_t pid_table_virtual_to_real(pid_t virt)
         bool    found;
 
         found = pid_table->virtual_to_real(virt, real);
-        if (found) {
+        if (likely(found)) {
                 return real;
         }
+        
+        real = recv_virt_to_real_pid(virt);
+        if (real == -1) {
+                xnd_error("Failed to find virtual to real pid "
+                          "translation for virtual pid %d\n", virt);
+                return -1;
+        }
 
-        /**
-         * TODO:
-         */
-        return -1;
+        return real;
 }
 
 extern "C" pid_t pid_table_real_to_virtual(pid_t real)
@@ -175,15 +198,18 @@ extern "C" pid_t pid_table_real_to_virtual(pid_t real)
         bool    found;
 
         found = pid_table->real_to_virtual(real, virt);
-        if (found) {
+        if (likely(found)) {
                 return virt;
         }
+        
+        virt = recv_virt_to_real_pid(real);
+        if (virt == -1) {
+                xnd_error("Failed to find real to virtual pid"
+                          "translation for real pid %d\n", real);
+                return -1;
+        }
 
-        /**
-         * TODO: Try to consult coordinator if virt->real mapping has
-         * changed after a restart and update mapping
-         */
-        return -1;
+        return virt;
 }
 
 extern "C" pid_t pid_table_getpid(void)
