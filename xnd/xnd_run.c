@@ -36,6 +36,7 @@ static const char *help =
 "    context that was serialized to the checkpoint image file.\n";
 
 static void usage(void);
+static void xnd_exit(int);
 static void launch_coordinator(void);
 static void print_checkpoint(char **);
 static void launch_checkpoint_target(char **);
@@ -62,7 +63,6 @@ int main(int argc, char *argv[])
                 break;
         }
         
-        xnd_log_cleanup();
         usage();
         exit(0);
 }
@@ -70,6 +70,12 @@ int main(int argc, char *argv[])
 static void usage(void)
 {
         xnd_error("%s", help);
+}
+
+static __noreturn void xnd_exit(int status)
+{
+        xnd_log_cleanup();
+        exit(status);
 }
 
 static void launch_coordinator(void)
@@ -82,15 +88,14 @@ static void launch_coordinator(void)
         switch (coord_pid) {
         case -1:
                 xnd_error("fork: %s\n", strerror(errno));
-                xnd_abort();
+                xnd_exit(XND_EXIT_FAILURE);
         case 0:
                 xnd_exe_dir(buf, sizeof(buf));
                 xnd_path_join(exe, sizeof(exe), buf, "xnd_coordinator");
                 err = execl(exe, exe, NULL);
                 if (err != 0) {
-                        xnd_error("execl(%s, ...): %s\n",
-                                  exe, strerror(errno));
-                        xnd_abort();
+                        xnd_error("execl(%s): %s\n", exe, strerror(errno));
+                        xnd_exit(XND_EXIT_FAILURE);
                 }
         default:
                 snprintf(buf, sizeof(buf), "%d", coord_pid);
@@ -109,7 +114,7 @@ static __noreturn void print_checkpoint(char **argv)
         retval = xnd_exe_path_of("xnd_print", xnd_print_path, PATH_MAX);
         if (retval < 0) {
                 xnd_error("Failed to get path of xnd_print\n");
-                exit(XND_EXIT_FAILURE);
+                xnd_exit(XND_EXIT_FAILURE);
         }
         
         xnd_print_args[0] = xnd_print_path;
@@ -122,7 +127,7 @@ static __noreturn void print_checkpoint(char **argv)
                 xnd_error("execvp(%s, {%s, %s, ...}: %s\n",
                           xnd_print_args[0], xnd_print_args[0],
                           xnd_print_args[1], strerror(errno));
-                exit(XND_EXIT_FAILURE);
+                xnd_exit(XND_EXIT_FAILURE);
         }
 
         unreachable();
@@ -137,40 +142,41 @@ static __noreturn void launch_checkpoint_target(char **argv)
          */
         char    libxnd_path[PATH_MAX], xnd_program[PATH_MAX];
         int     retval;
+        pid_t   pid;
 
         launch_coordinator();
 
         retval = xnd_exe_path_of("libxnd.dylib", libxnd_path, PATH_MAX);
         if (retval < 0) {
                 xnd_error("Failed to get path of libxnd.dylib\n");
-                exit(XND_EXIT_FAILURE);
+                xnd_exit(XND_EXIT_FAILURE);
         }
         
         retval = xnd_path_basename(argv[0], xnd_program, PATH_MAX);
         if (retval < 0) {
                 xnd_error("Failed to parse program name: %s\n", argv[0]);
-                exit(XND_EXIT_FAILURE);
+                xnd_exit(XND_EXIT_FAILURE);
         }
         
         retval = setenv("XND_PROGRAM", xnd_program, 1);
         if (retval != 0) {
                 xnd_error("setenv(\"XND_PROGRAM\", %s, 1): %s\n",
                           xnd_program, strerror(errno));
-                exit(XND_EXIT_FAILURE);
+                xnd_exit(XND_EXIT_FAILURE);
         }
 
         retval = setenv("DYLD_INSERT_LIBRARIES", libxnd_path, 1);
         if (retval != 0) {
                 xnd_error("setenv(\"DYLD_INSERT_LIBRARIES\", %s, 1): %s\n",
                           libxnd_path, strerror(errno));
-                exit(XND_EXIT_FAILURE);
+                xnd_exit(XND_EXIT_FAILURE);
         }
 
         retval = setenv("DYLD_SHARED_REGION", "private", 1);
         if (retval != 0) {
                 xnd_error("setenv(\"DYLD_SHARED_REGION\", %s, 1): %s\n",
                           "private", strerror(errno));
-                exit(XND_EXIT_FAILURE);
+                xnd_exit(XND_EXIT_FAILURE);
         }
                            
         xnd_trace("XND_PROGRAM=%s\n"
@@ -179,12 +185,24 @@ static __noreturn void launch_checkpoint_target(char **argv)
                   xnd_program, libxnd_path);
         
         xnd_printf("Executing %s (pid=%d)\n", argv[0], getpid());
-        retval = execvp(argv[0], argv);
-        if (retval != 0) {
-                xnd_error("execvp(%s, ...): %s\n", argv[0], strerror(errno));
-                exit(XND_EXIT_FAILURE);
+        pid = fork();
+        switch (pid) {
+        case -1:
+                xnd_error("fork: %s\n", strerror(errno));
+                xnd_exit(XND_EXIT_FAILURE);
+        case 0:
+                retval = execvp(argv[0], argv);
+                xnd_error("execvp(%s): %s\n", argv[0], strerror(errno));
+                xnd_exit(XND_EXIT_FAILURE);
+        default:
+                retval = waitpid(pid, NULL, 0);
+                if (retval < 0) {
+                        xnd_error("waitpid: %s\n", strerror(errno));
+                        xnd_exit(XND_EXIT_FAILURE);
+                }
+                xnd_exit(XND_EXIT_SUCCESS);
         }
-
+        
         unreachable();
 }
 
@@ -196,13 +214,13 @@ static __noreturn void restart_from_checkpoint(char *ckptfile)
         posix_spawnattr_t       attr;
         char                    xnd_restart_path[PATH_MAX];
         char                    xnd_program[PATH_MAX];
-        int                     retval;
+        int                     stat, retval;
         
         launch_coordinator();
         retval = xnd_exe_path_of("xnd_restart", xnd_restart_path, PATH_MAX);
         if (retval < 0) {
                 xnd_error("Failed to get path of xnd_restart\n");
-                exit(XND_EXIT_FAILURE);
+                xnd_exit(XND_EXIT_FAILURE);
         }
 
         posix_spawnattr_init(&attr);
@@ -210,21 +228,21 @@ static __noreturn void restart_from_checkpoint(char *ckptfile)
         if (retval < 0) {
                 xnd_error("Failed to extract program name from checkpoint "
                           "failed: %s\n", ckptfile);
-                exit(XND_EXIT_FAILURE);
+                xnd_exit(XND_EXIT_FAILURE);
         }
 
         retval = setenv("XND_PROGRAM", xnd_program, 1);
         if (retval != 0) {
                 xnd_error("setenv(\"XND_PROGRAM\", %s, 1): %s\n",
                           xnd_program, strerror(errno));
-                exit(XND_EXIT_FAILURE);
+                xnd_exit(XND_EXIT_FAILURE);
         }
 
         retval = setenv("DYLD_SHARED_REGION", "private", 1);
         if (retval != 0) {
                 xnd_error("setenv(\"DYLD_SHARED_REGION\", %s, 1): %s\n",
                           "private", strerror(errno));
-                exit(XND_EXIT_FAILURE);
+                xnd_exit(XND_EXIT_FAILURE);
         }
         
         xnd_trace("XND_PROGRAM=%s\n"
@@ -232,21 +250,32 @@ static __noreturn void restart_from_checkpoint(char *ckptfile)
                   xnd_program);
 
         char *argv[] = { xnd_restart_path, ckptfile, NULL };
-        flags = POSIX_SPAWN_DISABLE_ASLR | POSIX_SPAWN_SETEXEC;
+        flags = POSIX_SPAWN_DISABLE_ASLR;
 
         retval = posix_spawnattr_setflags(&attr, flags);
         if (retval != 0) {
                 xnd_error("posix_spawnattr_setflags: %s\n", strerror(retval));
-                exit(XND_EXIT_FAILURE);
+                xnd_exit(XND_EXIT_FAILURE);
         }
-        
-        retval = posix_spawn(&pid, xnd_restart_path, NULL,
+
+        retval = posix_spawn(&pid, xnd_restart_path, NULL, 
                              &attr, argv, environ);
         if (retval != 0) {
                 posix_spawnattr_destroy(&attr);
                 xnd_error("posix_spawn: %s\n", strerror(retval));
-                exit(XND_EXIT_FAILURE);
+                xnd_exit(XND_EXIT_FAILURE);
         }
         
+        for (;;) {
+                retval = waitpid(pid, &stat, 0);
+                if (retval < 0) {
+                        xnd_warn("waitpid: %s\n", strerror(errno));
+                } else if (WIFEXITED(stat) || WIFSIGNALED(stat)) {
+                        break;
+                }
+        }
+        
+        posix_spawnattr_destroy(&attr);
+        xnd_exit(XND_EXIT_SUCCESS);
         unreachable();
 }

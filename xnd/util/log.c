@@ -24,10 +24,11 @@ void xnd_log_setup(void)
         int     level;
         
         level_str = getenv("XND_LOG_LEVEL");
-        if (level_str)
+        if (level_str) {
                 level = min(atoi(level_str), XND_MAX_LOG_LEVEL);
-        else
+        } else {
                 level = XND_DEFAULT_LOG_LEVEL;
+        }
         
         xnd_log_setup_direct(level);
 }
@@ -46,22 +47,25 @@ void xnd_log_setup_direct(int level)
 {
         int     logfd;
         char    buf[PATH_MAX], path[PATH_MAX];
+        u32     size = sizeof(buf);
         
         log_level = level;
         for (int l = 0; l <= min(log_level, XND_DEBUGGING); l++)
                 dup2(STDERR_FILENO, level_to_fd[l]);
         
-        if (log_level < XND_TRACING)
+        if (log_level < XND_TRACING) {
                 return;
+        }
 
         logfd = open("xnd.log", O_WRONLY | O_CREAT | O_APPEND, 0666);
-        dup2(logfd, XND_TRACE_FD);
-        close(logfd);
+        if (logfd != -1) {
+                xnd_assert(dup2(logfd, XND_TRACE_FD) == XND_TRACE_FD);
+                close(logfd);
+        }
         
-        u32 size = sizeof(buf);
         _NSGetExecutablePath(buf, &size);
         xnd_path_basename(buf, path, sizeof(path));
-        dprintf(XND_TRACE_FD, "%s Log (%ld):\n", path, (long)time(NULL));
+        xnd_trace("%s Log (%ld):\n", path, (long)time(NULL));
 }
 
 void xnd_log_shared_cache_info(void)

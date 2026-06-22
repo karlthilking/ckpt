@@ -150,3 +150,17 @@ int recv_msg_from_coord(struct xnd_msg *msg)
 
         return 0;
 }
+
+int check_coord_status(void)
+{
+        int             err, stat;
+        socklen_t       len = sizeof(stat);
+        
+        err = getsockopt(coord_fd, SOL_SOCKET, SO_ERROR, &stat, &len);
+        if (err != 0) {
+                xnd_error("getsockopt: %s\n", strerror(errno));
+                return -1;
+        }
+
+        return stat;
+}

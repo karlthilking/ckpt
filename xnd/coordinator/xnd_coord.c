@@ -134,9 +134,19 @@ retry:
 
 void coord_exit(int status)
 {
+        int err;
+
         proc_list_destroy();
-        close(listen_fd);
-        unlink(XND_COORD_PATH);
+       
+        err = close(listen_fd);
+        if (err != 0) {
+                xnd_warn("close: %s\n", strerror(errno));
+        }
+        
+        err = unlink(XND_COORD_PATH);
+        if (err != 0) {
+                xnd_error("unlink: %s\n", strerror(errno));
+        }
         
         exit(status);
 }
@@ -231,7 +241,7 @@ void coord_proc_connect(int fd, struct xnd_msg *msg)
 {
         ssize_t         bytes;
         struct xnd_msg  resp;
-        struct proc     *p, *parent;
+        struct proc     *p, *dup, *parent;
 
         p = malloc(sizeof(struct proc));
         xnd_assert(p != NULL);
@@ -240,7 +250,20 @@ void coord_proc_connect(int fd, struct xnd_msg *msg)
         p->real_pid = msg->real_pid;
         p->real_ppid = msg->real_ppid;
         
-        xnd_assert(proc_list_find_real(p->real_pid) == NULL);
+        if (unlikely((dup = proc_list_find_real(p->real_pid)) != NULL)) {
+                /**
+                 * If program (like python3) execs into new process image,
+                 * then xnd_setup() in libxnd.dylib will run a second time,
+                 * but the process is already registered with the
+                 * coordinator.
+                 *
+                 * However, register_with_coord_on_launch() expects an ack
+                 * from the coordinator, so just remove the process and
+                 * let it re-register.
+                 */
+                 proc_list_remove(dup);
+        }
+        
         if (proc_list->size == 0) {
                 p->root_of_tree = true;
         } else {
@@ -279,6 +302,7 @@ void coord_proc_connect(int fd, struct xnd_msg *msg)
         
         bytes = writeall(p->fd, &resp, sizeof(resp));
         xnd_assert(bytes == sizeof(resp));
+        xnd_trace("Process %d connected\n", p->real_pid);
 }
 
 void coord_handle_command(struct xnd_msg *msg)

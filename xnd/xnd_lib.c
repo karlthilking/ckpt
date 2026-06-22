@@ -42,12 +42,16 @@ void xnd_suspend_until_ckpt(void)
 {
         struct xnd_msg  msg;
         int             err;
-       
+        
 retry:
         err = recv_msg_from_coord(&msg);
         if (err != 0) {
-                xnd_assert(errno == EINTR);
-                goto retry;
+                err = check_coord_status();
+                if (err == 0) {
+                        goto retry;
+                }
+                xnd_error("Coordinator socket error: %s\n", strerror(err));
+                xnd_abort();
         }
 
         xnd_assert(msg.hdr == XND_COMMAND);
@@ -79,7 +83,6 @@ void xnd_postrestart(void)
         ckpt_vm_deallocate_regions();
         pid_table_postrestart();
         fd_table_restore_state();
-        xnd_log_setup();
 
 #if DEBUG || DEVELOPMENT
         xnd_log_shared_cache_info();
@@ -166,7 +169,7 @@ static __constructor(101) void xnd_setup(void)
         struct sigaction        sa;
         sigset_t                set;
         int                     err;
-        
+
         connect_to_coord();
         register_with_coord_on_launch();
         
@@ -188,7 +191,6 @@ static __constructor(101) void xnd_setup(void)
                 xnd_abort();
         }
         
-        xnd_log_setup();
         fd_table_init();
         thread_list_init();
         pid_table_init();
@@ -199,7 +201,6 @@ static __constructor(101) void xnd_setup(void)
         xnd_log_main_thread_info();
         dump_debug_info();
 #endif
-        xnd_trace("Returning from %s...\n", __func__);
 }
 
 static __destructor() void xnd_cleanup(void)

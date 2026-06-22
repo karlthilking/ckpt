@@ -36,8 +36,8 @@ enum xnd_log_fd {
         (__builtin_strrchr(__FILE__, '/') ? \
          __builtin_strrchr(__FILE__, '/') + 1 : __FILE__)
 
-#define xnd_print(fd, type, fmt, ...)                           \
-        dprintf(fd, "[xnd:%s %s:%s]:\n " fmt "\n", type,        \
+#define xnd_print(fd, type, fmt, ...)                   \
+        dprintf(fd, "[xnd:%s %s:%s]:\n" fmt "\n", type, \
                 __XND_FILE__, __func__, ##__VA_ARGS__)
 
 #define xnd_printf(fmt, ...) \

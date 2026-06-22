@@ -55,6 +55,7 @@ pid_t recv_real_to_virt_pid(pid_t);
 
 int send_msg_to_coord(struct xnd_msg *);
 int recv_msg_from_coord(struct xnd_msg *);
+int check_coord_status(void);
 
 #ifdef __cplusplus
 }
