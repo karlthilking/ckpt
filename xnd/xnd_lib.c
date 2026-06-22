@@ -41,18 +41,13 @@ void set_xnd_state(enum xnd_state new_state)
 void xnd_suspend_until_ckpt(void)
 {
         struct xnd_msg  msg;
-        ssize_t         bytes;
-
-        for (;;) {
-                bytes = recv_msg_from_coord(&msg);
-                if (bytes == sizeof(msg)) {
-                        break;
-                } else if (errno == EINTR) {
-                        continue;
-                } else {
-                        xnd_warn("Failed to receive coordinator message\n");
-                        return;
-                }
+        int             err;
+       
+retry:
+        err = recv_msg_from_coord(&msg);
+        if (err != 0) {
+                xnd_assert(errno == EINTR);
+                goto retry;
         }
 
         xnd_assert(msg.hdr == XND_COMMAND);
@@ -166,7 +161,7 @@ void xnd_atfork_failed(void)
  *  checkpoint thread, then enable thread_handler to run
  *  on SIGUSR1 for user threads.
  */
-__constructor(101) void xnd_setup(void)
+static __constructor(101) void xnd_setup(void)
 {
         struct sigaction        sa;
         sigset_t                set;
@@ -207,7 +202,7 @@ __constructor(101) void xnd_setup(void)
         xnd_trace("Returning from %s...\n", __func__);
 }
 
-__destructor() void xnd_cleanup(void)
+static __destructor() void xnd_cleanup(void)
 {
         set_xnd_state(XND_EXITING);
         fd_table_destroy();

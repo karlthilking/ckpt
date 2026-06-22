@@ -146,9 +146,9 @@ void coord_event_loop(void)
         while (proc_list->size == 0) {
                 coord_await_connection();
         }
-        
+
         while (coord_state != COORD_EXITING) {
-                for (int iter = 0; iter < 10; iter++) {
+                for (int iter = 0; iter < 100; iter++) {
                         coord_await_connection();
                         coord_await_msg();
                 }
@@ -441,6 +441,10 @@ void coord_await_msg(void)
         fd_set          set;
         int             nfds, err;
         struct timeval  tv = { 0, 1000 };
+
+        if (proc_list->size == 0) {
+                return;
+        }
         
         nfds = 0;
         FD_ZERO(&set);

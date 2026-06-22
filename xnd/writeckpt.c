@@ -1,11 +1,11 @@
 /* writeckpt.c */
+#define _XOPEN_SOURCE
 #include "xnd/xnd.h"
 #include "xnd/writeckpt.h"
 #include "xnd/ckptfile.h"
 #include "xnd/vm_region.h"
 #include "xnd/util/io.h"
 
-#define _XOPEN_SOURCE
 #include <ucontext.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -49,7 +49,7 @@ int write_vm_region(int fd, const struct xnd_vm_region *region)
 int write_context(int fd, const ucontext_t *ctx)
 {
         ssize_t bytes;
-
+        
         bytes = writeall(fd, ctx, sizeof(*ctx));
         if (bytes != sizeof(*ctx)) {
                 return -1;

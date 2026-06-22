@@ -26,7 +26,4 @@ void xnd_atfork_child(pid_t, pid_t);
 void xnd_atfork_parent(pid_t, pid_t);
 void xnd_atfork_failed(void);
 
-void xnd_setup(void);
-void xnd_cleanup(void);
-
 #endif /* XND_LIB_H */
