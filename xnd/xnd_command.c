@@ -13,13 +13,27 @@
 #include <sys/types.h>
 #include <sys/un.h>
 
+static const char *help =
+"OVERVIEW: xnd_command\n\n"
+"DESCRIPTION: Send a command to a computation under the control of XND\n\n"
+"USAGE: ./xnd_command <command>\n\n"
+"OPTIONS:\n"
+" --checkpoint\n"
+"    Send a checkpoint request to a computation\n"
+" --exit\n"
+"    Request for a computation to exit\n"
+" --kill\n"
+"    Kill a computation running under XND\n";
+
 static void send_command(enum xnd_command);
+static void usage(void);
 
 int main(int argc, char *argv[])
 {
         xnd_log_setup();
         if (argc < 2) {
-                xnd_error("Usage: ./xnd_command <command>");
+                usage();
+                xnd_log_cleanup();
                 exit(0);
         }
         
@@ -34,8 +48,14 @@ int main(int argc, char *argv[])
                 xnd_error("Unrecognized command: %s\n", argv[1]);
         }
         
+        xnd_log_cleanup();
         disconnect_from_coord();
         exit(0);
+}
+
+static void usage(void)
+{
+        xnd_error("%s", help);
 }
 
 static void send_command(enum xnd_command cmd)

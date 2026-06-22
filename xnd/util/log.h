@@ -35,6 +35,9 @@ enum xnd_log_fd {
         dprintf(fd, "[xnd:%s %s:%s]:\n " fmt "\n", type,        \
                 __XND_FILE__, __func__, ##__VA_ARGS__)
 
+#define xnd_printf(fmt, ...) \
+        printf("[xnd]: " fmt "\n", ##__VA_ARGS__)
+
 #define xnd_error(__fmt, ...) \
         xnd_print(XND_ERROR_FD, "error", __fmt, ##__VA_ARGS__)
 #define xnd_warn(__fmt, ...) \

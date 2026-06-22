@@ -64,9 +64,10 @@ void xnd_postrestart(void)
 {
         connect_to_coord();
         register_with_coord_on_restart();
-
+        
         thread_sig_fixup(_pthread_ptr_munge_token);
         ckpt_vm_deallocate_regions();
+        pid_table_postrestart();
         fd_table_restore_state();
         xnd_log_setup();
 

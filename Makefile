@@ -41,31 +41,31 @@ LIBXND_SOURCES := \
         $(LIBXND_WRAPPERS)
 
 LIBXND_OBJECTS := \
-	$(BUILD)/xnd_lib.o \
-	$(BUILD)/pac.o \
-	$(BUILD)/vm_common.o \
-	$(BUILD)/vm_checkpoint.o \
-	$(BUILD)/writeckpt.o \
-	$(BUILD)/shared_cache.o \
-	$(BUILD)/thread_info.o \
-	$(BUILD)/ckptfile.o \
-	$(BUILD)/log.o \
-	$(BUILD)/path.o \
-	$(BUILD)/debug.o \
-	$(BUILD)/signal.o \
-	$(BUILD)/_setcontext.o \
-	$(BUILD)/setcontext.o \
-	$(BUILD)/pid_table.o \
-	$(BUILD)/io.o \
+        $(BUILD)/xnd_lib.o \
+        $(BUILD)/pac.o \
+        $(BUILD)/vm_common.o \
+        $(BUILD)/vm_checkpoint.o \
+        $(BUILD)/writeckpt.o \
+        $(BUILD)/shared_cache.o \
+        $(BUILD)/thread_info.o \
+        $(BUILD)/ckptfile.o \
+        $(BUILD)/log.o \
+        $(BUILD)/path.o \
+        $(BUILD)/debug.o \
+        $(BUILD)/signal.o \
+        $(BUILD)/_setcontext.o \
+        $(BUILD)/setcontext.o \
+        $(BUILD)/pid_table.o \
+        $(BUILD)/io.o \
         $(BUILD)/exe.o \
-	$(BUILD)/xnd_coord_api.o \
+        $(BUILD)/xnd_coord_api.o \
         $(BUILD)/xnd_coord_client.o \
-	$(BUILD)/time_wrappers.o \
-	$(BUILD)/stdlib_wrappers.o \
-	$(BUILD)/signal_wrappers.o \
-	$(BUILD)/pthread_wrappers.o \
-	$(BUILD)/file_wrappers.o \
-	$(BUILD)/pid_wrappers.o
+        $(BUILD)/time_wrappers.o \
+        $(BUILD)/stdlib_wrappers.o \
+        $(BUILD)/signal_wrappers.o \
+        $(BUILD)/pthread_wrappers.o \
+        $(BUILD)/file_wrappers.o \
+        $(BUILD)/pid_wrappers.o
 
 XND_RESTART_SOURCES := \
         xnd/restart.c \
@@ -85,22 +85,22 @@ XND_RUN_SOURCES := \
         xnd/platform/exe.c \
         xnd/util/path.c \
         xnd/shared_cache.c \
-	xnd/util/io.c \
-	xnd/util/log.c
+        xnd/util/io.c \
+        xnd/util/log.c
 
 XND_COMMAND_SOURCES := \
-	xnd/xnd_command.c \
-	xnd/util/log.c \
+        xnd/xnd_command.c \
+        xnd/util/log.c \
         xnd/util/path.c \
         xnd/util/io.c \
         xnd/platform/exe.c \
         xnd/coordinator/xnd_coord_api.c
 
 XND_COORD_SOURCES := \
-	xnd/util/io.c \
-	xnd/util/log.c \
+        xnd/util/io.c \
+        xnd/util/log.c \
         xnd/util/path.c \
-	xnd/coordinator/xnd_coord.c \
+        xnd/coordinator/xnd_coord.c \
 
 ALL := \
         $(BUILD)/xnd_run \
@@ -154,12 +154,12 @@ STACKADDR       := 0x500000110000
 $(BUILD)/xnd_restart: $(XND_RESTART_SOURCES) | $(BUILD)
 	$(CC) $(CFLAGS) \
         -DXND_RESTART_STACKADDR=$(STACKADDR) \
-	-Wl,-segaddr,__TEXT,$(__TEXT) \
-	-Wl,-segaddr,__DATA,$(__DATA) \
+        -Wl,-segaddr,__TEXT,$(__TEXT) \
+        -Wl,-segaddr,__DATA,$(__DATA) \
         -Wl,-segaddr,__DATA_CONST,$(__DATA_CONST) \
-	-Wl,-segaddr,__LINKEDIT,$(__LINKEDIT) \
+        -Wl,-segaddr,__LINKEDIT,$(__LINKEDIT) \
         -Wl,-ld_classic \
-	-o $@ $^
+        -o $@ $^
 
 $(BUILD)/xnd_run: $(XND_RUN_SOURCES) | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ $^
