@@ -5,6 +5,9 @@
 #include "xnd/xnd.h"
 #include <sys/types.h>
 
+#define XND_EXIT_SUCCESS 0
+#define XND_EXIT_FAILURE 222
+
 enum xnd_state {
         XND_UNINITIALIZED,
         XND_RUNNING,

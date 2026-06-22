@@ -357,51 +357,16 @@ void coord_broadcast_exit(void)
 {
         int             err, exited, total;
         ssize_t         bytes;
+        fd_set          set;
         struct proc     *p, *next;
         struct xnd_msg  msg, resp;
+        struct timeval  tv = { 0, 10000 };
 
         msg.hdr = XND_COMMAND;
         msg.cmd = XND_EXIT_CMD;
-        coord_state = COORD_EXITING;
-
-        do {
-                total = 0;
-                exited = 0;
-                for (p = proc_list->head; p; p = next) {
-                        next = p->next;
-                        err = kill(p->real_pid, 0);
-                        if (err != 0 && errno == ESRCH) {
-                                proc_list_remove(p);
-                                continue;
-                        }
-                        bytes = writeall(p->fd, &msg, sizeof(msg));
-                        xnd_assert(bytes == sizeof(msg));
-                        total++;
-                }
-
-                for (p = proc_list->head; p; p = next) {
-                        next = p->next;
-                        bytes = readall(p->fd, &resp, sizeof(resp));
-                        xnd_assert(bytes == sizeof(resp));
-                        if (resp.hdr == XND_PROC_EXIT) {
-                                proc_list_remove(p);
-                                exited++;
-                        }
-                }
-        } while (exited != total);
-
-        xnd_assert(proc_list->size == 0);
-}
-
-void coord_kill_processes(void)
-{
-        struct proc     *p, *next;
-        int             err, killed, total;
         
-        coord_state = COORD_EXITING;
-again:
         total = 0;
-        killed = 0;
+        exited = 0;
 
         for (p = proc_list->head; p; p = next) {
                 next = p->next;
@@ -410,17 +375,56 @@ again:
                         proc_list_remove(p);
                         continue;
                 }
-
+                bytes = writeall(p->fd, &msg, sizeof(msg));
+                xnd_assert(bytes == sizeof(msg));
                 total++;
-                err = kill(p->real_pid, SIGKILL);
-                if (err == 0) {
-                        killed++;
-                        proc_list_remove(p);
+        }
+        
+again:
+        for (p = proc_list->head; p; p = next) {
+                next = p->next;
+                FD_ZERO(&set);
+                FD_SET(p->fd, &set);
+                err = select(p->fd + 1, &set, NULL, NULL, &tv);
+                if (err > 0) {
+                        bytes = readall(p->fd, &resp, sizeof(resp));
+                        xnd_assert(bytes == sizeof(resp));
+                        if (resp.hdr == XND_PROC_EXIT) {
+                                proc_list_remove(p);
+                                exited++;
+                        }
+                } else {
+                        err = kill(p->real_pid, 0);
+                        if (err != 0 && errno == ESRCH) {
+                                proc_list_remove(p);
+                                exited++;
+                        }
                 }
         }
 
-        if (total != killed) {
+        if (exited != total) {
+                usleep(50);
                 goto again;
+        }
+
+        coord_state = COORD_EXITING;
+        xnd_assert(proc_list->size == 0);
+}
+
+void coord_kill_processes(void)
+{
+        struct proc     *p, *next;
+        int             err;
+
+        coord_state = COORD_EXITING;
+        for (p = proc_list->head; p; p = next) {
+                next = p->next;
+                err = kill(p->real_pid, SIGKILL);
+                if (err == 0) {
+                        proc_list_remove(p);
+                } else if (err != 0 && errno == ESRCH) {
+                        proc_list_remove(p);
+                }
         }
 
         xnd_assert(proc_list->size == 0);

@@ -58,6 +58,13 @@ again:
         xnd_trace("Connected with coordinator (path: %s)\n", XND_COORD_PATH);
 }
 
+void disconnect_from_coord(void)
+{
+        if (coord_fd != -1) {
+                close(coord_fd);
+        }
+}
+
 int send_msg_to_coord(struct xnd_msg *msg)
 {
         ssize_t bytes;

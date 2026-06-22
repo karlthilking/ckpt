@@ -41,9 +41,7 @@ struct xnd_msg {
 };
 
 void connect_to_coord(void);
-void register_with_coord_on_launch(void);
-void register_with_coord_on_restart(void);
-void send_exit_to_coord(void);
+void disconnect_from_coord(void);
 
 int send_msg_to_coord(struct xnd_msg *);
 int recv_msg_from_coord(struct xnd_msg *);

@@ -14,6 +14,7 @@
 #include "xnd/wrappers/file_wrappers.h"
 #include "xnd/wrappers/signal_wrappers.h"
 #include "xnd/coordinator/xnd_coord_api.h"
+#include "xnd/coordinator/xnd_coord_client.h"
 
 #define _XOPEN_SOURCE
 #include <ucontext.h>
@@ -44,18 +45,11 @@ void xnd_suspend_until_ckpt(void)
 
         xnd_assert(recv_msg_from_coord(&msg) == 0);
         xnd_assert(msg.hdr == XND_COMMAND);
-
-        switch (msg.cmd) {
-        case XND_CKPT_CMD:
+        
+        if (msg.cmd == XND_CKPT_CMD) {
                 msg.hdr = XND_CLIENT_ACK;
                 msg.cmd = XND_CKPT_CMD;
                 xnd_assert(send_msg_to_coord(&msg) == 0);
-                return;
-        case XND_EXIT_CMD:
-                set_xnd_state(XND_EXITING);
-                break;
-        default:
-                break;
         }
 }
 
@@ -205,4 +199,5 @@ __destructor() void xnd_cleanup(void)
         xnd_log_cleanup();
 
         send_exit_to_coord();
+        disconnect_from_coord();
 }

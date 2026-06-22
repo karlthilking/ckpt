@@ -29,7 +29,6 @@ static struct thread_list               zombie_list;
 
 static int              threads_expected;
 static int              threads_arrived;
-// static u64              barrier_epoch   = 0ull;
 static pthread_cond_t   cond_arrived    = PTHREAD_COND_INITIALIZER;
 static pthread_cond_t   cond_released   = PTHREAD_COND_INITIALIZER;
 static pthread_mutex_t  ckpt_mtx        = PTHREAD_MUTEX_INITIALIZER;
@@ -64,13 +63,17 @@ void thread_list_init(void)
 
 void thread_list_destroy(void)
 {
-        struct thread_info *th, *next;
+        int                     err;
+        struct thread_info      *th, *next;
         
+        xnd_assert(get_xnd_state() == XND_EXITING);
+        xnd_assert(myself != &ckpt_thread);
         ckpt_thread_reap();
-        
+
         thread_list_acquire();
         for (th = thread_list.head; th; th = next) {
                 next = th->next;
+                
                 pthread_mutex_destroy(&th->lock);
                 pthread_cond_destroy(&th->cond);
                 free(th);
@@ -349,12 +352,12 @@ struct thread_info *thread_init(void *(*fn)(void *), void *arg)
  *  Free all resources associated with this thread. thread_reap should
  *  be called once a thread has exited and been joined by another thread.
  */
-void thread_reap(struct thread_info *zombie)
+void thread_reap(struct thread_info *th)
 {
-        xnd_assert(zombie->joined);
-        pthread_mutex_destroy(&zombie->lock);
-        pthread_cond_destroy(&zombie->cond);
-        free(zombie);
+        xnd_assert(th->joined);
+        pthread_mutex_destroy(&th->lock);
+        pthread_cond_destroy(&th->cond);
+        free(th);
 }
 
 __noreturn void thread_exit(void *exit_value)
@@ -367,7 +370,7 @@ __noreturn void thread_exit(void *exit_value)
 
         pthread_cond_signal(&myself->cond);
         xnd_assert(pthread_mutex_unlock(&myself->lock) == 0);
-        
+
         pthread_exit(exit_value);
         unreachable();
 }
@@ -621,11 +624,13 @@ again:
                         thread_list_remove(th);
                         continue;
                 }
-
+                
+                pthread_mutex_lock(&th->lock);
                 if (th->state == ST_RUNNING &&
                     thread_state_cas(th, ST_RUNNING, ST_SIGNALED)) {
                         err = pthread_kill(th->self, SIGUSR1);
                         if (err == ESRCH) {
+                                pthread_mutex_unlock(&th->lock);
                                 thread_list_remove(th);
                                 continue;
                         } else if (unlikely(err != 0)) {
@@ -635,6 +640,7 @@ again:
                 } else if (th->state == ST_SIGNALED) {
                         err = pthread_kill(th->self, 0);
                         if (err == ESRCH) {
+                                pthread_mutex_unlock(&th->lock);
                                 thread_list_remove(th);
                                 continue;
                         } else if (unlikely(err != 0)) {
@@ -644,9 +650,11 @@ again:
                 } else if (th->state == ST_SUSPENDED ||
                            th->state == ST_SUSPINPROG) {
                         suspended++;
-                } else if (th->state == ST_UNSAFE) {
+                } else if (th->state == ST_UNSAFE || 
+                           th->state == ST_EMBRYO) {
                         rescan = true;
                 }
+                pthread_mutex_unlock(&th->lock);
         }
         
         pthread_mutex_unlock(&ckpt_mtx);

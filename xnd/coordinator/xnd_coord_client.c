@@ -3,6 +3,7 @@
 #include "xnd/pid/pid.h"
 #include "xnd/pid/pid_table.h"
 #include "xnd/coordinator/xnd_coord_api.h"
+#include "xnd/coordinator/xnd_coord_client.h"
 #include <stdlib.h>
 #include <string.h>
 

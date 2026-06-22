@@ -33,7 +33,8 @@ int main(int argc, char *argv[])
         } else {
                 xnd_error("Unrecognized command: %s\n", argv[1]);
         }
-
+        
+        disconnect_from_coord();
         exit(0);
 }
 
