@@ -7,6 +7,7 @@
 
 #define XND_COORDINATOR 1
 #define XND_COORD_PATH  "xnd_coordinator_v0"
+#define XND_COORD_FD    210
 
 enum xnd_msghdr {
         XND_PROC_CONNECT_LAUNCH,

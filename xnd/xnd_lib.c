@@ -21,8 +21,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
-#include <err.h>
-#include <assert.h>
+#include <errno.h>
 #include <unistd.h>
 #include <signal.h>
 
@@ -41,11 +40,22 @@ void set_xnd_state(enum xnd_state new_state)
 
 void xnd_suspend_until_ckpt(void)
 {
-        struct xnd_msg msg;
+        struct xnd_msg  msg;
+        ssize_t         bytes;
 
-        xnd_assert(recv_msg_from_coord(&msg) == 0);
+        for (;;) {
+                bytes = recv_msg_from_coord(&msg);
+                if (bytes == sizeof(msg)) {
+                        break;
+                } else if (errno == EINTR) {
+                        continue;
+                } else {
+                        xnd_warn("Failed to receive coordinator message\n");
+                        return;
+                }
+        }
+
         xnd_assert(msg.hdr == XND_COMMAND);
-        
         if (msg.cmd == XND_CKPT_CMD) {
                 msg.hdr = XND_CLIENT_ACK;
                 msg.cmd = XND_CKPT_CMD;
@@ -60,6 +70,11 @@ void xnd_precheckpoint(void)
         _pthread_ptr_munge_token = thread_munge_token();
 }
 
+/**
+ * xnd_postrestart:
+ *  Re-connect and register with coordinator, restore auxiliary state.
+ *  xnd_postrestart should only be called by the checkpoint thread.
+ */
 void xnd_postrestart(void)
 {
         connect_to_coord();
@@ -151,7 +166,7 @@ void xnd_atfork_failed(void)
  *  checkpoint thread, then enable thread_handler to run
  *  on SIGUSR1 for user threads.
  */
-__constructor() void xnd_setup(void)
+__constructor(101) void xnd_setup(void)
 {
         struct sigaction        sa;
         sigset_t                set;
@@ -189,6 +204,7 @@ __constructor() void xnd_setup(void)
         xnd_log_main_thread_info();
         dump_debug_info();
 #endif
+        xnd_trace("Returning from %s...\n", __func__);
 }
 
 __destructor() void xnd_cleanup(void)

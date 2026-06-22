@@ -84,4 +84,8 @@
 # define __aligned(x) __attribute__((aligned(x)))
 #endif
 
+#ifndef __hidden
+# define __hidden __attribute__((visibility("hidden")))
+#endif
+
 #endif /* XND_COMPILER_H */

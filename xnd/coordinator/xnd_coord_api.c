@@ -25,7 +25,7 @@ static int coord_fd = -1;
 
 void connect_to_coord(void)
 {
-        int                     err, tries;
+        int                     err, tries, fd;
         struct sockaddr_un      addr;
         struct timespec         ts = { 0, 10 * 1000000 };
 
@@ -34,25 +34,33 @@ void connect_to_coord(void)
                 xnd_error("socket: %s\n", strerror(errno));
                 xnd_abort();
         }
+
+        if (likely(coord_fd != XND_COORD_FD)) {
+                fd = dup2(coord_fd, XND_COORD_FD);
+                if (fd < 0) {
+                        xnd_error("dup2: %s\n", strerror(errno));
+                        xnd_abort();
+                }
+                close(coord_fd);
+                coord_fd = fd;
+                xnd_trace("coord_fd=%d\n", coord_fd);
+        }
         
         bzero(&addr, sizeof(addr));
         addr.sun_family = AF_UNIX;
         strncpy(addr.sun_path, XND_COORD_PATH, sizeof(addr.sun_path) - 1);
-        
+
         tries = 0;
 again:
         err = connect(coord_fd, (struct sockaddr *)&addr, sizeof(addr));
-        if (err != 0 && errno == ECONNREFUSED) {
-                if (tries++ < 100) {
+        if (err != 0) {
+                if (errno == ECONNREFUSED && tries++ < 100) {
                         nanosleep(&ts, NULL);
                         goto again;
                 } else {
                         xnd_error("connect: %s\n", strerror(errno));
                         xnd_abort();
                 }
-        } else if (err != 0) {
-                xnd_error("connect: %s\n", strerror(errno));
-                xnd_abort();
         }
 
         xnd_trace("Connected with coordinator (path: %s)\n", XND_COORD_PATH);

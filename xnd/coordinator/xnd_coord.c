@@ -24,6 +24,7 @@ void proc_list_init(void)
 {
         proc_list = calloc(1, sizeof(struct proc_list));
         xnd_assert(proc_list != NULL);
+        xnd_assert(proc_list->head == NULL && proc_list->size == 0);
 }
 
 void proc_list_destroy(void)
@@ -210,11 +211,13 @@ void coord_await_connection(void)
 
         switch (msg.hdr) {
         case XND_PROC_CONNECT_LAUNCH:
+                xnd_assert(coord_state == COORD_RUNNING);
                 coord_proc_connect(fd, &msg);
                 break;
         case XND_PROC_CONNECT_RESTART:
                 coord_state = COORD_RESTART;
                 coord_proc_connect(fd, &msg);
+                coord_state = COORD_RUNNING;
                 break;
         case XND_COMMAND:
                 coord_handle_command(&msg);
@@ -237,6 +240,7 @@ void coord_proc_connect(int fd, struct xnd_msg *msg)
         p->real_pid = msg->real_pid;
         p->real_ppid = msg->real_ppid;
         
+        xnd_assert(proc_list_find_real(p->real_pid) == NULL);
         if (proc_list->size == 0) {
                 p->root_of_tree = true;
         } else {
@@ -253,7 +257,8 @@ void coord_proc_connect(int fd, struct xnd_msg *msg)
                 if (p->root_of_tree) {
                         p->virt_ppid = next_virt_pid++;
                 } else {
-                        parent = proc_list_find_real(p->real_pid);
+                        xnd_assert(proc_list->size != 0);
+                        parent = proc_list_find_real(p->real_ppid);
                         xnd_assert(parent != NULL);
                         p->virt_ppid = parent->virt_pid;
                 }
@@ -436,7 +441,8 @@ void coord_await_msg(void)
         fd_set          set;
         int             nfds, err;
         struct timeval  tv = { 0, 1000 };
-
+        
+        nfds = 0;
         FD_ZERO(&set);
         for (p = proc_list->head; p; p = p->next) {
                 FD_SET(p->fd, &set);
@@ -463,11 +469,26 @@ void coord_await_msg(void)
 
 void coord_handle_proc_msg(struct proc *p)
 {
+        int             err;
         ssize_t         bytes;
         struct xnd_msg  msg;
 
         bytes = readall(p->fd, &msg, sizeof(msg));
-        xnd_assert(bytes == sizeof(msg));
+        if (bytes != sizeof(msg)) {
+                err = kill(p->real_pid, 0);
+                if (err != 0 && errno == ESRCH) {
+                        xnd_warn("Process %d disconnected unexpectedly\n",
+                                 p->real_pid);
+                        proc_list_remove(p);
+                } else {
+                        xnd_warn("Failed to read message from process %d\n",
+                                 p->real_pid);
+                }
+                if (proc_list->size == 0) {
+                        coord_state = COORD_EXITING;
+                }
+                return;
+        }
         
         switch (msg.hdr) {
         case XND_PROC_EXIT:

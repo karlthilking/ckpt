@@ -2,7 +2,11 @@
 #ifndef XND_LOG_H
 #define XND_LOG_H
 
+#include "xnd/xnd.h"
 #include <stdio.h>
+#include <unistd.h>
+#include <signal.h>
+#include <sys/syscall.h>
 
 enum xnd_log_type {
         XND_ERRORS      = 0,
@@ -47,8 +51,14 @@ enum xnd_log_fd {
 #define xnd_trace(__fmt, ...) \
         xnd_print(XND_TRACE_FD, "trace", __fmt, ##__VA_ARGS__)
 
-#define xnd_abort() \
-        do { __asm__ __volatile__("brk 777"); } while (0)
+#define xnd_abort() do { \
+        register s64 x0 __asm__("x0") = (s64)getpid();          \
+        register s64 x1 __asm__("x1") = (s64)SIGABRT;           \
+        register s64 x16 __asm__("x16") = (s64)SYS_kill;        \
+        __asm__ __volatile__(                                   \
+                "svc #0x80" :: "r" (x0), "r" (x1), "r" (x16)    \
+        );                                                      \
+} while (0)
 
 #define xnd_assert(__expr) do {                                 \
         if (unlikely(!(__expr))) {                              \

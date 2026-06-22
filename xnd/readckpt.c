@@ -1,4 +1,5 @@
 /* readckpt.c */
+#define _XOPEN_SOURCE
 #include "xnd/xnd.h"
 #include "xnd/readckpt.h"
 #include "xnd/xnd_lib.h"
@@ -6,7 +7,6 @@
 #include "xnd/pac.h"
 #include "xnd/util/io.h"
 
-#define _XOPEN_SOURCE
 #include <ucontext.h>
 #include <unistd.h>
 

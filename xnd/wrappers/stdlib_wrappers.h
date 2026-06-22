@@ -21,17 +21,4 @@ u32     __arc4random_hook(void);
 void    __arc4random_buf_hook(void *, size_t);
 u32     __arc4random_uniform_hook(u32);
 
-INTERPOSE(__exit_hook, exit);
-INTERPOSE(__abort_hook, abort);
-INTERPOSE(__calloc_hook, calloc);
-INTERPOSE(__free_hook, free);
-INTERPOSE(__malloc_hook, malloc);
-INTERPOSE(__realloc_hook, realloc);
-INTERPOSE(__reallocf_hook, reallocf);
-INTERPOSE(__valloc_hook, valloc);
-INTERPOSE(__aligned_alloc_hook, aligned_alloc);
-INTERPOSE(__arc4random_hook, arc4random);
-INTERPOSE(__arc4random_buf_hook, arc4random_buf);
-INTERPOSE(__arc4random_uniform_hook, arc4random_uniform);
-
 #endif /* STDLIB_WRAPPERS_H */

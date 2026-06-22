@@ -8,17 +8,15 @@
 
 using namespace xnd;
 
-static pid_t _virt_pid  = -1;
-static pid_t _virt_ppid = -1;
-static pid_t _real_pid  = -1;
-static pid_t _real_ppid = -1;
+__hidden pid_t _virt_pid  = -1;
+__hidden pid_t _virt_ppid = -1;
+__hidden pid_t _real_pid  = -1;
+__hidden pid_t _real_ppid = -1;
 
 virtual_id_table<pid_t> *pid_table = nullptr;
 
 extern "C" void pid_table_init(void)
 {
-        char *virt_pid_str, *virt_ppid_str;
-
         pid_table = new virtual_id_table<pid_t>();
         pid_table->acquire();
 
@@ -30,12 +28,10 @@ extern "C" void pid_table_init(void)
          * connection, then XND_VIRT_PID and XND_VIRT_PPID are set
          * to the pids select by the coordinator.
          */
-        virt_pid_str = getenv("XND_VIRT_PID");
-        virt_ppid_str = getenv("XND_VIRT_PPID");
-        xnd_assert(virt_pid_str && virt_ppid_str);
-
-        _virt_pid = (pid_t)atoi(virt_pid_str);
-        _virt_ppid = (pid_t)atoi(virt_ppid_str);
+        xnd_trace("_virt_pid=%d -> _real_pid=%d\n"
+                  "_virt_ppid=%d -> _real_ppid=%d\n",
+                  _virt_pid, _real_pid, _virt_ppid, _real_ppid);
+        xnd_assert(_virt_pid != -1 && _virt_ppid != -1);
 
         pid_table->update(_virt_pid, _real_pid);
         pid_table->update(_virt_ppid, _real_ppid);
@@ -202,7 +198,7 @@ extern "C" pid_t pid_table_real_to_virtual(pid_t real)
                 return virt;
         }
         
-        virt = recv_virt_to_real_pid(real);
+        virt = recv_real_to_virt_pid(real);
         if (virt == -1) {
                 xnd_error("Failed to find real to virtual pid"
                           "translation for real pid %d\n", real);
@@ -214,19 +210,21 @@ extern "C" pid_t pid_table_real_to_virtual(pid_t real)
 
 extern "C" pid_t pid_table_getpid(void)
 {
-        if (_virt_pid == -1) {
-                return _real_getpid();
-        }
+        // if (_virt_pid == -1) {
+        //         return _real_getpid();
+        // }
 
-        return _virt_pid;
+        // return _virt_pid;
+        return _real_getpid();
 }
 
 extern "C" pid_t pid_table_getppid(void)
 {
-        if (_virt_ppid == -1) {
-                /* Before static initializers have ran? */
-                return _real_getppid();
-        }
+        // if (_virt_ppid == -1) {
+        //         /* Before static initializers have ran? */
+        //         return _real_getppid();
+        // }
 
-        return _virt_ppid;
+        // return _virt_ppid;
+        return _real_getppid();
 }

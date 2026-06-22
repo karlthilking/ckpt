@@ -194,15 +194,15 @@ int __killpg_hook(pid_t pgrp, int sig)
         return retval;
 }
 
-INTERPOSE(__getpid_hook, getpid);
-INTERPOSE(__getppid_hook, getppid);
-INTERPOSE(__getpgrp_hook, getpgrp);
-INTERPOSE(__getpgid_hook, getpgid);
-INTERPOSE(__fork_hook, fork);
-INTERPOSE(__wait_hook, wait);
-INTERPOSE(__waitpid_hook, waitpid);
-INTERPOSE(__wait3_hook, wait3);
-INTERPOSE(__wait4_hook, wait4);
-INTERPOSE(__kill_hook, kill);
-INTERPOSE(__killpg_hook, killpg);
+// INTERPOSE(__getpid_hook, getpid);
+// INTERPOSE(__getppid_hook, getppid);
+// INTERPOSE(__getpgrp_hook, getpgrp);
+// INTERPOSE(__getpgid_hook, getpgid);
+// INTERPOSE(__fork_hook, fork);
+// INTERPOSE(__wait_hook, wait);
+// INTERPOSE(__waitpid_hook, waitpid);
+// INTERPOSE(__wait3_hook, wait3);
+// INTERPOSE(__wait4_hook, wait4);
+// INTERPOSE(__kill_hook, kill);
+// INTERPOSE(__killpg_hook, killpg);
 
