@@ -30,19 +30,26 @@ enum proc_state {
         PROC_RUNNING,
         PROC_RECV_CKPT_REQUEST,
         PROC_READY_FOR_CKPT,
-        PROC_CKPT_IN_PROGRESS,
+        PROC_CKPT_IN_PROG,
         PROC_CKPT_COMPLETE,
-        PROC_EXITED
+        PROC_EXITED,
 };
 
 struct proc {
         int             fd;
+        u32             xnd_pid;
+        u32             xnd_ppid;
+        u32             xnd_pgid;
+
         pid_t           virt_pid;
         pid_t           virt_ppid;
         pid_t           real_pid;
         pid_t           real_ppid;
-        bool            root_of_tree;
+
+        u32             num_peers;
+        bool            is_root_of_tree;
         enum proc_state state;
+
         struct proc     *next;
         struct proc     *prev;
 };
@@ -68,7 +75,8 @@ void coord_event_loop(void);
 void coord_check_status(void);
 
 void coord_await_connection(void);
-void coord_proc_connect(int, struct xnd_msg *);
+void coord_register_process(int, struct xnd_msg *);
+
 void coord_handle_command(struct xnd_msg *);
 
 void coord_broadcast_exit(void);
@@ -76,8 +84,9 @@ void coord_kill_processes(void);
 
 bool coord_do_checkpoint(void);
 int coord_prepare_for_collective(enum coord_comm_type);
-int coord_broadcast(enum xnd_msghdr, enum proc_state);
-int coord_reduce(enum xnd_msghdr, enum proc_state);
+int coord_broadcast(struct xnd_msg *, enum proc_state, enum proc_state);
+int coord_reduce(enum xnd_msghdr, enum proc_state, enum proc_state);
+void coord_write_msg_metainfo(struct proc *, struct xnd_msg *);
 
 void coord_await_msg(void);
 void coord_handle_proc_msg(struct proc *);

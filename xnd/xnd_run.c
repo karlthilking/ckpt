@@ -141,7 +141,7 @@ static __noreturn void launch_checkpoint_target(char **argv)
          * XND_PROGRAM=<binary>
          * <binary> <args> ...
          */
-        char    libxnd_path[PATH_MAX], xnd_program[PATH_MAX];
+        char    libxnd_path[PATH_MAX], xnd_program[PATH_MAX], pid_str[11];
         int     retval;
         pid_t   pid;
 
@@ -185,13 +185,15 @@ static __noreturn void launch_checkpoint_target(char **argv)
                   "DYLD_SHARED_REGION=private\n",
                   xnd_program, libxnd_path);
         
-        xnd_printf("Executing %s (pid=%d)\n", argv[0], getpid());
         pid = fork();
         switch (pid) {
         case -1:
                 xnd_error("fork: %s\n", strerror(errno));
                 xnd_exit(XND_EXIT_FAILURE);
         case 0:
+                snprintf(pid_str, sizeof(pid_str), "%d", getpid());
+                xnd_assert(setenv("XND_ROOT_PID", pid_str, 1) == 0);
+                xnd_printf("Executing %s (pid=%s)\n", argv[0], pid_str);
                 retval = execvp(argv[0], argv);
                 xnd_error("execvp(%s): %s\n", argv[0], strerror(errno));
                 xnd_exit(XND_EXIT_FAILURE);

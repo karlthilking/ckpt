@@ -16,15 +16,15 @@ struct xnd_ckpt_header {
 
         u32                             xnd_pid;
         u32                             xnd_ppid;
-        u32                             xnd_group;
+        u32                             xnd_pgid;
 
         pid_t                           pid;
         pid_t                           ppid;
         pid_t                           sid;
         pid_t                           gid;
 
-        u32                             nr_peers;
-        u32                             root_of_tree;
+        u32                             num_peers;
+        u32                             is_root_of_tree;
 
         u32                             entry_count;
         u32                             region_count;
@@ -40,6 +40,7 @@ bool xnd_ckptfile_valid(const struct xnd_ckpt_header *);
 int xnd_ckptfile_parse(const char *, char *, size_t, u64 *);
 void xnd_ckptfile_name(char *, size_t);
 int xnd_ckptfile_extract_header(char *, struct xnd_ckpt_header *);
-void xnd_ckptfile_write_header(struct xnd_ckpt_header *, u32, u32);
+void xnd_ckptfile_write_header(struct xnd_ckpt_header *, 
+                               u32, u32, u32, u32, u32, u32, bool);
 
 #endif /* XND_CKPTFILE_H */

@@ -105,6 +105,7 @@ static int read_ckpt(int, const struct xnd_ckpt_header *,
                      struct xnd_vm_region *,
                      ucontext_t *);
 static bool skip_vm_region(const struct xnd_vm_region *);
+static void print_ckpt_header(struct xnd_ckpt_header *);
 static void print_vm_regions(const struct xnd_vm_region *, u32);
 static void print_user_context(ucontext_t *);
 static void print_checkpoint(int);
@@ -368,6 +369,40 @@ static bool skip_vm_region(const struct xnd_vm_region *region)
         return true;
 }
 
+static void print_ckpt_header(struct xnd_ckpt_header *hdr)
+{
+        struct shared_cache_info        *dyld_cache_info;
+        char                            shared_cache_uuid[37];
+        
+        dyld_cache_info = &hdr->shared_cache_info;
+        uuid_unparse(dyld_cache_info->uuid, shared_cache_uuid);
+
+        printf("**************** Checkpoint Header ********************\n");
+        printf("                   Magic: %s\n"
+               "                 xnd_pid: %u\n"
+               "                xnd_ppid: %u\n"
+               "                xnd_pgid: %u\n"
+               "                     pid: %d\n"
+               "                    ppid: %d\n"
+               "                     sid: %d\n"
+               "                     gid: %d\n"
+               "              # of peers: %u\n"
+               "   Root of process tree?: %s\n"
+               "            # of entries: %u\n"
+               "         # of vm regions: %u\n"
+               " dyld shared cache start: %p\n"
+               "   dyld shared cache end: %p\n"
+               "  dyld shared cache size: %zu\n"
+               "  dyld shared cache uuid: %s\n",
+               hdr->magic, hdr->xnd_pid, hdr->xnd_ppid, hdr->xnd_pgid,
+               hdr->pid, hdr->ppid, hdr->sid, hdr->gid, hdr->num_peers,
+               (hdr->is_root_of_tree ? "TRUE" : "FALSE"), hdr->entry_count,
+               hdr->region_count, dyld_cache_info->base,
+               dyld_cache_info->base + dyld_cache_info->size,
+               dyld_cache_info->size, shared_cache_uuid);
+        printf("*******************************************************\n");
+}
+
 static void print_vm_regions(const struct xnd_vm_region *regions, u32 nr_rgns)
 {
         const struct xnd_vm_region      *rgn;
@@ -409,7 +444,7 @@ static void print_user_context(ucontext_t *uctx)
 {
         mcontext_t mctx = (mcontext_t)&uctx->__mcontext_data;
 
-        printf("************** CHECKPOINTED USER CONTEXT **************\n");
+        printf("************** Checkpointed User Context **************\n");
         /* Callee-saved general purpose registers */
         for (u32 i = 19; i <= 28; i++)
                 printf("\tx%u:\t0x%llx\n", i, mctx->__ss.__x[i]);
@@ -428,19 +463,24 @@ static void print_checkpoint(int fd)
 {
         struct xnd_ckpt_header header;
 
-        if (readall(fd, &header, sizeof(header)) < 0)
+        if (readall(fd, &header, sizeof(header)) < 0) {
                 exit(EXIT_FAILURE);
+        }
+
+        print_ckpt_header(&header);
 
         enum xnd_ckpt_entry     entries[header.entry_count];
         struct xnd_vm_region    regions[header.region_count];
         ucontext_t              uctx;
         
-        if (read_ckpt(fd, &header, entries, regions, &uctx) < 0)
+        if (read_ckpt(fd, &header, entries, regions, &uctx) < 0) {
                 exit(EXIT_FAILURE);
+        }
 
         print_vm_regions(regions, header.region_count);
-        if (print_options[PRINT_USER_CONTEXT])
+        if (print_options[PRINT_USER_CONTEXT]) {
                 print_user_context(&uctx);
+        }
 }
 
 static void usage(void)

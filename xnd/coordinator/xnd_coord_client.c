@@ -7,10 +7,16 @@
 #include <stdlib.h>
 #include <string.h>
 
-extern pid_t _real_pid;
-extern pid_t _real_ppid;
-extern pid_t _virt_pid;
-extern pid_t _virt_ppid;
+extern pid_t    _real_pid;
+extern pid_t    _real_ppid;
+extern pid_t    _virt_pid;
+extern pid_t    _virt_ppid;
+
+extern u32      xnd_pid;
+extern u32      xnd_ppid;
+extern u32      xnd_pgid;
+extern u32      num_peers;
+extern bool     is_root_of_tree;
 
 static __always_inline void write_msg_metainfo(struct xnd_msg *msg)
 {
@@ -18,6 +24,7 @@ static __always_inline void write_msg_metainfo(struct xnd_msg *msg)
         msg->real_ppid = _real_ppid;
         msg->virt_pid = _virt_pid;
         msg->virt_ppid = _virt_ppid;
+        msg->is_root_of_tree = is_root_of_tree;
 }
 
 void register_with_coord_on_launch(void)
@@ -28,6 +35,7 @@ void register_with_coord_on_launch(void)
         msg.hdr = XND_PROC_CONNECT_LAUNCH;
         msg.real_pid = _real_getpid();
         msg.real_ppid = _real_getppid();
+        msg.is_root_of_tree = is_root_of_tree;
 
         err = send_msg_to_coord(&msg);
         if (err != 0) {
@@ -51,6 +59,10 @@ void register_with_coord_on_launch(void)
         _virt_pid = msg.virt_pid;
         _virt_ppid = msg.virt_ppid;
 
+        xnd_pid = msg.xnd_pid;
+        xnd_ppid = msg.xnd_ppid;
+        xnd_pgid = msg.xnd_pgid;
+
         xnd_trace("Registered with coordinator\n"
                   "_virt_pid=%d, _virt_ppid=%d\n", 
                   _virt_pid, _virt_ppid);
@@ -66,6 +78,11 @@ void register_with_coord_on_restart(void)
         msg.virt_ppid = _virt_ppid;
         msg.real_pid = _real_getpid();
         msg.real_ppid = _real_getppid();
+
+        msg.xnd_pid = xnd_pid;
+        msg.xnd_ppid = xnd_ppid;
+        msg.xnd_pgid = xnd_pgid;
+        msg.is_root_of_tree = is_root_of_tree;
 
         err = send_msg_to_coord(&msg);
         if (err != 0) {
@@ -112,7 +129,7 @@ retry:
                 xnd_abort();
         }
         
-        if (msg.hdr == XND_CHECKPOINT_REQUEST) {
+        if (msg.hdr == XND_CKPT_REQUEST) {
                 notify_coord_before_checkpoint();
         }
 }
@@ -122,7 +139,7 @@ void notify_coord_before_checkpoint(void)
         struct xnd_msg  msg;
         int             err;
 
-        msg.hdr = XND_READY_FOR_CHECKPOINT;
+        msg.hdr = XND_READY_FOR_CKPT;
         write_msg_metainfo(&msg);
 
         err = send_msg_to_coord(&msg);
@@ -131,7 +148,7 @@ void notify_coord_before_checkpoint(void)
                 xnd_abort();
         }
 
-        enter_coord_barrier(XND_READY_FOR_CHECKPOINT);
+        enter_coord_barrier(XND_READY_FOR_CKPT);
 }
 
 void notify_coord_after_checkpoint(void)
@@ -139,7 +156,7 @@ void notify_coord_after_checkpoint(void)
         struct xnd_msg  msg;
         int             err;
 
-        msg.hdr = XND_CHECKPOINT_COMPLETE;
+        msg.hdr = XND_CKPT_COMPLETE;
         write_msg_metainfo(&msg);
 
         err = send_msg_to_coord(&msg);
@@ -148,7 +165,7 @@ void notify_coord_after_checkpoint(void)
                 xnd_abort();
         }
 
-        enter_coord_barrier(XND_CHECKPOINT_COMPLETE);
+        enter_coord_barrier(XND_CKPT_COMPLETE);
 }
 
 void enter_coord_barrier(enum xnd_msghdr event)
@@ -162,16 +179,17 @@ void enter_coord_barrier(enum xnd_msghdr event)
                 xnd_abort();
         }
 
-        if (event == XND_READY_FOR_CHECKPOINT) {
-                if (msg.hdr == XND_START_CHECKPOINT) {
+        if (event == XND_READY_FOR_CKPT) {
+                if (msg.hdr == XND_START_CKPT) {
+                        num_peers = msg.num_peers;
                         return;
                 }
                 xnd_error("Unrecognized coordinator reply: %d\n", msg.hdr);
                 xnd_abort();
         }
 
-        if (event == XND_CHECKPOINT_COMPLETE) {
-                if (msg.hdr == XND_RESUME_AFTER_CHECKPOINT) {
+        if (event == XND_CKPT_COMPLETE) {
+                if (msg.hdr == XND_RESUME_AFTER_CKPT) {
                         return;
                 }
                 xnd_error("Unrecognized coordinator reply: %d\n", msg.hdr);

@@ -21,12 +21,12 @@
 #include <errno.h>
 #include <unistd.h>
 
-_Thread_local struct thread_info        *myself         = NULL;
-static struct thread_info               *_main_thread   = NULL;
+_Thread_local struct thread_info        *myself = NULL;
+static struct thread_info               *_main_thread = NULL;
 static struct thread_info               ckpt_thread;
 
-static struct thread_list               thread_list;
-static struct thread_list               zombie_list;
+static struct thread_list       thread_list;
+static struct thread_list       zombie_list;
 
 static int              threads_expected;
 static int              threads_arrived;
@@ -426,39 +426,20 @@ __noreturn void ckpt_thread_exit(void)
 
 void ckpt_thread_wait(void)
 {
-#if XND_COORDINATOR
         wait_for_coord_msg();
         if (unlikely(get_xnd_state() == XND_EXITING)) {
                 ckpt_thread_exit();
         }
-#else
-        sigset_t        set;
-        int             err, sig = 0;
-
-        sigemptyset(&set);
-        sigaddset(&set, SIGUSR2);
-
-        while (sig != SIGUSR2) {
-                err = sigwait(&set, &sig);
-                if (get_xnd_state() == XND_EXITING)
-                        ckpt_thread_exit();
-                else if (unlikely(err != 0))
-                        xnd_warn("sigwait: %s\n", strerror(err));
-        }
-#endif
 }
 
 void *ckpt_thread_work(void *ready)
 {
-        static volatile bool restart;
-        {
-                sigset_t set;
+        static volatile bool    restart;
+        sigset_t                set;
 
-                sigemptyset(&set);
-                sigaddset(&set, SIGUSR1);
-                sigaddset(&set, SIGUSR2);
-                pthread_sigmask(SIG_BLOCK, &set, NULL);
-        }
+        sigemptyset(&set);
+        sigaddset(&set, xnd_ckpt_signal());
+        pthread_sigmask(SIG_BLOCK, &set, NULL);
        
         tlv_init();
         myself = &ckpt_thread;
@@ -538,41 +519,10 @@ void *ckpt_thread_work(void *ready)
 
 void ckpt_thread_reap(void)
 {
-        int retval;
-
-        retval = pthread_kill(ckpt_thread.self, SIGUSR2);
-        if (retval != 0) {
-                ckpt_thread_terminate();
-        } else {
-                ckpt_thread_join();
-        }
-
-        pthread_mutex_destroy(&ckpt_thread.lock);
-        pthread_cond_destroy(&ckpt_thread.cond);
-}
-
-void ckpt_thread_join(void)
-{
-        int err;
-
-        pthread_mutex_lock(&ckpt_thread.lock);
-        while (!ckpt_thread.exiting) {
-                pthread_cond_wait(&ckpt_thread.cond, &ckpt_thread.lock);
-        }
-        pthread_mutex_unlock(&ckpt_thread.lock);
-        
-        err = pthread_join(ckpt_thread.self, NULL);
-        if (err != 0) {
-                xnd_error("pthread_join: %s\n", strerror(err));
-        }
-}
-
-void ckpt_thread_terminate(void)
-{
         uintptr_t       tls;
         mach_port_t     port;
         kern_return_t   kr;
-
+        
         tls = (uintptr_t)ckpt_thread.self + PTHREAD_T_TLS_OFFSET;
         port = (mach_port_t)(uintptr_t)((void **)tls)[__TSD_MACH_THREAD_SELF];
 
@@ -580,6 +530,9 @@ void ckpt_thread_terminate(void)
         if (kr != KERN_SUCCESS) {
                 xnd_error("thread_terminate: %s\n", mach_error_string(kr));
         }
+
+        pthread_mutex_destroy(&ckpt_thread.lock);
+        pthread_cond_destroy(&ckpt_thread.cond);
 }
 
 /**
@@ -622,10 +575,11 @@ void barrier_release(void)
 void suspend_threads(void)
 {
         struct thread_info      *th, *next;
-        int                     err, suspended;
+        int                     err, sig, suspended;
         bool                    rescan;
 
         set_xnd_state(XND_SUSPINPROG);
+        sig = xnd_ckpt_signal();
         threads_arrived = 0;
 
 again:
@@ -647,7 +601,7 @@ again:
                 pthread_mutex_lock(&th->lock);
                 if (th->state == ST_RUNNING &&
                     thread_state_cas(th, ST_RUNNING, ST_SIGNALED)) {
-                        err = pthread_kill(th->self, SIGUSR1);
+                        err = pthread_kill(th->self, sig);
                         if (err == ESRCH) {
                                 pthread_mutex_unlock(&th->lock);
                                 thread_list_remove(th);
@@ -813,15 +767,6 @@ __noreturn void *thread_start(void *thread)
         myself = (struct thread_info *)thread;
         myself->self = pthread_self();
         thread_list_add();
-
-#if DEVELOPMENT || DEBUG
-        {
-                sigset_t set;
-                pthread_sigmask(SIG_SETMASK, NULL, &set);
-                xnd_assert(!sigismember(&set, SIGUSR1));
-                xnd_assert(sigismember(&set, SIGUSR2));
-        }
-#endif
         
         /**
          * Signal to thread that spawned this thread in 

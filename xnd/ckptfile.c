@@ -130,7 +130,9 @@ int xnd_ckptfile_extract_header(char *path, struct xnd_ckpt_header *hdr)
 }
 
 void xnd_ckptfile_write_header(struct xnd_ckpt_header *hdr, 
-                               u32 nr_regions, u32 nr_entries)
+                               u32 nr_regions, u32 nr_entries,
+                               u32 xnd_pid, u32 xnd_ppid, u32 xnd_pgid,
+                               u32 num_peers, bool is_root_of_tree)
 {
         int err;
 
@@ -139,11 +141,18 @@ void xnd_ckptfile_write_header(struct xnd_ckpt_header *hdr,
         
         err = shared_cache_get_info(&hdr->shared_cache_info);
         xnd_assert(err == 0);
+
+        hdr->xnd_pid = xnd_pid;
+        hdr->xnd_ppid = xnd_ppid;
+        hdr->xnd_pgid = xnd_pgid;
         
         hdr->pid = _real_getpid();
         hdr->ppid = _real_getppid();
         hdr->sid = _real_getsid(0);
         hdr->gid = _real_getgid();
+
+        hdr->num_peers = num_peers;
+        hdr->is_root_of_tree = is_root_of_tree;
 
         /**
          * TODO:

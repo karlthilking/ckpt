@@ -18,11 +18,11 @@ enum xnd_msghdr {
         XND_CLIENT_ACK,
         XND_VIRT_TO_REAL_REQ,
         XND_REAL_TO_VIRT_REQ,
-        XND_CHECKPOINT_REQUEST,
-        XND_READY_FOR_CHECKPOINT,
-        XND_START_CHECKPOINT,
-        XND_CHECKPOINT_COMPLETE,
-        XND_RESUME_AFTER_CHECKPOINT,
+        XND_CKPT_REQUEST,
+        XND_READY_FOR_CKPT,
+        XND_START_CKPT,
+        XND_CKPT_COMPLETE,
+        XND_RESUME_AFTER_CKPT,
 };
 
 enum xnd_command {
@@ -41,6 +41,13 @@ struct xnd_msg {
         enum xnd_msghdr         hdr;
         enum xnd_command        cmd;
         enum xnd_coord_return   ret;
+
+        u32                     xnd_pid;
+        u32                     xnd_ppid;
+        u32                     xnd_pgid;
+
+        u32                     num_peers;
+        u32                     is_root_of_tree;
 
         pid_t                   real_pid;
         pid_t                   real_ppid;

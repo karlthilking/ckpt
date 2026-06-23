@@ -28,6 +28,41 @@
 static _Atomic enum xnd_state   libxnd_state = XND_UNINITIALIZED;
 static uintptr_t                _pthread_ptr_munge_token;
 
+__hidden int                    xnd_ckpt_sig    = -1;
+__hidden u32                    xnd_pid         = -1;
+__hidden u32                    xnd_ppid        = -1;
+__hidden u32                    xnd_pgid        = -1;
+__hidden u32                    num_peers       = 0;
+__hidden bool                   is_root_of_tree = false;
+
+static __always_inline pid_t xnd_root_pid(void)
+{
+        char *root;
+
+        if ((root = getenv("XND_ROOT_PID")) != NULL) {
+                xnd_trace("XND_ROOT_PID=%s\n", root);
+                return (pid_t)atoi(root);
+        }
+        
+        return -1;
+}
+
+int xnd_ckpt_signal(void)
+{
+        char *sig;
+
+        if (unlikely(xnd_ckpt_sig == -1)) {
+                if ((sig = getenv("XND_CKPT_SIGNAL")) != NULL) {
+                        xnd_ckpt_sig = atoi(sig);
+                } else {
+                        xnd_ckpt_sig = XND_DEFAULT_CKPT_SIGNAL;
+                }
+                xnd_trace("XND_CKPT_SIGNAL=%d\n", xnd_ckpt_sig);
+        }
+        
+        return xnd_ckpt_sig;
+}
+
 enum xnd_state get_xnd_state(void)
 {
         return atomic_load(&libxnd_state);
@@ -85,9 +120,11 @@ void xnd_checkpoint(ucontext_t *uctx)
 
         *(entries + nr_regions) = XND_UCONTEXT_ENTRY;
         nr_entries = nr_regions + 1;
-        xnd_ckptfile_write_header(&header, nr_regions, nr_entries);
 
-        (void)write_ckpt(&header, entries, regions, uctx);
+        xnd_ckptfile_write_header(&header, nr_regions, nr_entries,
+                                  xnd_pid, xnd_ppid, xnd_pgid,
+                                  num_peers, is_root_of_tree);
+        write_ckpt(&header, entries, regions, uctx);
 }
 
 void xnd_atfork_prepare(void)
@@ -137,23 +174,17 @@ static __constructor(101) void xnd_setup(void)
         struct sigaction        sa;
         sigset_t                set;
         int                     err;
-
+        
+        is_root_of_tree = (xnd_root_pid() == _real_getpid());
         connect_to_coord();
         register_with_coord_on_launch();
         
-        /* Every thread blocks SIGUSR2 except for checkpoint thread */
-        sigemptyset(&set);
-        sigaddset(&set, SIGUSR2);
-        err = pthread_sigmask(SIG_BLOCK, &set, NULL);
-        if (err != 0) {
-                xnd_error("pthread_sigmask: %s\n", strerror(err));
-                xnd_abort();
-        }
-        
-        sigfillset(&sa.sa_mask);
+        xnd_ckpt_sig = xnd_ckpt_signal();
+        sigfillset(&set);
         sa.sa_flags = SA_SIGINFO;
         sa.sa_sigaction = thread_sighandler;
-        err = __xnd_sigaction(SIGUSR1, &sa, NULL);
+
+        err = __xnd_sigaction(xnd_ckpt_sig, &sa, NULL);
         if (err != 0) {
                 xnd_error("__xnd_sigaction failed!\n");
                 xnd_abort();

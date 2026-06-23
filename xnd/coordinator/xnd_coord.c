@@ -16,7 +16,9 @@
 #include <sys/select.h>
 
 static struct proc_list *proc_list      = NULL;
+static struct proc      *group_leader   = NULL;
 static pid_t            next_virt_pid   = 1;
+static u32              next_xnd_pid    = 0;
 static int              listen_fd       = -1;
 static u32              num_peers       = 0;
 static enum coord_state coord_state     = COORD_NULL;
@@ -48,6 +50,10 @@ void proc_list_add(struct proc *p)
 
         if (p->next) {
                 p->next->prev = p;
+        }
+        
+        if (p->is_root_of_tree) {
+                group_leader = p;
         }
 
         proc_list->size++;
@@ -160,7 +166,7 @@ void coord_cleanup(void)
         }
 }
 
-void coord_exit(int status)
+__noreturn void coord_exit(int status)
 {
         if (status == COORD_EXIT_SUCCESS) {
                 xnd_trace("Coordinator exiting: COORD_EXIT_SUCCESS\n");
@@ -170,6 +176,8 @@ void coord_exit(int status)
         
         coord_cleanup();
         exit(status);
+
+        unreachable();
 }
 
 void coord_setup_handler(int sig)
@@ -265,11 +273,11 @@ void coord_await_connection(void)
         switch (msg.hdr) {
         case XND_PROC_CONNECT_LAUNCH:
                 xnd_assert(coord_state == COORD_RUNNING);
-                coord_proc_connect(fd, &msg);
+                coord_register_process(fd, &msg);
                 break;
         case XND_PROC_CONNECT_RESTART:
                 coord_state = COORD_RESTART_IN_PROGRESS;
-                coord_proc_connect(fd, &msg);
+                coord_register_process(fd, &msg);
                 coord_state = COORD_RUNNING;
                 break;
         case XND_COMMAND:
@@ -280,11 +288,23 @@ void coord_await_connection(void)
         }
 }
 
-void coord_proc_connect(int fd, struct xnd_msg *msg)
+void coord_register_process(int fd, struct xnd_msg *msg)
 {
-        ssize_t         bytes;
         struct xnd_msg  resp;
-        struct proc     *p, *dup, *parent;
+        struct proc     *p, *parent;
+        ssize_t         bytes;
+        
+        /**
+         * If process with msg->real_pid has already registered,
+         * then the process exec'd into a new process image and is
+         * trying to re-register. Just remove the old process descriptor
+         * from the process list and let it re-register.
+         */
+        p = proc_list_find_real(msg->real_pid);
+        if (p != NULL) {
+                proc_list_remove(p);
+                p = NULL;
+        }
 
         p = malloc(sizeof(struct proc));
         xnd_assert(p != NULL);
@@ -292,60 +312,71 @@ void coord_proc_connect(int fd, struct xnd_msg *msg)
         p->fd = fd;
         p->real_pid = msg->real_pid;
         p->real_ppid = msg->real_ppid;
-        
-        if (unlikely((dup = proc_list_find_real(p->real_pid)) != NULL)) {
-                /**
-                 * If program (like python3) execs into new process image,
-                 * then xnd_setup() in libxnd.dylib will run a second time,
-                 * but the process is already registered with the
-                 * coordinator.
-                 *
-                 * However, register_with_coord_on_launch() expects an ack
-                 * from the coordinator, so just remove the process and
-                 * let it re-register.
-                 */
-                 proc_list_remove(dup);
-        }
-        
-        if (proc_list->size == 0) {
-                p->root_of_tree = true;
+
+        if (msg->is_root_of_tree) {
+                p->is_root_of_tree = true;
         } else {
-                p->root_of_tree = false;
+                p->is_root_of_tree = false;
         }
 
         if (coord_state == COORD_RESTART_IN_PROGRESS) {
+                /**
+                 * If restart in progress, process already knows its
+                 * virtual pid and ppid, as well as unique xnd pid, ppid,
+                 * and pgid.
+                 */
                 p->virt_pid = msg->virt_pid;
                 p->virt_ppid = msg->virt_ppid;
                 if (p->virt_pid + 1 > next_virt_pid) {
                         next_virt_pid = p->virt_pid + 1;
                 }
+                p->xnd_pid = msg->xnd_pid;
+                p->xnd_ppid = msg->xnd_ppid;
+                p->xnd_pgid = msg->xnd_pgid;
+                if (p->xnd_pid + 1 > next_xnd_pid) {
+                        next_xnd_pid = p->xnd_pid + 1;
+                }
         } else {
-                if (p->root_of_tree) {
+                if (p->is_root_of_tree) {
                         p->virt_ppid = next_virt_pid++;
+                        p->virt_pid = next_virt_pid++;
+                        p->xnd_ppid = next_xnd_pid++;
+                        p->xnd_pid = next_xnd_pid++;
+                        p->xnd_pgid = p->xnd_pid;
                 } else {
-                        xnd_assert(proc_list->size != 0);
                         parent = proc_list_find_real(p->real_ppid);
                         xnd_assert(parent != NULL);
                         p->virt_ppid = parent->virt_pid;
+                        p->virt_pid = next_virt_pid++;
+                        p->xnd_ppid = parent->xnd_pid;
+                        p->xnd_pgid = parent->xnd_pgid;
+                        p->xnd_pid = next_xnd_pid++;
                 }
-                p->virt_pid = next_virt_pid++;
         }
 
         p->state = PROC_RUNNING;
         p->next = NULL;
         p->prev = NULL;
-        proc_list_add(p);
 
         resp.hdr = XND_COORD_ACK;
         resp.ret = XND_SUCCESS;
+
         resp.real_pid = p->real_pid;
         resp.real_ppid = p->real_ppid;
         resp.virt_pid = p->virt_pid;
         resp.virt_ppid = p->virt_ppid;
-        
+
+        resp.xnd_pid = p->xnd_pid;
+        resp.xnd_ppid = p->xnd_ppid;
+        resp.xnd_pgid = p->xnd_pgid;
+
         bytes = writeall(p->fd, &resp, sizeof(resp));
-        xnd_assert(bytes == sizeof(resp));
-        xnd_trace("Process %d connected\n", p->real_pid);
+        if (bytes == sizeof(resp)) {
+                xnd_trace("Process %d connected\n", p->real_pid);
+                proc_list_add(p);
+        } else {
+                xnd_error("Failed to register process %d\n", p->real_pid);
+        }
 }
 
 void coord_handle_command(struct xnd_msg *msg)
@@ -368,86 +399,56 @@ void coord_handle_command(struct xnd_msg *msg)
         }
 }
 
-void coord_broadcast_exit(void)
+__noreturn void coord_broadcast_exit(void)
 {
-        int             err, exited, total;
-        ssize_t         bytes;
-        fd_set          set;
-        struct proc     *p, *next;
-        struct xnd_msg  msg, resp;
-        struct timeval  tv = { 0, 10000 };
-
+        struct xnd_msg  msg;
+        int             total, ready, sent, received;
+        
+        coord_state = COORD_EXITING;
         msg.hdr = XND_COMMAND;
         msg.cmd = XND_EXIT_CMD;
         
-        total = 0;
-        exited = 0;
-
-        for (p = proc_list->head; p; p = next) {
-                next = p->next;
-                err = kill(p->real_pid, 0);
-                if (err != 0 && errno == ESRCH) {
-                        proc_list_remove(p);
-                        continue;
-                }
-                bytes = writeall(p->fd, &msg, sizeof(msg));
-                xnd_assert(bytes == sizeof(msg));
-                total++;
-        }
-        
-again:
-        for (p = proc_list->head; p; p = next) {
-                next = p->next;
-                FD_ZERO(&set);
-                FD_SET(p->fd, &set);
-                err = select(p->fd + 1, &set, NULL, NULL, &tv);
-                if (err > 0) {
-                        bytes = readall(p->fd, &resp, sizeof(resp));
-                        xnd_assert(bytes == sizeof(resp));
-                        if (resp.hdr == XND_PROC_EXIT) {
-                                proc_list_remove(p);
-                                exited++;
-                        }
-                } else {
-                        err = kill(p->real_pid, 0);
-                        if (err != 0 && errno == ESRCH) {
-                                proc_list_remove(p);
-                                exited++;
-                        }
-                }
+        sent = 0;
+        total = coord_prepare_for_collective(COORD_BROADCAST);
+        sent = coord_broadcast(&msg, PROC_RUNNING, PROC_RUNNING);
+        if (sent != total) {
+                xnd_error("Broadcast failed: XND_COMMAND (XND_EXIT_CMD)\n");
+                xnd_abort();
         }
 
-        if (exited != total) {
-                usleep(50);
-                goto again;
+        ready = coord_prepare_for_collective(COORD_REDUCE);
+        if (ready != total) {
+                xnd_error("Error before reduction: XND_PROC_EXIT\n");
+                xnd_abort();
         }
 
-        coord_state = COORD_EXITING;
-        xnd_assert(proc_list->size == 0);
+        received = coord_reduce(XND_PROC_EXIT, PROC_RUNNING, PROC_EXITED);
+        if (received != total) {
+                xnd_error("Reduction failed: XND_PROC_EXIT\n");
+                xnd_abort();
+        }
+
+        coord_exit(COORD_EXIT_SUCCESS);
+        unreachable();
 }
 
-void coord_kill_processes(void)
+__noreturn void coord_kill_processes(void)
 {
-        struct proc     *p, *next;
-        int             err;
+        struct proc *p;
 
         coord_state = COORD_EXITING;
-        for (p = proc_list->head; p; p = next) {
-                next = p->next;
-                err = kill(p->real_pid, SIGKILL);
-                if (err == 0) {
-                        proc_list_remove(p);
-                } else if (err != 0 && errno == ESRCH) {
-                        proc_list_remove(p);
-                }
+        for (p = proc_list->head; p; p = p->next) {
+                (void)kill(p->real_pid, SIGKILL);
         }
-
-        xnd_assert(proc_list->size == 0);
+        
+        coord_exit(COORD_EXIT_SUCCESS);
+        unreachable();
 }
 
 bool coord_do_checkpoint(void)
 {
         int             ready, sent, received;
+        struct xnd_msg  msg;
         sigset_t        set;
 
         sigemptyset(&set);
@@ -457,11 +458,13 @@ bool coord_do_checkpoint(void)
         sigprocmask(SIG_BLOCK, &set, NULL);
 
         coord_state = COORD_PRE_CHECKPOINT;
-        
         ready = coord_prepare_for_collective(COORD_BROADCAST);
-        sent = coord_broadcast(XND_CHECKPOINT_REQUEST, PROC_RECV_CKPT_REQUEST);
+        
+        msg.hdr = XND_CKPT_REQUEST;
+        msg.num_peers = ready;
+        sent = coord_broadcast(&msg, PROC_RUNNING, PROC_RECV_CKPT_REQUEST);
         if (sent != ready) {
-                xnd_error("Broadcast failed: XND_CHECKPOINT_REQUEST\n");
+                xnd_error("Broadcast failed: XND_CKPT_REQUEST\n");
                 goto bad;
         }
         num_peers = sent;
@@ -469,26 +472,29 @@ bool coord_do_checkpoint(void)
         ready = coord_prepare_for_collective(COORD_REDUCE);
         if (ready != num_peers) {
                 xnd_error("Error before reduction: "
-                          "XND_READY_FOR_CHECKPOINT\n");
+                          "XND_READY_FOR_CKPT\n");
                 goto bad;
         }
 
-        received = coord_reduce(XND_READY_FOR_CHECKPOINT, PROC_READY_FOR_CKPT);
+        received = coord_reduce(XND_READY_FOR_CKPT, PROC_RECV_CKPT_REQUEST,
+                                PROC_READY_FOR_CKPT);
         if (received != ready) {
-                xnd_error("Reduction failed: XND_READY_FOR_CHECKPOINT\n");
+                xnd_error("Reduction failed: XND_READY_FOR_CKPT\n");
                 goto bad;
         }
-
+        
         ready = coord_prepare_for_collective(COORD_BROADCAST);
         if (ready != num_peers) {
                 xnd_error("Error before broadcast: "
-                          "XND_START_CHECKPOINT\n");
+                          "XND_START_CKPT\n");
                 goto bad;
         }
-
-        sent = coord_broadcast(XND_START_CHECKPOINT, PROC_CKPT_IN_PROGRESS);
+        
+        msg.hdr = XND_START_CKPT;
+        xnd_assert(msg.num_peers == num_peers);
+        sent = coord_broadcast(&msg, PROC_READY_FOR_CKPT, PROC_CKPT_IN_PROG);
         if (sent != ready) {
-                xnd_error("Broadcast failed: XND_START_CHECKPOINT\n");
+                xnd_error("Broadcast failed: XND_START_CKPT\n");
                 goto bad;
         }
 
@@ -496,13 +502,14 @@ bool coord_do_checkpoint(void)
         ready = coord_prepare_for_collective(COORD_REDUCE);
         if (ready != num_peers) {
                 xnd_error("Error before reduction: "
-                          "XND_CHECKPOINT_COMPLETE\n");
+                          "XND_CKPT_COMPLETE\n");
                 goto bad;
         }
         
-        received = coord_reduce(XND_CHECKPOINT_COMPLETE, PROC_CKPT_COMPLETE);
+        received = coord_reduce(XND_CKPT_COMPLETE, PROC_CKPT_IN_PROG,
+                                PROC_CKPT_COMPLETE);
         if (received != ready) {
-                xnd_error("Reduction failed: XND_CHECKPOINT_COMPLETE\n");
+                xnd_error("Reduction failed: XND_CKPT_COMPLETE\n");
                 goto bad;
         }
 
@@ -510,13 +517,15 @@ bool coord_do_checkpoint(void)
         ready = coord_prepare_for_collective(COORD_BROADCAST);
         if (ready != num_peers) {
                 xnd_error("Error before broadcast: "
-                          "XND_RESUME_AFTER_CHECKPOINT\n");
+                          "XND_RESUME_AFTER_CKPT\n");
                 goto bad;
         }
-
-        sent = coord_broadcast(XND_RESUME_AFTER_CHECKPOINT, PROC_RUNNING);
+        
+        msg.hdr = XND_RESUME_AFTER_CKPT;
+        xnd_assert(msg.num_peers == num_peers);
+        sent = coord_broadcast(&msg, PROC_CKPT_COMPLETE, PROC_RUNNING);
         if (sent != ready) {
-                xnd_error("Broadcast failed: XND_RESUME_AFTER_CHECKPOINT\n");
+                xnd_error("Broadcast failed: XND_RESUME_AFTER_CKPT\n");
                 goto bad;
         }
         
@@ -568,19 +577,24 @@ again:
         return total;
 }
 
-int coord_broadcast(enum xnd_msghdr hdr, enum proc_state transition)
+int coord_broadcast(struct xnd_msg *msg, enum proc_state old, 
+                    enum proc_state new)
 {
         struct proc     *p;
-        struct xnd_msg  msg;
         ssize_t         bytes;
         int             total;
         
         total = 0;
-        msg.hdr = hdr;
         for (p = proc_list->head; p; p = p->next) {
-                bytes = writeall(p->fd, &msg, sizeof(msg));
-                if (bytes == sizeof(msg)) {
-                        p->state = transition;
+                if (p->state == new) {
+                        continue;
+                } else if (p->state != old) {
+                        return -1;
+                }
+                coord_write_msg_metainfo(p, msg);
+                bytes = writeall(p->fd, msg, sizeof(struct xnd_msg));
+                if (bytes == sizeof(struct xnd_msg)) {
+                        p->state = new;
                         total++;
                 }
         }
@@ -588,7 +602,8 @@ int coord_broadcast(enum xnd_msghdr hdr, enum proc_state transition)
         return total;
 }
 
-int coord_reduce(enum xnd_msghdr expected, enum proc_state transition)
+int coord_reduce(enum xnd_msghdr expected, enum proc_state old,
+                 enum proc_state new)
 {
         struct proc     *p;
         struct xnd_msg  msg;
@@ -597,16 +612,35 @@ int coord_reduce(enum xnd_msghdr expected, enum proc_state transition)
 
         total = 0;
         for (p = proc_list->head; p; p = p->next) {
+                if (p->state == new) {
+                        continue;
+                } else if (p->state != old) {
+                        return -1;
+                }
                 bytes = readall(p->fd, &msg, sizeof(msg));
                 if (bytes == sizeof(msg)) {
                         if (msg.hdr == expected) {
-                                p->state = transition;
+                                p->state = new;
                                 total++;
                         }
                 }
         }
 
         return total;
+}
+
+void coord_write_msg_metainfo(struct proc *p, struct xnd_msg *msg)
+{
+        msg->xnd_pid = p->xnd_pid;
+        msg->xnd_ppid = p->xnd_ppid;
+        msg->xnd_pgid = p->xnd_pgid;
+
+        msg->virt_pid = p->virt_pid;
+        msg->virt_ppid = p->virt_ppid;
+        msg->real_pid = p->real_pid;
+        msg->real_ppid = p->real_ppid;
+
+        msg->is_root_of_tree = p->is_root_of_tree;
 }
 
 void coord_await_msg(void)

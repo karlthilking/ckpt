@@ -5,6 +5,8 @@
 #include "xnd/xnd.h"
 #include <sys/types.h>
 
+#define XND_DEFAULT_CKPT_SIGNAL SIGUSR2
+
 enum xnd_state {
         XND_UNINITIALIZED,
         XND_RUNNING,
@@ -12,6 +14,8 @@ enum xnd_state {
         XND_CKPTINPROG,
         XND_EXITING
 };
+
+int xnd_ckpt_signal(void);
 
 enum xnd_state get_xnd_state(void);
 void set_xnd_state(enum xnd_state);
