@@ -268,7 +268,7 @@ void coord_await_connection(void)
                 coord_proc_connect(fd, &msg);
                 break;
         case XND_PROC_CONNECT_RESTART:
-                coord_state = COORD_RESTART;
+                coord_state = COORD_RESTART_IN_PROGRESS;
                 coord_proc_connect(fd, &msg);
                 coord_state = COORD_RUNNING;
                 break;
@@ -313,7 +313,7 @@ void coord_proc_connect(int fd, struct xnd_msg *msg)
                 p->root_of_tree = false;
         }
 
-        if (coord_state == COORD_RESTART) {
+        if (coord_state == COORD_RESTART_IN_PROGRESS) {
                 p->virt_pid = msg->virt_pid;
                 p->virt_ppid = msg->virt_ppid;
                 if (p->virt_pid + 1 > next_virt_pid) {
@@ -353,7 +353,9 @@ void coord_handle_command(struct xnd_msg *msg)
         xnd_assert(msg->hdr == XND_COMMAND);
         switch (msg->cmd) {
         case XND_CKPT_CMD:
-                coord_do_checkpoint();
+                if (!coord_do_checkpoint()) {
+                        xnd_error("Checkpoint failed!\n");
+                }
                 break;
         case XND_EXIT_CMD:
                 coord_broadcast_exit();
@@ -443,196 +445,168 @@ void coord_kill_processes(void)
         xnd_assert(proc_list->size == 0);
 }
 
-void coord_do_checkpoint(void)
+bool coord_do_checkpoint(void)
 {
-        coord_broadcast_ckpt_request();
-        coord_release_preckpt_barrier();
-        coord_release_postckpt_barrier();
+        int             ready, sent, received;
+        sigset_t        set;
+
+        sigemptyset(&set);
+        sigaddset(&set, SIGINT);
+        sigaddset(&set, SIGTERM);
+        sigaddset(&set, SIGQUIT);
+        sigprocmask(SIG_BLOCK, &set, NULL);
+
+        coord_state = COORD_PRE_CHECKPOINT;
+        
+        ready = coord_prepare_for_collective(COORD_BROADCAST);
+        sent = coord_broadcast(XND_CHECKPOINT_REQUEST, PROC_RECV_CKPT_REQUEST);
+        if (sent != ready) {
+                xnd_error("Broadcast failed: XND_CHECKPOINT_REQUEST\n");
+                goto bad;
+        }
+        num_peers = sent;
+        
+        ready = coord_prepare_for_collective(COORD_REDUCE);
+        if (ready != num_peers) {
+                xnd_error("Error before reduction: "
+                          "XND_READY_FOR_CHECKPOINT\n");
+                goto bad;
+        }
+
+        received = coord_reduce(XND_READY_FOR_CHECKPOINT, PROC_READY_FOR_CKPT);
+        if (received != ready) {
+                xnd_error("Reduction failed: XND_READY_FOR_CHECKPOINT\n");
+                goto bad;
+        }
+
+        ready = coord_prepare_for_collective(COORD_BROADCAST);
+        if (ready != num_peers) {
+                xnd_error("Error before broadcast: "
+                          "XND_START_CHECKPOINT\n");
+                goto bad;
+        }
+
+        sent = coord_broadcast(XND_START_CHECKPOINT, PROC_CKPT_IN_PROGRESS);
+        if (sent != ready) {
+                xnd_error("Broadcast failed: XND_START_CHECKPOINT\n");
+                goto bad;
+        }
+
+        coord_state = COORD_CKPT_IN_PROGRESS;
+        ready = coord_prepare_for_collective(COORD_REDUCE);
+        if (ready != num_peers) {
+                xnd_error("Error before reduction: "
+                          "XND_CHECKPOINT_COMPLETE\n");
+                goto bad;
+        }
+        
+        received = coord_reduce(XND_CHECKPOINT_COMPLETE, PROC_CKPT_COMPLETE);
+        if (received != ready) {
+                xnd_error("Reduction failed: XND_CHECKPOINT_COMPLETE\n");
+                goto bad;
+        }
+
+        coord_state = COORD_POST_CHECKPOINT;
+        ready = coord_prepare_for_collective(COORD_BROADCAST);
+        if (ready != num_peers) {
+                xnd_error("Error before broadcast: "
+                          "XND_RESUME_AFTER_CHECKPOINT\n");
+                goto bad;
+        }
+
+        sent = coord_broadcast(XND_RESUME_AFTER_CHECKPOINT, PROC_RUNNING);
+        if (sent != ready) {
+                xnd_error("Broadcast failed: XND_RESUME_AFTER_CHECKPOINT\n");
+                goto bad;
+        }
+        
+        sigprocmask(SIG_UNBLOCK, &set, NULL);
+        coord_state = COORD_RUNNING;
+        return true;
+
+bad:
+        sigprocmask(SIG_UNBLOCK, &set, NULL);
+        coord_state = COORD_RUNNING;
+        return false;
 }
 
-/**
- * coord_broadcast_ckpt_request:
- *  Send XND_CHECKPOINT_REQUEST message to all processes. For every
- *  process that has not died, wait until XND_READY_FOR_CHECKPOINT
- *  is received back.
- */
-void coord_broadcast_ckpt_request(void)
+int coord_prepare_for_collective(enum coord_comm_type comm)
 {
-        int             err, total, acked;
-        fd_set          set;
-        ssize_t         bytes;
         struct proc     *p, *next;
-        struct xnd_msg  msg, resp;
-        struct timeval  tv = { 0, 1000 };
+        int             err, nfds, total;
+        fd_set          set;
+        struct timeval  tv = { 0, 10000 };
 
-        coord_state = COORD_PRECKPT;
-        msg.hdr = XND_CHECKPOINT_REQUEST;
-
-        total = 0;
-        for (p = proc_list->head; p; p = next) {
-                next = p->next;
-                bytes = writeall(p->fd, &msg, sizeof(msg));
-                if (bytes != sizeof(msg)) {
-                        err = kill(p->real_pid, 0);
-                        if (err != 0 && errno == ESRCH) {
-                                proc_list_remove(p);
-                        } else if (unlikely(err != 0)) {
-                                xnd_warn("kill: %s\n", strerror(errno));
-                        }
-                } else {
-                        p->state = PROC_RECV_CKPT_REQUEST;
-                        total++;
-                }
-        }
-
-        num_peers = total;
 again:
-        acked = 0;
+        nfds = 0;
+        total = 0;
+        FD_ZERO(&set);
         for (p = proc_list->head; p; p = next) {
                 next = p->next;
-                if (p->state == PROC_READY_FOR_CKPT) {
+                err = kill(p->real_pid, 0);
+                if (err != 0 && errno == ESRCH) {
+                        proc_list_remove(p);
                         continue;
-                } else {
-                        xnd_assert(p->state == PROC_RECV_CKPT_REQUEST);
                 }
-
-                FD_ZERO(&set);
+                total++;
                 FD_SET(p->fd, &set);
-                err = select(p->fd + 1, &set, NULL, NULL, &tv);
-                if (err <= 0) {
-                        continue;
-                }
- 
-                xnd_assert(FD_ISSET(p->fd, &set));
-                bytes = readall(p->fd, &resp, sizeof(resp));
-                if (resp.hdr == XND_READY_FOR_CHECKPOINT) {
-                        p->state = PROC_READY_FOR_CKPT;
-                        acked++;
+                if (p->fd + 1 > nfds) {
+                        nfds = p->fd + 1;
                 }
         }
 
-        if (acked != total) {
-                usleep(10);
+        if (comm == COORD_BROADCAST) {
+                err = select(nfds, NULL, &set, NULL, &tv);
+        } else if (comm == COORD_REDUCE) {
+                err = select(nfds, &set, NULL, NULL, &tv);
+        }
+        
+        if (err != total) {
                 goto again;
         }
+
+        return total;
 }
 
-/**
- * coord_release_preckpt_barrier:
- *  Every process that replied to the coordinator with
- *  XND_READY_FOR_CHECKPOINT will enter a barrier until the coordinator
- *  responds. Now, send XND_START_CHECKPOINT to every process participating
- *  in the current checkpoint so each process can leave the barrier
- *  and checkpoint their local computation.
- */
-void coord_release_preckpt_barrier(void)
+int coord_broadcast(enum xnd_msghdr hdr, enum proc_state transition)
 {
+        struct proc     *p;
         struct xnd_msg  msg;
         ssize_t         bytes;
-        struct proc     *p;
         int             total;
         
-        coord_state = COORD_CKPTINPROG;
-        msg.hdr = XND_START_CHECKPOINT;
-        
         total = 0;
+        msg.hdr = hdr;
         for (p = proc_list->head; p; p = p->next) {
-                xnd_assert(p->state == PROC_READY_FOR_CKPT);
                 bytes = writeall(p->fd, &msg, sizeof(msg));
                 if (bytes == sizeof(msg)) {
-                        p->state = PROC_CKPTINPROG;
+                        p->state = transition;
                         total++;
                 }
         }
 
-        if (total != num_peers) {
-                xnd_error("Not all processes received checkpoint start!\n");
-                xnd_abort();
-        }
+        return total;
 }
 
-/**
- * coord_release_postckpt_barrier:
- *  Once every participating process has completed their local checkpoint,
- *  they will enter another barrier until the coordinator sends a message
- *  to resume (XND_RESUME_AFTER_CHECKPOINT). The coordinator should first
- *  collect XND_CHECKPOINT_COMPLETE from every process to verify the
- *  checkpoint was successful. Then, the coordinator can respond with
- *  XND_RESUME_AFTER_CHECKPOINT so each process can leave the barrier
- *  and continue.
- */
-void coord_release_postckpt_barrier(void)
+int coord_reduce(enum xnd_msghdr expected, enum proc_state transition)
 {
-        struct xnd_msg  msg, resp;
-        ssize_t         bytes;
         struct proc     *p;
-        fd_set          set;
-        int             err, completed, resumed;
-        struct timeval  tv = { 0, 1000 };
+        struct xnd_msg  msg;
+        ssize_t         bytes;
+        int             total;
 
-        coord_state = COORD_COMPLETING_CKPT;
-        completed = 0;
-
-again:
+        total = 0;
         for (p = proc_list->head; p; p = p->next) {
-                if (p->state == PROC_COMPLETED_CKPT) {
-                        continue;
-                } else {
-                        xnd_assert(p->state == PROC_CKPTINPROG);
-                }
-
-                FD_ZERO(&set);
-                FD_SET(p->fd, &set);
-                err = select(p->fd + 1, &set, NULL, NULL, &tv);
-                if (err <= 0) {
-                        continue;
-                }
-                
-                xnd_assert(FD_ISSET(p->fd, &set));
                 bytes = readall(p->fd, &msg, sizeof(msg));
-                if (bytes != sizeof(msg)) {
-                        xnd_error("Failed to receive message from "
-                                  "process (pid: %d)\n", p->real_pid);
-                } else if (msg.hdr == XND_CHECKPOINT_COMPLETE) {
-                        p->state = PROC_COMPLETED_CKPT;
-                        completed++;
-                }
-        }
-
-        if (completed != num_peers) {
-                usleep(10);
-                goto again;
-        }
-
-        /**
-         * TODO:
-         *  Now that each process has completed their checkpoint, and
-         *  are waiting in a barrier until the coordinator tells them to
-         *  resume, the coordinator should use this opportunity to
-         *  handle any auxiliary information (writing checkpoint manifest,
-         *  writing restart script, organizing each resultant checkpoint
-         *  file, etc).
-         */
-         
-        resumed = 0;
-        resp.hdr = XND_RESUME_AFTER_CHECKPOINT;
-
-        for (p = proc_list->head; p; p = p->next) {
-                xnd_assert(p->state == PROC_COMPLETED_CKPT);
-                bytes = writeall(p->fd, &resp, sizeof(resp));
                 if (bytes == sizeof(msg)) {
-                        p->state = PROC_RUNNING;
-                        resumed++;
+                        if (msg.hdr == expected) {
+                                p->state = transition;
+                                total++;
+                        }
                 }
         }
 
-        if (resumed != num_peers) {
-                xnd_error("Failed to resume all processes!\n");
-                xnd_abort();
-        }
-        
-        xnd_assert(completed == resumed);
-        coord_state = COORD_RUNNING;
+        return total;
 }
 
 void coord_await_msg(void)

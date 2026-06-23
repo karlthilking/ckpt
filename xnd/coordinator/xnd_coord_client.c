@@ -105,7 +105,7 @@ void wait_for_coord_msg(void)
 retry:
         err = recv_msg_from_coord(&msg);
         if (err != 0) {
-                if (check_coord_status() == 0) {
+                if ((err = check_coord_status()) == 0) {
                         goto retry;
                 }
                 xnd_error("Coordinator socket error: %s\n", strerror(err));
