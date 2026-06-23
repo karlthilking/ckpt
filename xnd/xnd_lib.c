@@ -38,30 +38,6 @@ void set_xnd_state(enum xnd_state new_state)
         atomic_store(&libxnd_state, new_state);
 }
 
-void xnd_suspend_until_ckpt(void)
-{
-        struct xnd_msg  msg;
-        int             err;
-        
-retry:
-        err = recv_msg_from_coord(&msg);
-        if (err != 0) {
-                err = check_coord_status();
-                if (err == 0) {
-                        goto retry;
-                }
-                xnd_error("Coordinator socket error: %s\n", strerror(err));
-                xnd_abort();
-        }
-
-        xnd_assert(msg.hdr == XND_COMMAND);
-        if (msg.cmd == XND_CKPT_CMD) {
-                msg.hdr = XND_CLIENT_ACK;
-                msg.cmd = XND_CKPT_CMD;
-                xnd_assert(send_msg_to_coord(&msg) == 0);
-        }
-}
-
 void xnd_precheckpoint(void)
 {
         sig_state_save();
@@ -95,29 +71,21 @@ void xnd_checkpoint(ucontext_t *uctx)
         struct xnd_ckpt_header  header;
         struct xnd_vm_region    regions[XND_CKPT_VM_REGION_MAX];
         enum xnd_ckpt_entry     entries[XND_CKPT_ENTRY_MAX];
+        u32                     nr_regions, nr_entries;
 
-        bzero(&header, sizeof(header));
-        strcpy(header.magic, XND_HEADER_MAGIC);
-        if (shared_cache_get_info(&header.shared_cache_info) < 0) {
-                xnd_error("Failed to get dyld shared cache info\n");
+        nr_regions = ckpt_vm_save_regions(regions);
+        if (unlikely(nr_regions > XND_CKPT_VM_REGION_MAX)) {
+                xnd_error("Max memory regions exceeded\n");
                 return;
         }
 
-        header.pid = _real_getpid();
-        header.ppid = _real_getppid();
-
-        header.region_count = ckpt_vm_save_regions(regions);
-        if (unlikely(header.region_count > XND_CKPT_VM_REGION_MAX)) {
-                xnd_error("Not enough space to save all memory regions\n");
-                return;
+        for (u32 i = 0; i < nr_regions; i++) {
+                *(entries + i) = XND_VM_REGION_ENTRY;
         }
-        
-        header.entry_count += header.region_count;
-        for (u32 i = 0; i < header.region_count; i++)
-                entries[i] = XND_VM_REGION_ENTRY;
 
-        entries[header.entry_count] = XND_UCONTEXT_ENTRY;
-        header.entry_count += 1;
+        *(entries + nr_regions) = XND_UCONTEXT_ENTRY;
+        nr_entries = nr_regions + 1;
+        xnd_ckptfile_write_header(&header, nr_regions, nr_entries);
 
         (void)write_ckpt(&header, entries, regions, uctx);
 }

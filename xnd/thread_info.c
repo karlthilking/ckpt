@@ -5,6 +5,7 @@
 #include "xnd/pac.h"
 #include "xnd/tls.h"
 #include "xnd/coordinator/xnd_coord_api.h"
+#include "xnd/coordinator/xnd_coord_client.h"
 #include "xnd/wrappers/signal_wrappers.h"
 #include "xnd/wrappers/pthread_wrappers.h"
 #include "xnd/platform/ucontext/ucontext.h"
@@ -426,8 +427,8 @@ __noreturn void ckpt_thread_exit(void)
 void ckpt_thread_wait(void)
 {
 #if XND_COORDINATOR
-        xnd_suspend_until_ckpt();
-        if (get_xnd_state() == XND_EXITING) {
+        wait_for_coord_msg();
+        if (unlikely(get_xnd_state() == XND_EXITING)) {
                 ckpt_thread_exit();
         }
 #else
@@ -495,6 +496,15 @@ void *ckpt_thread_work(void *ready)
         
         restart = true;
         for (;;) {
+                /**
+                 * ckpt_thread_wait() will wait for the coordinator to
+                 * send a message. If the coordinator sends a checkpoint
+                 * request, the checkpoint thread will notify the
+                 * coordinator with XND_READY_FOR_CHECKPOINT and wait in
+                 * a barrier until the checkpoint can start. Then, the
+                 * checkpoint thread will return here and initiate the
+                 * process-local checkpoint.
+                 */
                 ckpt_thread_wait();
                 
                 thread_save_tls();
@@ -508,6 +518,17 @@ void *ckpt_thread_work(void *ready)
                 set_tls_slot(TLS_TLV_FLAG_SLOT, 0);
                 xnd_checkpoint(&myself->uctx);
                 
+                /**
+                 * notify_coord_after_checkpoint() will send
+                 * XND_CHECKPOINT_COMPLETE to the coordinator.
+                 * Then, the checkpoint thread will wait in a global
+                 * barrier until the checkpoint thread replies with
+                 * XND_RESUME_AFTER_CHECKPOINT. After this, the
+                 * checkpoint thread can now release the barrier
+                 * for user threads and allow the process to continue.
+                 */
+                notify_coord_after_checkpoint();
+
                 set_tls_slot(TLS_TLV_FLAG_SLOT, TLS_TLV_INIT_MAGIC);
                 barrier_release();
         }

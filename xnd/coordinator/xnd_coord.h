@@ -14,14 +14,19 @@
 enum coord_state {
         COORD_NULL,
         COORD_RUNNING,
-        COORD_CKPT,
+        COORD_PRECKPT,
+        COORD_CKPTINPROG,
+        COORD_COMPLETING_CKPT,
         COORD_RESTART,
         COORD_EXITING,
 };
 
 enum proc_state {
         PROC_RUNNING,
-        PROC_CHECKPOINTED,
+        PROC_RECV_CKPT_REQUEST,
+        PROC_READY_FOR_CKPT,
+        PROC_CKPTINPROG,
+        PROC_COMPLETED_CKPT,
         PROC_EXITED
 };
 
@@ -50,7 +55,10 @@ struct proc *proc_list_find_real(pid_t);
 struct proc *proc_list_find_virt(pid_t);
 
 void coord_init(void);
+void coord_cleanup(void);
 void coord_exit(int);
+void coord_setup_handler(int);
+void coord_handler(int);
 void coord_event_loop(void);
 void coord_check_status(void);
 
@@ -58,9 +66,13 @@ void coord_await_connection(void);
 void coord_proc_connect(int, struct xnd_msg *);
 void coord_handle_command(struct xnd_msg *);
 
-void coord_broadcast_ckpt(void);
 void coord_broadcast_exit(void);
 void coord_kill_processes(void);
+
+void coord_do_checkpoint(void);
+void coord_broadcast_ckpt_request(void);
+void coord_release_preckpt_barrier(void);
+void coord_release_postckpt_barrier(void);
 
 void coord_await_msg(void);
 void coord_handle_proc_msg(struct proc *);

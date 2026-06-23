@@ -17,7 +17,12 @@ enum xnd_msghdr {
         XND_COORD_ACK,
         XND_CLIENT_ACK,
         XND_VIRT_TO_REAL_REQ,
-        XND_REAL_TO_VIRT_REQ
+        XND_REAL_TO_VIRT_REQ,
+        XND_CHECKPOINT_REQUEST,
+        XND_READY_FOR_CHECKPOINT,
+        XND_START_CHECKPOINT,
+        XND_CHECKPOINT_COMPLETE,
+        XND_RESUME_AFTER_CHECKPOINT,
 };
 
 enum xnd_command {

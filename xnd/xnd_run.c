@@ -4,6 +4,7 @@
 #include "xnd/util/path.h"
 #include "xnd/util/log.h"
 #include "xnd/platform/exe.h"
+#include "xnd/coordinator/xnd_coord_api.h"
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -217,6 +218,7 @@ static __noreturn void restart_from_checkpoint(char *ckptfile)
         int                     stat, retval;
         
         launch_coordinator();
+
         retval = xnd_exe_path_of("xnd_restart", xnd_restart_path, PATH_MAX);
         if (retval < 0) {
                 xnd_error("Failed to get path of xnd_restart\n");

@@ -7,13 +7,25 @@
 #include <sys/types.h>
 
 #define XND_HEADER_MAGIC        "xnd_ckptfile_v0"
+#define XND_CKPTFILE_SUFFIX     "ckpt"
 #define XND_CKPT_ENTRY_MAX      1024
 #define XND_CKPT_VM_REGION_MAX  1023
 
 struct xnd_ckpt_header {
         char                            magic[16];
+
+        u32                             xnd_pid;
+        u32                             xnd_ppid;
+        u32                             xnd_group;
+
         pid_t                           pid;
         pid_t                           ppid;
+        pid_t                           sid;
+        pid_t                           gid;
+
+        u32                             nr_peers;
+        u32                             root_of_tree;
+
         u32                             entry_count;
         u32                             region_count;
         struct shared_cache_info        shared_cache_info;
@@ -27,5 +39,7 @@ enum xnd_ckpt_entry {
 bool xnd_ckptfile_valid(const struct xnd_ckpt_header *);
 int xnd_ckptfile_parse(const char *, char *, size_t, u64 *);
 void xnd_ckptfile_name(char *, size_t);
+int xnd_ckptfile_extract_header(char *, struct xnd_ckpt_header *);
+void xnd_ckptfile_write_header(struct xnd_ckpt_header *, u32, u32);
 
 #endif /* XND_CKPTFILE_H */
