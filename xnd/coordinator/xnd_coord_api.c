@@ -23,6 +23,35 @@
 
 static int coord_fd = -1;
 
+pid_t launch_coordinator(void)
+{
+        char    buf[PATH_MAX], exe[PATH_MAX];
+        pid_t   coord_pid;
+        int     err;
+
+        coord_pid = fork();
+        switch (coord_pid) {
+        case -1:
+                xnd_error("fork: %s\n", strerror(errno));
+                return -1;
+        case 0:
+                xnd_exe_dir(buf, sizeof(buf));
+                xnd_path_join(exe, sizeof(exe), buf, "xnd_coordinator");
+                err = execl(exe, exe, NULL);
+                if (err != 0) {
+                        xnd_error("execl(%s): %s\n", exe, strerror(errno));
+                        exit(XND_EXIT_FAILURE);
+                }
+        default:
+                break;
+        }
+
+        snprintf(buf, sizeof(buf), "%d", coord_pid);
+        xnd_assert(setenv("XND_COORD_PID", buf, 1) == 0);
+
+        return coord_pid;
+}
+
 void connect_to_coord(void)
 {
         int                     err, tries, fd;

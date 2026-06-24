@@ -80,6 +80,8 @@ struct xnd_msg {
 extern "C" {
 #endif /* __cplusplus */
 
+pid_t launch_coordinator(void);
+
 void connect_to_coord(void);
 void disconnect_from_coord(void);
 

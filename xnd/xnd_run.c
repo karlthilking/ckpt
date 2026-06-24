@@ -38,7 +38,6 @@ static const char *help =
 
 static void usage(void);
 static void xnd_exit(int);
-static void launch_coordinator(void);
 static void print_checkpoint(char **);
 static void launch_checkpoint_target(char **);
 static void restart_from_checkpoint(char *);
@@ -79,32 +78,6 @@ static __noreturn void xnd_exit(int status)
         exit(status);
 }
 
-static void launch_coordinator(void)
-{
-        char    buf[PATH_MAX], exe[PATH_MAX];
-        pid_t   coord_pid;
-        int     err;
-
-        coord_pid = fork();
-        switch (coord_pid) {
-        case -1:
-                xnd_error("fork: %s\n", strerror(errno));
-                xnd_exit(XND_EXIT_FAILURE);
-        case 0:
-                xnd_exe_dir(buf, sizeof(buf));
-                xnd_path_join(exe, sizeof(exe), buf, "xnd_coordinator");
-                err = execl(exe, exe, NULL);
-                if (err != 0) {
-                        xnd_error("execl(%s): %s\n", exe, strerror(errno));
-                        xnd_exit(XND_EXIT_FAILURE);
-                }
-        default:
-                snprintf(buf, sizeof(buf), "%d", coord_pid);
-                xnd_assert(setenv("XND_COORD_PID", buf, 1) == 0);
-                break;
-        }
-}
-
 static __noreturn void print_checkpoint(char **argv)
 {
         /* ./xnd_print <ckpt-file> */
@@ -143,9 +116,16 @@ static __noreturn void launch_checkpoint_target(char **argv)
          */
         char    libxnd_path[PATH_MAX], xnd_program[PATH_MAX], pid_str[11];
         int     err;
-        pid_t   pid;
+        pid_t   pid, coord_pid;
 
-        launch_coordinator();
+        if ((coord_pid = launch_coordinator()) == -1) {
+                xnd_error("Failed to launch coordinator\n");
+                xnd_exit(XND_EXIT_FAILURE);
+        } else {
+                snprintf(pid_str, sizeof(pid_str), "%d", coord_pid);
+                xnd_assert(setenv("XND_COORD_PID", pid_str, 1) == 0);
+                bzero(pid_str, sizeof(pid_str));
+        }
 
         err = xnd_exe_path_of("libxnd.dylib", libxnd_path, PATH_MAX);
         if (err < 0) {
@@ -194,18 +174,20 @@ static __noreturn void launch_checkpoint_target(char **argv)
                   xnd_program, libxnd_path);
         
         pid = fork();
-        switch (pid) {
-        case -1:
+        if (pid == -1) {
                 xnd_error("fork: %s\n", strerror(errno));
                 xnd_exit(XND_EXIT_FAILURE);
-        case 0:
+        } else if (pid == 0) {
                 snprintf(pid_str, sizeof(pid_str), "%d", getpid());
                 xnd_assert(setenv("XND_ROOT_PID", pid_str, 1) == 0);
-                xnd_printf("Executing %s (pid=%s)\n", argv[0], pid_str);
+                xnd_printf("Executing %s (pid=%s)\n", xnd_program, pid_str);
+
                 err = execvp(argv[0], argv);
-                xnd_error("execvp(%s): %s\n", argv[0], strerror(errno));
-                xnd_exit(XND_EXIT_FAILURE);
-        default:
+                if (err != 0) {
+                        xnd_error("execvp: %s\n", strerror(errno));
+                        xnd_exit(XND_EXIT_FAILURE);
+                }
+        } else {
                 err = waitpid(pid, NULL, 0);
                 if (err < 0) {
                         xnd_error("waitpid: %s\n", strerror(errno));
@@ -213,20 +195,26 @@ static __noreturn void launch_checkpoint_target(char **argv)
                 }
                 xnd_exit(XND_EXIT_SUCCESS);
         }
-        
+
         unreachable();
 }
 
 static __noreturn void restart_from_checkpoint(char *ckptfile)
 {
         short                   flags;
-        pid_t                   pid;
+        pid_t                   pid, coord_pid;
         extern char             **environ;
         posix_spawnattr_t       attr;
-        char                    xnd_restart_path[PATH_MAX];
+        char                    xnd_restart_path[PATH_MAX], pid_str[11];
         int                     stat, retval;
         
-        launch_coordinator();
+        if ((coord_pid = launch_coordinator()) == -1) {
+                xnd_error("Failed to launch coordinator\n");
+                xnd_exit(XND_EXIT_FAILURE);
+        } else {
+                snprintf(pid_str, sizeof(pid_str), "%d", coord_pid);
+                xnd_assert(setenv("XND_COORD_PID", pid_str, 1) == 0);
+        }
 
         retval = xnd_exe_path_of("xnd_restart", xnd_restart_path, PATH_MAX);
         if (retval < 0) {

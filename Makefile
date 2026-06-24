@@ -86,7 +86,8 @@ XND_RUN_SOURCES := \
         xnd/util/path.c \
         xnd/shared_cache.c \
         xnd/util/io.c \
-        xnd/util/log.c
+        xnd/util/log.c \
+        xnd/coordinator/xnd_coord_api.c
 
 XND_COMMAND_SOURCES := \
         xnd/xnd_command.c \
