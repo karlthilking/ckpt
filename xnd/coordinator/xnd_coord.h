@@ -14,25 +14,25 @@
 enum coord_state {
         COORD_NULL,
         COORD_RUNNING,
-        COORD_PRE_CHECKPOINT,
-        COORD_CKPT_IN_PROGRESS,
-        COORD_POST_CHECKPOINT,
-        COORD_RESTART_IN_PROGRESS,
+        COORD_PRECKPT,
+        COORD_CKPTINPROG,
+        COORD_POSTCKPT,
+        COORD_RESTARTINPROG,
         COORD_EXITING
 };
 
 enum coord_comm_type {
-        COORD_BROADCAST,
-        COORD_REDUCE
+        COMM_BROADCAST,
+        COMM_REDUCE
 };
 
 enum proc_state {
-        PROC_RUNNING,
-        PROC_RECV_CKPT_REQUEST,
-        PROC_READY_FOR_CKPT,
-        PROC_CKPT_IN_PROG,
-        PROC_CKPT_COMPLETE,
-        PROC_EXITED,
+        P_RUNNING,
+        P_CKPTRECV,
+        P_CKPTRDY,
+        P_CKPTINPROG,
+        P_CKPTDONE,
+        P_EXITED
 };
 
 struct proc {
@@ -83,9 +83,13 @@ void coord_broadcast_exit(void);
 void coord_kill_processes(void);
 
 bool coord_do_checkpoint(void);
-int coord_prepare_for_collective(enum coord_comm_type);
+
+int coord_multicast_prepare(enum coord_comm_type, enum proc_state);
+int coord_collective_prepare(enum coord_comm_type);
+
 int coord_broadcast(struct xnd_msg *, enum proc_state, enum proc_state);
 int coord_reduce(enum xnd_msghdr, enum proc_state, enum proc_state);
+
 void coord_write_msg_metainfo(struct proc *, struct xnd_msg *);
 
 void coord_await_msg(void);

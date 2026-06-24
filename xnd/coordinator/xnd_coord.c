@@ -276,7 +276,7 @@ void coord_await_connection(void)
                 coord_register_process(fd, &msg);
                 break;
         case XND_PROC_CONNECT_RESTART:
-                coord_state = COORD_RESTART_IN_PROGRESS;
+                coord_state = COORD_RESTARTINPROG;
                 coord_register_process(fd, &msg);
                 coord_state = COORD_RUNNING;
                 break;
@@ -319,7 +319,7 @@ void coord_register_process(int fd, struct xnd_msg *msg)
                 p->is_root_of_tree = false;
         }
 
-        if (coord_state == COORD_RESTART_IN_PROGRESS) {
+        if (coord_state == COORD_RESTARTINPROG) {
                 /**
                  * If restart in progress, process already knows its
                  * virtual pid and ppid, as well as unique xnd pid, ppid,
@@ -354,7 +354,7 @@ void coord_register_process(int fd, struct xnd_msg *msg)
                 }
         }
 
-        p->state = PROC_RUNNING;
+        p->state = P_RUNNING;
         p->next = NULL;
         p->prev = NULL;
 
@@ -384,9 +384,7 @@ void coord_handle_command(struct xnd_msg *msg)
         xnd_assert(msg->hdr == XND_COMMAND);
         switch (msg->cmd) {
         case XND_CKPT_CMD:
-                if (!coord_do_checkpoint()) {
-                        xnd_error("Checkpoint failed!\n");
-                }
+                coord_do_checkpoint();
                 break;
         case XND_EXIT_CMD:
                 coord_broadcast_exit();
@@ -409,20 +407,20 @@ __noreturn void coord_broadcast_exit(void)
         msg.cmd = XND_EXIT_CMD;
         
         sent = 0;
-        total = coord_prepare_for_collective(COORD_BROADCAST);
-        sent = coord_broadcast(&msg, PROC_RUNNING, PROC_RUNNING);
+        total = coord_collective_prepare(COMM_BROADCAST);
+        sent = coord_broadcast(&msg, P_RUNNING, P_RUNNING);
         if (sent != total) {
                 xnd_error("Broadcast failed: XND_COMMAND (XND_EXIT_CMD)\n");
                 xnd_abort();
         }
 
-        ready = coord_prepare_for_collective(COORD_REDUCE);
+        ready = coord_collective_prepare(COMM_REDUCE);
         if (ready != total) {
                 xnd_error("Error before reduction: XND_PROC_EXIT\n");
                 xnd_abort();
         }
 
-        received = coord_reduce(XND_PROC_EXIT, PROC_RUNNING, PROC_EXITED);
+        received = coord_reduce(XND_PROC_EXIT, P_RUNNING, P_EXITED);
         if (received != total) {
                 xnd_error("Reduction failed: XND_PROC_EXIT\n");
                 xnd_abort();
@@ -447,8 +445,8 @@ __noreturn void coord_kill_processes(void)
 
 bool coord_do_checkpoint(void)
 {
-        int             ready, sent, received;
         struct xnd_msg  msg;
+        int             expected, arrived, total_sent, total_recv;
         sigset_t        set;
 
         sigemptyset(&set);
@@ -456,90 +454,158 @@ bool coord_do_checkpoint(void)
         sigaddset(&set, SIGTERM);
         sigaddset(&set, SIGQUIT);
         sigprocmask(SIG_BLOCK, &set, NULL);
-
-        coord_state = COORD_PRE_CHECKPOINT;
-        ready = coord_prepare_for_collective(COORD_BROADCAST);
         
+        coord_state = COORD_PRECKPT;
         msg.hdr = XND_CKPT_REQUEST;
-        msg.num_peers = ready;
-        sent = coord_broadcast(&msg, PROC_RUNNING, PROC_RECV_CKPT_REQUEST);
-        if (sent != ready) {
+        total_sent = 0;
+        /**
+         * Send XND_CKPT_REQUEST to all processes currently connected
+         * to the coordinator. coord_prepare_for_multicast() will
+         * determine how many processes in the P_RUNNING state are ready
+         * to receive the checkpoint request. coord_broadcast() will
+         * exclusively send only to processes who have not already received
+         * a checkpoint request.
+         */
+send_ckpt_request:
+        expected = coord_multicast_prepare(COMM_BROADCAST, P_RUNNING);
+        if (expected != 0) {
+                arrived = coord_broadcast(&msg, P_RUNNING, P_CKPTRECV);
+                total_sent += arrived;
+                if (arrived != expected) {
+                        goto send_ckpt_request;
+                }
+        }
+
+        if (unlikely(total_sent == 0)) {
                 xnd_error("Broadcast failed: XND_CKPT_REQUEST\n");
-                goto bad;
+                goto fail;
         }
-        num_peers = sent;
         
-        ready = coord_prepare_for_collective(COORD_REDUCE);
-        if (ready != num_peers) {
-                xnd_error("Error before reduction: "
-                          "XND_READY_FOR_CKPT\n");
-                goto bad;
+        /**
+         * Collect XND_CKPT_READY from each process that received an
+         * XND_CKPT_REQUEST in the previous phase.
+         */
+        total_recv = 0;
+recv_ckpt_ready:
+        expected = coord_multicast_prepare(COMM_REDUCE, P_CKPTRECV);
+        if (expected != 0) {
+                arrived = coord_reduce(XND_CKPT_READY, P_CKPTRECV, P_CKPTRDY);
+                total_recv += arrived;
+                if (arrived != expected) {
+                        goto recv_ckpt_ready;
+                }
         }
 
-        received = coord_reduce(XND_READY_FOR_CKPT, PROC_RECV_CKPT_REQUEST,
-                                PROC_READY_FOR_CKPT);
-        if (received != ready) {
-                xnd_error("Reduction failed: XND_READY_FOR_CKPT\n");
-                goto bad;
+        if (unlikely(total_recv != total_sent)) {
+                xnd_error("Reduction failed: XND_CKPT_READY\n");
+                goto fail;
         }
         
-        ready = coord_prepare_for_collective(COORD_BROADCAST);
-        if (ready != num_peers) {
-                xnd_error("Error before broadcast: "
-                          "XND_START_CKPT\n");
-                goto bad;
+        num_peers = total_recv;
+        /**
+         * Broadcast to all processes to inform them to start their local
+         * checkpoint. If any processes have exited between the previous
+         * phase and receiving XND_CKPT_START, the checkpoint will fail.
+         */
+        msg.hdr = XND_CKPT_START;
+        msg.num_peers = num_peers;
+        expected = coord_collective_prepare(COMM_BROADCAST);
+        if (expected != num_peers) {
+                xnd_error("Error before broadcast: XND_CKPT_START\n");
+                goto fail;
+        }
+        arrived = coord_broadcast(&msg, P_CKPTRDY, P_CKPTINPROG);
+        if (arrived != expected) {
+                xnd_error("Broadcast failed: XND_CKPT_START\n");
+                goto fail;
         }
         
-        msg.hdr = XND_START_CKPT;
-        xnd_assert(msg.num_peers == num_peers);
-        sent = coord_broadcast(&msg, PROC_READY_FOR_CKPT, PROC_CKPT_IN_PROG);
-        if (sent != ready) {
-                xnd_error("Broadcast failed: XND_START_CKPT\n");
-                goto bad;
+        /**
+         * Wait to receive XND_CKPT_DONE from all participating processes.
+         * If any process fails to checkpoint, the global checkpoint will
+         * be aborted.
+         */
+        coord_state = COORD_CKPTINPROG;
+        expected = coord_collective_prepare(COMM_REDUCE);
+        if (expected != num_peers) {
+                xnd_error("Error before reduction: XND_CKPT_DONE\n");
+                goto fail;
         }
-
-        coord_state = COORD_CKPT_IN_PROGRESS;
-        ready = coord_prepare_for_collective(COORD_REDUCE);
-        if (ready != num_peers) {
-                xnd_error("Error before reduction: "
-                          "XND_CKPT_COMPLETE\n");
-                goto bad;
-        }
-        
-        received = coord_reduce(XND_CKPT_COMPLETE, PROC_CKPT_IN_PROG,
-                                PROC_CKPT_COMPLETE);
-        if (received != ready) {
-                xnd_error("Reduction failed: XND_CKPT_COMPLETE\n");
-                goto bad;
-        }
-
-        coord_state = COORD_POST_CHECKPOINT;
-        ready = coord_prepare_for_collective(COORD_BROADCAST);
-        if (ready != num_peers) {
-                xnd_error("Error before broadcast: "
-                          "XND_RESUME_AFTER_CKPT\n");
-                goto bad;
+        arrived = coord_reduce(XND_CKPT_DONE, P_CKPTINPROG, P_CKPTDONE);
+        if (arrived != expected) {
+                xnd_error("Reduction failed: XND_CKPT_DONE");
+                goto fail;
         }
         
         msg.hdr = XND_RESUME_AFTER_CKPT;
-        xnd_assert(msg.num_peers == num_peers);
-        sent = coord_broadcast(&msg, PROC_CKPT_COMPLETE, PROC_RUNNING);
-        if (sent != ready) {
+        coord_state = COORD_POSTCKPT;
+        expected = coord_collective_prepare(COMM_BROADCAST);
+        if (expected != num_peers) {
+                xnd_error("Error before broadcast: XND_RESUME_AFTER_CKPT\n");
+                goto fail;
+        }
+        arrived = coord_broadcast(&msg, P_CKPTDONE, P_RUNNING);
+        if (arrived != expected) {
                 xnd_error("Broadcast failed: XND_RESUME_AFTER_CKPT\n");
-                goto bad;
+                goto fail;
         }
         
         sigprocmask(SIG_UNBLOCK, &set, NULL);
         coord_state = COORD_RUNNING;
         return true;
-
-bad:
+fail:
+        xnd_error("Aborting checkpoint...\n");
         sigprocmask(SIG_UNBLOCK, &set, NULL);
         coord_state = COORD_RUNNING;
         return false;
 }
 
-int coord_prepare_for_collective(enum coord_comm_type comm)
+int coord_multicast_prepare(enum coord_comm_type comm, 
+                            enum proc_state expected)
+{
+        struct proc     *p, *next;
+        int             err, nfds, total;
+        fd_set          set;
+        struct timeval  tv = { 0, 10000 };
+
+again:
+        nfds = 0;
+        total = 0;
+        FD_ZERO(&set);
+        for (p = proc_list->head; p; p = next) {
+                next = p->next;
+                err = kill(p->real_pid, 0);
+                if (err != 0 && errno == ESRCH) {
+                        proc_list_remove(p);
+                        continue;
+                }
+                if (p->state == expected) {
+                        total++;
+                        FD_SET(p->fd, &set);
+                        if (p->fd + 1 > nfds) {
+                                nfds = p->fd + 1;
+                        }
+                }
+        }
+
+        if (total == 0) {
+                return 0;
+        }
+
+        if (comm == COMM_BROADCAST) {
+                err = select(nfds, NULL, &set, NULL, &tv);
+        } else if (comm == COMM_REDUCE) {
+                err = select(nfds, &set, NULL, NULL, &tv);
+        }
+
+        if (err != total) {
+                goto again;
+        }
+
+        return total;
+}
+
+int coord_collective_prepare(enum coord_comm_type comm)
 {
         struct proc     *p, *next;
         int             err, nfds, total;
@@ -564,9 +630,9 @@ again:
                 }
         }
 
-        if (comm == COORD_BROADCAST) {
+        if (comm == COMM_BROADCAST) {
                 err = select(nfds, NULL, &set, NULL, &tv);
-        } else if (comm == COORD_REDUCE) {
+        } else if (comm == COMM_REDUCE) {
                 err = select(nfds, &set, NULL, NULL, &tv);
         }
         
@@ -588,8 +654,8 @@ int coord_broadcast(struct xnd_msg *msg, enum proc_state old,
         for (p = proc_list->head; p; p = p->next) {
                 if (p->state == new) {
                         continue;
-                } else if (p->state != old) {
-                        return -1;
+                } else {
+                        xnd_assert(p->state == old);
                 }
                 coord_write_msg_metainfo(p, msg);
                 bytes = writeall(p->fd, msg, sizeof(struct xnd_msg));
@@ -615,7 +681,7 @@ int coord_reduce(enum xnd_msghdr expected, enum proc_state old,
                 if (p->state == new) {
                         continue;
                 } else if (p->state != old) {
-                        return -1;
+                        xnd_assert(p->state == old);
                 }
                 bytes = readall(p->fd, &msg, sizeof(msg));
                 if (bytes == sizeof(msg)) {
@@ -709,10 +775,10 @@ void coord_handle_proc_msg(struct proc *p)
                         coord_state = COORD_EXITING;
                 }
                 break;
-        case XND_VIRT_TO_REAL_REQ:
+        case XND_VIRT_TO_REAL:
                 coord_send_virt_to_real(p, &msg);
                 break;
-        case XND_REAL_TO_VIRT_REQ:
+        case XND_REAL_TO_VIRT:
                 coord_send_real_to_virt(p, &msg);
                 break;
         default:

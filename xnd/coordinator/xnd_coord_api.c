@@ -78,7 +78,7 @@ pid_t recv_virt_to_real_pid(pid_t virt)
         struct xnd_msg  msg;
         int             err;
 
-        msg.hdr = XND_VIRT_TO_REAL_REQ;
+        msg.hdr = XND_VIRT_TO_REAL;
         msg.virt_pid = virt;
         err = send_msg_to_coord(&msg);
         if (err != 0) {
@@ -105,7 +105,7 @@ pid_t recv_real_to_virt_pid(pid_t real)
         struct xnd_msg  msg;
         int             err;
 
-        msg.hdr = XND_REAL_TO_VIRT_REQ;
+        msg.hdr = XND_REAL_TO_VIRT;
         msg.real_pid = real;
         err = send_msg_to_coord(&msg);
         if (err != 0) {

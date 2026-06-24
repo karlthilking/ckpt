@@ -139,7 +139,7 @@ void notify_coord_before_checkpoint(void)
         struct xnd_msg  msg;
         int             err;
 
-        msg.hdr = XND_READY_FOR_CKPT;
+        msg.hdr = XND_CKPT_READY;
         write_msg_metainfo(&msg);
 
         err = send_msg_to_coord(&msg);
@@ -148,7 +148,7 @@ void notify_coord_before_checkpoint(void)
                 xnd_abort();
         }
 
-        enter_coord_barrier(XND_READY_FOR_CKPT);
+        enter_coord_barrier(XND_CKPT_READY);
 }
 
 void notify_coord_after_checkpoint(void)
@@ -156,7 +156,7 @@ void notify_coord_after_checkpoint(void)
         struct xnd_msg  msg;
         int             err;
 
-        msg.hdr = XND_CKPT_COMPLETE;
+        msg.hdr = XND_CKPT_DONE;
         write_msg_metainfo(&msg);
 
         err = send_msg_to_coord(&msg);
@@ -165,7 +165,7 @@ void notify_coord_after_checkpoint(void)
                 xnd_abort();
         }
 
-        enter_coord_barrier(XND_CKPT_COMPLETE);
+        enter_coord_barrier(XND_CKPT_DONE);
 }
 
 void enter_coord_barrier(enum xnd_msghdr event)
@@ -179,8 +179,8 @@ void enter_coord_barrier(enum xnd_msghdr event)
                 xnd_abort();
         }
 
-        if (event == XND_READY_FOR_CKPT) {
-                if (msg.hdr == XND_START_CKPT) {
+        if (event == XND_CKPT_READY) {
+                if (msg.hdr == XND_CKPT_START) {
                         num_peers = msg.num_peers;
                         return;
                 }
@@ -188,7 +188,7 @@ void enter_coord_barrier(enum xnd_msghdr event)
                 xnd_abort();
         }
 
-        if (event == XND_CKPT_COMPLETE) {
+        if (event == XND_CKPT_DONE) {
                 if (msg.hdr == XND_RESUME_AFTER_CKPT) {
                         return;
                 }

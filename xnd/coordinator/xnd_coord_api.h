@@ -16,13 +16,13 @@ enum xnd_msghdr {
         XND_COMMAND,
         XND_COORD_ACK,
         XND_CLIENT_ACK,
-        XND_VIRT_TO_REAL_REQ,
-        XND_REAL_TO_VIRT_REQ,
+        XND_VIRT_TO_REAL,
+        XND_REAL_TO_VIRT,
         XND_CKPT_REQUEST,
-        XND_READY_FOR_CKPT,
-        XND_START_CKPT,
-        XND_CKPT_COMPLETE,
-        XND_RESUME_AFTER_CKPT,
+        XND_CKPT_READY,
+        XND_CKPT_START,
+        XND_CKPT_DONE,
+        XND_RESUME_AFTER_CKPT
 };
 
 enum xnd_command {
