@@ -66,6 +66,7 @@ struct xnd_msg {
         u32                     xnd_ppid;
         u32                     xnd_pgid;
         
+        u64                     epoch;
         u32                     num_peers;
         u32                     is_root_of_tree;
 

@@ -84,6 +84,7 @@ void coord_broadcast_exit(void);
 void coord_kill_processes(void);
 
 void coord_do_restart(int, struct xnd_msg *);
+int coord_write_ckpt_manifest(void);
 bool coord_do_checkpoint(void);
 
 int coord_multicast_prepare(enum coord_comm_type, enum proc_state);

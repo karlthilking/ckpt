@@ -97,6 +97,8 @@ XND_COMMAND_SOURCES := \
         xnd/coordinator/xnd_coord_api.c
 
 XND_COORD_SOURCES := \
+        xnd/shared_cache.c \
+        xnd/ckptfile.c \
         xnd/util/io.c \
         xnd/util/log.c \
         xnd/util/path.c \
@@ -177,7 +179,7 @@ test:
 	$(MAKE) -C test all
 
 clean:
-	rm -rf *.dSYM
+	rm -rf *.dSYM *-checkpoints
 	rm -f $(ALL) *.dylib *.o *.ckpt *.dat *.xnd
 	rm -f xnd.log xnd-debug.sh
 

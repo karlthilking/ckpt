@@ -17,6 +17,7 @@ extern u32      xnd_pid;
 extern u32      xnd_ppid;
 extern u32      xnd_pgid;
 
+extern u64      epoch;
 extern u32      num_peers;
 extern bool     is_root_of_tree;
 
@@ -87,6 +88,7 @@ void register_with_coord_on_restart(void)
         msg.xnd_pid = xnd_pid;
         msg.xnd_ppid = xnd_ppid;
         msg.xnd_pgid = xnd_pgid;
+        msg.epoch = epoch;
         msg.num_peers = num_peers;
         msg.is_root_of_tree = is_root_of_tree;
 

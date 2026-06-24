@@ -66,22 +66,26 @@ int write_ckpt(const struct xnd_ckpt_header *header,
                const struct xnd_vm_region *regions, 
                const ucontext_t *uctx)
 {
-        int                             fd, retval;
-        char                            ckpt_out[256];
+        int                             dirfd, fd, retval;
+        char                            ckptfile[XND_CKPTFILE_MAXLEN];
         const struct xnd_vm_region      *rgn = regions;
         ssize_t                         bytes;
         
-        xnd_ckptfile_name(ckpt_out, sizeof(ckpt_out), 
-                          header->xnd_uuid, epoch, xnd_pid);
+        xnd_ckptfile_name(ckptfile, sizeof(ckptfile), xnd_pid);
+        dirfd = xnd_ckptdir_open(header->xnd_uuid, epoch);
+        if (dirfd < 0) {
+                xnd_error("Failed to open checkpoint directory\n");
+                return -1;
+        }
 
-        fd = open(ckpt_out, O_CREAT | O_EXCL | O_WRONLY, 0666);
+        fd = xnd_ckptfile_create(dirfd, ckptfile);
         if (fd < 0) {
-                xnd_error("open: %s\n", strerror(errno));
+                xnd_error("Failed to create checkpoint file\n");
                 return -1;
         }
         
-        bytes = writeall(fd, header, sizeof(*header));
-        if (bytes != sizeof(*header)) {
+        bytes = writeall(fd, header, sizeof(struct xnd_ckpt_header));
+        if (bytes != sizeof(struct xnd_ckpt_header)) {
                 xnd_error("Failed to write checkpoint header\n");
                 goto bad;
         }
@@ -111,11 +115,11 @@ int write_ckpt(const struct xnd_ckpt_header *header,
                 }
         }
         
-        printf("Checkpoint written to %s\n", ckpt_out);
+        printf("Checkpoint written to %s\n", ckptfile);
         close(fd);
         return 0;
 bad:
-        xnd_error("Checkpoint failed (%s)\n", ckpt_out);
+        xnd_error("Checkpoint failed (%s)\n", ckptfile);
         close(fd);
         return -1;
 }

@@ -1,5 +1,6 @@
 /* xnd_coord.c */
 #include "xnd/xnd.h"
+#include "xnd/ckptfile.h"
 #include "xnd/util/io.h"
 #include "xnd/coordinator/xnd_coord.h"
 #include "xnd/coordinator/xnd_coord_api.h"
@@ -21,8 +22,9 @@ static struct proc      *group_leader   = NULL;
 static enum coord_state coord_state     = COORD_NULL;
 
 static uuid_t   xnd_uuid;
+static u64      epoch           = 0;
 static pid_t    next_virt_pid   = 1;
-static u32      next_xnd_pid    = 0;
+static u32      next_xnd_pid    = 1000;
 static int      listen_fd       = -1;
 static u32      num_peers       = 0;
 
@@ -292,6 +294,8 @@ void coord_register_process(int fd, struct xnd_msg *msg)
         struct xnd_msg  resp;
         struct proc     *p, *parent;
         ssize_t         bytes;
+        pid_t           virt_pid = -1, virt_ppid = -1;
+        u32             xnd_pid, xnd_ppid, xnd_pgid;
         
         /**
          * If process with msg->real_pid has already registered,
@@ -301,6 +305,11 @@ void coord_register_process(int fd, struct xnd_msg *msg)
          */
         p = proc_list_find_real(msg->real_pid);
         if (p != NULL) {
+                xnd_pid = p->xnd_pid;
+                xnd_ppid = p->xnd_ppid;
+                xnd_pgid = p->xnd_pgid;
+                virt_pid = p->virt_pid;
+                virt_ppid = p->virt_ppid;
                 proc_list_remove(p);
                 p = NULL;
         }
@@ -332,20 +341,34 @@ void coord_register_process(int fd, struct xnd_msg *msg)
                 }
                 p->state = P_RESTARTINPROG;
         } else {
+                xnd_assert(epoch == 0);
                 if (p->is_root_of_tree) {
-                        p->virt_ppid = next_virt_pid++;
-                        p->virt_pid = next_virt_pid++;
-                        p->xnd_ppid = next_xnd_pid++;
-                        p->xnd_pid = next_xnd_pid++;
-                        p->xnd_pgid = p->xnd_pid;
+                        if (virt_pid == -1 && virt_ppid == -1) {
+                                p->virt_ppid = next_virt_pid++;
+                                p->virt_pid = next_virt_pid++;
+                                p->xnd_ppid = next_xnd_pid++;
+                                p->xnd_pid = next_xnd_pid++;
+                                p->xnd_pgid = p->xnd_pid;
+                        } else {
+                                p->virt_ppid = virt_ppid;
+                                p->virt_pid = virt_pid;
+                                p->xnd_ppid = xnd_ppid;
+                                p->xnd_pid = xnd_pid;
+                                p->xnd_pgid = xnd_pgid;
+                        }
                 } else {
                         parent = proc_list_find_real(p->real_ppid);
                         xnd_assert(parent != NULL);
                         p->virt_ppid = parent->virt_pid;
-                        p->virt_pid = next_virt_pid++;
                         p->xnd_ppid = parent->xnd_pid;
                         p->xnd_pgid = parent->xnd_pgid;
-                        p->xnd_pid = next_xnd_pid++;
+                        if (virt_pid == -1 && virt_ppid == -1) {
+                                p->virt_pid = next_virt_pid++;
+                                p->xnd_pid = next_xnd_pid++;
+                        } else {
+                                p->virt_pid = virt_pid;
+                                p->xnd_pid = xnd_pid;
+                        }
                 }
                 p->state = P_RUNNING;
         }
@@ -446,6 +469,7 @@ void coord_do_restart(int first_fd, struct xnd_msg *first_msg)
         ssize_t         bytes;
 
         coord_state = COORD_RESTARTINPROG;
+        epoch = first_msg->epoch;
         num_peers = first_msg->num_peers;
         memcpy(xnd_uuid, first_msg->xnd_uuid, sizeof(uuid_t));
         coord_register_process(first_fd, first_msg);
@@ -468,6 +492,7 @@ void coord_do_restart(int first_fd, struct xnd_msg *first_msg)
                 xnd_error("num_peers=%u, ready=%d\n", num_peers, expected);
                 coord_exit(COORD_EXIT_FAILURE);
         }
+
         sent = coord_broadcast(&resp, P_RESTARTINPROG, P_RUNNING);
         if (expected != sent) {
                 xnd_error("Broadcast failed: XND_RESUME_AFTER_RESTART\n");
@@ -475,6 +500,24 @@ void coord_do_restart(int first_fd, struct xnd_msg *first_msg)
         }
 
         coord_state = COORD_RUNNING;
+}
+
+int coord_write_ckpt_manifest(void)
+{
+        u32             min_id = UINT32_MAX, max_id = 0;
+        struct proc     *p;
+        
+        for (p = proc_list->head; p; p = p->next) {
+                if (p->xnd_pid < min_id) {
+                        min_id = p->xnd_pid;
+                }
+                if (p->xnd_pid > max_id) {
+                        max_id = p->xnd_pid;
+                }
+        }
+
+        return xnd_ckptfile_write_manifest(num_peers, min_id, max_id,
+                                           xnd_uuid, epoch);
 }
 
 bool coord_do_checkpoint(void)
@@ -537,6 +580,15 @@ recv_ckpt_ready:
         
         num_peers = total_recv;
         /**
+         * Now that every process is suspended, create the
+         * checkpoint directory.
+         */
+        if (xnd_ckptdir_create(xnd_uuid, epoch) != 0) {
+                xnd_error("Failed to make checkpoint directory\n");
+                goto fail;
+        }
+
+        /**
          * Broadcast to all processes to inform them to start their local
          * checkpoint. If any processes have exited between the previous
          * phase and receiving XND_CKPT_START, the checkpoint will fail.
@@ -553,7 +605,7 @@ recv_ckpt_ready:
                 xnd_error("Broadcast failed: XND_CKPT_START\n");
                 goto fail;
         }
-        
+
         /**
          * Wait to receive XND_CKPT_DONE from all participating processes.
          * If any process fails to checkpoint, the global checkpoint will
@@ -568,6 +620,14 @@ recv_ckpt_ready:
         arrived = coord_reduce(XND_CKPT_DONE, P_CKPTINPROG, P_CKPTDONE);
         if (arrived != expected) {
                 xnd_error("Reduction failed: XND_CKPT_DONE");
+                goto fail;
+        }
+        
+        /**
+         * Now, every process has finished their local checkpoint;
+         * write the checkpoint manifest.
+         */
+        if (coord_write_ckpt_manifest() != 0) {
                 goto fail;
         }
         
