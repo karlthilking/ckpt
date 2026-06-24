@@ -28,12 +28,31 @@
 static _Atomic enum xnd_state   libxnd_state = XND_UNINITIALIZED;
 static uintptr_t                _pthread_ptr_munge_token;
 
-__hidden int                    xnd_ckpt_sig    = -1;
-__hidden u32                    xnd_pid         = -1;
-__hidden u32                    xnd_ppid        = -1;
-__hidden u32                    xnd_pgid        = -1;
-__hidden u32                    num_peers       = 0;
-__hidden bool                   is_root_of_tree = false;
+__hidden uuid_t xnd_uuid;
+__hidden u32    xnd_pid;
+__hidden u32    xnd_ppid;
+__hidden u32    xnd_pgid;
+
+__hidden u64    epoch           = 0;
+__hidden int    xnd_ckpt_sig    = -1;
+__hidden u32    num_peers       = 0;
+__hidden bool   is_root_of_tree = false;
+
+char *xnd_program(void)
+{
+#if DEVELOPMENT || DEBUG
+        static char *program = NULL;
+        
+        if (unlikely(program == NULL)) {
+                program = getenv("XND_PROGRAM");
+                xnd_trace("XND_PROGRAM=%s\n", program);
+        }
+
+        return program;
+#else
+        return NULL;
+#endif
+}
 
 static __always_inline pid_t xnd_root_pid(void)
 {
@@ -49,18 +68,18 @@ static __always_inline pid_t xnd_root_pid(void)
 
 int xnd_ckpt_signal(void)
 {
-        char *sig;
+        char            *str;
+        static int      ckpt_sig = -1;
 
-        if (unlikely(xnd_ckpt_sig == -1)) {
-                if ((sig = getenv("XND_CKPT_SIGNAL")) != NULL) {
-                        xnd_ckpt_sig = atoi(sig);
+        if (unlikely(ckpt_sig == -1)) {
+                if ((str = getenv("XND_CKPT_SIGNAL"))) {
+                        ckpt_sig = atoi(str);
                 } else {
-                        xnd_ckpt_sig = XND_DEFAULT_CKPT_SIGNAL;
+                        ckpt_sig = XND_DEFAULT_CKPT_SIGNAL;
                 }
-                xnd_trace("XND_CKPT_SIGNAL=%d\n", xnd_ckpt_sig);
         }
-        
-        return xnd_ckpt_sig;
+
+        return ckpt_sig;
 }
 
 enum xnd_state get_xnd_state(void)
@@ -87,8 +106,10 @@ void xnd_precheckpoint(void)
  */
 void xnd_postrestart(void)
 {
+        epoch++;
         connect_to_coord();
         register_with_coord_on_restart();
+        postrestart_coord_barrier();
         
         thread_sig_fixup(_pthread_ptr_munge_token);
         ckpt_vm_deallocate_regions();
@@ -122,7 +143,7 @@ void xnd_checkpoint(ucontext_t *uctx)
         nr_entries = nr_regions + 1;
 
         xnd_ckptfile_write_header(&header, nr_regions, nr_entries,
-                                  xnd_pid, xnd_ppid, xnd_pgid,
+                                  xnd_uuid, xnd_pid, xnd_ppid, xnd_pgid,
                                   num_peers, is_root_of_tree);
         write_ckpt(&header, entries, regions, uctx);
 }

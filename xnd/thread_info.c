@@ -426,9 +426,16 @@ __noreturn void ckpt_thread_exit(void)
 
 void ckpt_thread_wait(void)
 {
-        wait_for_coord_msg();
-        if (unlikely(get_xnd_state() == XND_EXITING)) {
-                ckpt_thread_exit();
+        enum xnd_msghdr hdr;
+
+        for (;;) {
+                hdr = wait_for_coord_msg();
+                if (unlikely(get_xnd_state() == XND_EXITING)) {
+                        ckpt_thread_exit();
+                }
+                if (hdr == XND_CKPT_REQUEST) {
+                        return;
+                }
         }
 }
 
@@ -479,14 +486,14 @@ void *ckpt_thread_work(void *ready)
         for (;;) {
                 /**
                  * ckpt_thread_wait() will wait for the coordinator to
-                 * send a message. If the coordinator sends a checkpoint
-                 * request, the checkpoint thread will notify the
-                 * coordinator with XND_READY_FOR_CHECKPOINT and wait in
-                 * a barrier until the checkpoint can start. Then, the
-                 * checkpoint thread will return here and initiate the
-                 * process-local checkpoint.
+                 * send a message and will return if the coordinator
+                 * sends XND_CKPT_REQUEST. Now, the checkpoint thread
+                 * will call preckpt_coord_barrier() to enter
+                 * a global barrier and wait for the coordinator to
+                 * send XND_CKPT_START.
                  */
                 ckpt_thread_wait();
+                preckpt_coord_barrier();
                 
                 thread_save_tls();
                 thread_save_sig_state();
@@ -500,7 +507,7 @@ void *ckpt_thread_work(void *ready)
                 xnd_checkpoint(&myself->uctx);
                 
                 /**
-                 * notify_coord_after_checkpoint() will send
+                 * postckpt_coord_barrier() will send
                  * XND_CHECKPOINT_COMPLETE to the coordinator.
                  * Then, the checkpoint thread will wait in a global
                  * barrier until the checkpoint thread replies with
@@ -508,7 +515,7 @@ void *ckpt_thread_work(void *ready)
                  * checkpoint thread can now release the barrier
                  * for user threads and allow the process to continue.
                  */
-                notify_coord_after_checkpoint();
+                postckpt_coord_barrier();
 
                 set_tls_slot(TLS_TLV_FLAG_SLOT, TLS_TLV_INIT_MAGIC);
                 barrier_release();

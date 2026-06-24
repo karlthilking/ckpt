@@ -5,15 +5,17 @@
 #include "xnd/xnd.h"
 #include "xnd/shared_cache.h"
 #include <sys/types.h>
+#include <uuid/uuid.h>
 
 #define XND_HEADER_MAGIC        "xnd_ckptfile_v0"
-#define XND_CKPTFILE_SUFFIX     "ckpt"
+#define XND_CKPTFILE_SUFFIX     "xnd"
 #define XND_CKPT_ENTRY_MAX      1024
 #define XND_CKPT_VM_REGION_MAX  1023
 
 struct xnd_ckpt_header {
         char                            magic[16];
-
+        
+        uuid_t                          xnd_uuid;
         u32                             xnd_pid;
         u32                             xnd_ppid;
         u32                             xnd_pgid;
@@ -37,10 +39,10 @@ enum xnd_ckpt_entry {
 };
 
 bool xnd_ckptfile_valid(const struct xnd_ckpt_header *);
-int xnd_ckptfile_parse(const char *, char *, size_t, u64 *);
-void xnd_ckptfile_name(char *, size_t);
+int xnd_ckptfile_parse(const char *, uuid_t, u64 *, u32 *);
+void xnd_ckptfile_name(char *, size_t, const uuid_t, u64, u32);
 int xnd_ckptfile_extract_header(char *, struct xnd_ckpt_header *);
 void xnd_ckptfile_write_header(struct xnd_ckpt_header *, 
-                               u32, u32, u32, u32, u32, u32, bool);
+                               u32, u32, uuid_t, u32, u32, u32, u32, bool);
 
 #endif /* XND_CKPTFILE_H */

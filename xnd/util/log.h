@@ -52,8 +52,19 @@ enum xnd_log_fd {
 #define xnd_trace(__fmt, ...) \
         xnd_print(XND_TRACE_FD, "trace", __fmt, ##__VA_ARGS__)
 
+#ifndef _real_getpid
+# define _real_getpid() ({                                      \
+        register s64 x0 __asm__("x0");                          \
+        register s64 x16 __asm__("x16") = (s64)SYS_getpid;      \
+        __asm__ __volatile__(                                   \
+                "svc #0x80" : "=r" (x0) : "r" (x16)             \
+        );                                                      \
+        (pid_t)x0;                                              \
+})
+#endif
+
 #define xnd_abort() do { \
-        register s64 x0 __asm__("x0") = (s64)getpid();          \
+        register s64 x0 __asm__("x0") = (s64)_real_getpid();    \
         register s64 x1 __asm__("x1") = (s64)SIGABRT;           \
         register s64 x16 __asm__("x16") = (s64)SYS_kill;        \
         __asm__ __volatile__(                                   \

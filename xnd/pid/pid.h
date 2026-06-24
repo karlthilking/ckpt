@@ -44,7 +44,10 @@
         (pid_t)x0;                                              \
 })
 
-#define _real_getpid()          _real_id_0(pid)
+#ifndef _real_getpid
+# define _real_getpid() _real_id_0(pid)
+#endif
+
 #define _real_getgid()          _real_id_0(gid)
 #define _real_getppid()         _real_id_0(ppid)
 #define _real_getpgrp()         _real_id_0(pgrp)

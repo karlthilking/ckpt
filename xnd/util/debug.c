@@ -1,5 +1,6 @@
 /* debug.c */
 #include "xnd/xnd.h"
+#include "xnd/xnd_lib.h"
 #include "xnd/platform/exe.h"
 #include <stdlib.h>
 #include <stdio.h>
@@ -14,7 +15,7 @@ static __always_inline s32 main_image_index(void)
 {
         char *program;
 
-        if ((program = getenv("XND_PROGRAM")) == NULL) {
+        if ((program = xnd_program()) == NULL) {
                 xnd_trace("getenv: %s\n", strerror(errno));
                 return -1;
         }

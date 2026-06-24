@@ -34,74 +34,59 @@ bool xnd_ckptfile_valid(const struct xnd_ckpt_header *header)
         return true;
 }
 
-/**
- * xnd_ckptfile_parse:
- *  Parse the path to checkpoint file to extract the name of the program
- *  that was checkpointed and the timestamp of the checkpoint.
- * 
- *  Checkpoint file format: <program>-<timestamp>.ckpt
- * 
- *  @program: Out parameter filled with name of program from checkpoint
- *  @buflen: Size of buffer that should be filled with the program name
- *  @timestamp: Out parameter set to the timestamp of the checkpoint
- */
-int xnd_ckptfile_parse(const char *path, char *program, 
-                       size_t buflen, u64 *timestamp)
+int xnd_ckptfile_parse(const char *path, uuid_t uuid, u64 *epoch, u32 *xnd_pid)
 {
-        char    *delim, base[PATH_MAX], stem[PATH_MAX], ext[5];
-        size_t  len;
+        /**
+         * Checkpoint filename format:
+         *  <uuid>-<epoch>-<xnd_pid>.xnd
+         */
+        char    base[PATH_MAX], stem[PATH_MAX];
+        char    uuid_str[37];
+        char    ext[sizeof(XND_CKPTFILE_SUFFIX) + 1];
+        int     err;
 
-        if (xnd_path_basename(path, base, sizeof(base)) < 0) {
-                xnd_error("Failed to parse basename from checkpoint "
-                          "file path: %s\n", path);
+        err = xnd_path_basename(path, base, sizeof(base));
+        if (err < 0) {
+                xnd_error("Failed to parse basename of checkpoint path\n");
                 return -1;
         }
 
-        if (xnd_path_stem(base, stem, sizeof(stem)) < 0) {
-                xnd_error("Failed to parse stem of checkpoint "
-                          "file: %s\n", base);
+        err = xnd_path_stem(base, stem, sizeof(stem));
+        if (err < 0) {
+                xnd_error("Failed to parse stem of checkpoint file\n");
                 return -1;
         }
 
-        if (xnd_path_ext(base, ext, sizeof(ext)) < 0) {
-                xnd_error("Failed to parse extension of checkpoint "
-                          "file: %s\n", base);
+        err = xnd_path_ext(base, ext, sizeof(ext));
+        if (err < 0) {
+                xnd_error("Failed to parse extension of checkpoint file\n");
                 return -1;
         }
 
         if (strcmp(ext, XND_CKPTFILE_SUFFIX)) {
-                xnd_error("Invalid checkpoint file: %s\n", base);
+                xnd_error("Invalid checkpoint file extension: %s\n", ext);
                 return -1;
         }
         
-        delim = strrchr(stem, '-');
-        if (!delim) {
-                xnd_error("Invalid checkpoint file: %s\n", base);
-                return -1;
-        }
+        xnd_assert(strlen(stem) > sizeof(uuid_str));
+        strncpy(uuid_str, stem, sizeof(uuid_str));
+        uuid_parse(uuid_str, uuid);
         
-        if (timestamp) {
-                *timestamp = strtoull(delim + 1, NULL, 10);
-        }
-
-        len = delim - stem;
-        if (buflen < len + 1) {
-                xnd_error("Buffer is too small, need %zu bytes\n", len + 1);
-                return -1;
-        }
-
-        strncpy(program, stem, len);
-        program[len] = '\0';
+        xnd_assert(sscanf(stem + 36, "%llu-%u", epoch, xnd_pid) == 2);
         return 0;
 }
 
-void xnd_ckptfile_name(char *out, size_t outlen)
+void xnd_ckptfile_name(char *out, size_t outlen, 
+                       const uuid_t uuid, u64 epoch, u32 xnd_pid)
 {
-        char *prefix;
-        
-        prefix = getenv("XND_PROGRAM");
-        xnd_assert(prefix != NULL);
-        snprintf(out, outlen, "%s-%ld.ckpt", prefix, (long)time(NULL));
+        /**
+         * Checkpoint file format:
+         *  <uuid>-<epoch>-<xnd_pid>.xnd
+         */
+        char uuid_str[37];
+
+        uuid_unparse(uuid, uuid_str);
+        snprintf(out, outlen, "%s-%llu-%u.xnd", uuid_str, epoch, xnd_pid);
 }
 
 int xnd_ckptfile_extract_header(char *path, struct xnd_ckpt_header *hdr)
@@ -131,17 +116,16 @@ int xnd_ckptfile_extract_header(char *path, struct xnd_ckpt_header *hdr)
 
 void xnd_ckptfile_write_header(struct xnd_ckpt_header *hdr, 
                                u32 nr_regions, u32 nr_entries,
-                               u32 xnd_pid, u32 xnd_ppid, u32 xnd_pgid,
-                               u32 num_peers, bool is_root_of_tree)
+                               uuid_t xnd_uuid, u32 xnd_pid, u32 xnd_ppid, 
+                               u32 xnd_pgid, u32 num_peers, 
+                               bool is_root_of_tree)
 {
-        int err;
-
         bzero(hdr, sizeof(*hdr));
         strcpy(hdr->magic, XND_HEADER_MAGIC);
         
-        err = shared_cache_get_info(&hdr->shared_cache_info);
-        xnd_assert(err == 0);
-
+        xnd_assert(shared_cache_get_info(&hdr->shared_cache_info) == 0);
+        
+        memcpy(hdr->xnd_uuid, xnd_uuid, sizeof(uuid_t));
         hdr->xnd_pid = xnd_pid;
         hdr->xnd_ppid = xnd_ppid;
         hdr->xnd_pgid = xnd_pgid;
@@ -153,16 +137,6 @@ void xnd_ckptfile_write_header(struct xnd_ckpt_header *hdr,
 
         hdr->num_peers = num_peers;
         hdr->is_root_of_tree = is_root_of_tree;
-
-        /**
-         * TODO:
-         *  hdr->xnd_pid = ?
-         *  hdr->xnd_ppid = ?
-         *  hdr->xnd_group = ?
-         *
-         *  hdr->nr_peers = ?
-         *  hdr->root_of_tree = ?
-         */
 
         hdr->region_count = nr_regions;
         hdr->entry_count = nr_entries;

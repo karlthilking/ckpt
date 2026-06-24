@@ -14,6 +14,9 @@
 #include <string.h>
 #include <errno.h>
 
+extern u64      epoch;
+extern u32      xnd_pid;
+
 int write_vm_region(int fd, const struct xnd_vm_region *region)
 {
         ssize_t bytes;
@@ -68,9 +71,10 @@ int write_ckpt(const struct xnd_ckpt_header *header,
         const struct xnd_vm_region      *rgn = regions;
         ssize_t                         bytes;
         
-        xnd_ckptfile_name(ckpt_out, sizeof(ckpt_out));
+        xnd_ckptfile_name(ckpt_out, sizeof(ckpt_out), 
+                          header->xnd_uuid, epoch, xnd_pid);
+
         fd = open(ckpt_out, O_CREAT | O_EXCL | O_WRONLY, 0666);
-        
         if (fd < 0) {
                 xnd_error("open: %s\n", strerror(errno));
                 return -1;

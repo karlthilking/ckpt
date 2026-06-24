@@ -22,8 +22,27 @@ enum xnd_msghdr {
         XND_CKPT_READY,
         XND_CKPT_START,
         XND_CKPT_DONE,
-        XND_RESUME_AFTER_CKPT
+        XND_RESUME_AFTER_CKPT,
+        XND_RESTART,
+        XND_RESUME_AFTER_RESTART
 };
+
+#define xnd_msghdr_string(h) \
+        (((h) == XND_PROC_CONNECT_LAUNCH) ? "XND_PROC_CONNECT_LAUNCH" : \
+         ((h) == XND_PROC_CONNECT_RESTART) ? "XND_PROC_CONNECT_RESTART" : \
+         ((h) == XND_PROC_EXIT) ? "XND_PROC_EXIT" : \
+         ((h) == XND_COMMAND) ? "XND_COMMAND" : \
+         ((h) == XND_COORD_ACK) ? "XND_COORD_ACK" : \
+         ((h) == XND_CLIENT_ACK) ? "XND_CLIENT_ACK" : \
+         ((h) == XND_VIRT_TO_REAL) ? "XND_VIRT_TO_REAL" : \
+         ((h) == XND_REAL_TO_VIRT) ? "XND_REAL_TO_VIRT" : \
+         ((h) == XND_CKPT_REQUEST) ? "XND_CKPT_REQUEST" : \
+         ((h) == XND_CKPT_READY) ? "XND_CKPT_READY" : \
+         ((h) == XND_CKPT_START) ? "XND_CKPT_START" : \
+         ((h) == XND_CKPT_DONE) ? "XND_CKPT_DONE" : \
+         ((h) == XND_RESUME_AFTER_CKPT) ? "XND_RESUME_AFTER_CKPT" : \
+         ((h) == XND_RESTART) ? "XND_RESTART" : \
+         ((h) == XND_RESUME_AFTER_RESTART) ? "XND_RESUME_AFTER_RESTART" : "")
 
 enum xnd_command {
         XND_NULL_CMD,
@@ -41,11 +60,12 @@ struct xnd_msg {
         enum xnd_msghdr         hdr;
         enum xnd_command        cmd;
         enum xnd_coord_return   ret;
-
+        
+        uuid_t                  xnd_uuid;
         u32                     xnd_pid;
         u32                     xnd_ppid;
         u32                     xnd_pgid;
-
+        
         u32                     num_peers;
         u32                     is_root_of_tree;
 

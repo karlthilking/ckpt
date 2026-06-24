@@ -178,7 +178,7 @@ test:
 
 clean:
 	rm -rf *.dSYM
-	rm -f $(ALL) *.dylib *.o *.ckpt *.dat
+	rm -f $(ALL) *.dylib *.o *.ckpt *.dat *.xnd
 	rm -f xnd.log xnd-debug.sh
 
 .PHONY: all clean test

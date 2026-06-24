@@ -12,9 +12,11 @@ extern pid_t    _real_ppid;
 extern pid_t    _virt_pid;
 extern pid_t    _virt_ppid;
 
+extern uuid_t   xnd_uuid;
 extern u32      xnd_pid;
 extern u32      xnd_ppid;
 extern u32      xnd_pgid;
+
 extern u32      num_peers;
 extern bool     is_root_of_tree;
 
@@ -50,7 +52,6 @@ void register_with_coord_on_launch(void)
         }
         
         xnd_assert(msg.hdr == XND_COORD_ACK && msg.ret == XND_SUCCESS);
-
         /**
          * Coordinator replies with virtual pid and ppid after this
          * process has connected, initialize _virt_pid and _virt_ppid
@@ -58,19 +59,22 @@ void register_with_coord_on_launch(void)
          */
         _virt_pid = msg.virt_pid;
         _virt_ppid = msg.virt_ppid;
-
+        
+        memcpy(xnd_uuid, msg.xnd_uuid, sizeof(uuid_t));
         xnd_pid = msg.xnd_pid;
         xnd_ppid = msg.xnd_ppid;
         xnd_pgid = msg.xnd_pgid;
 
         xnd_trace("Registered with coordinator\n"
-                  "_virt_pid=%d, _virt_ppid=%d\n", 
-                  _virt_pid, _virt_ppid);
+                  "_virt_pid=%d, _virt_ppid=%d\n"
+                  "xnd_pid=%u, xnd_ppid=%u, xnd_pgid=%u\n",
+                  _virt_pid, _virt_ppid, xnd_pid, xnd_ppid, xnd_pgid);
 }
 
 void register_with_coord_on_restart(void)
 {
         int             err;
+        bool            success;
         struct xnd_msg  msg;
 
         msg.hdr = XND_PROC_CONNECT_RESTART;
@@ -78,31 +82,48 @@ void register_with_coord_on_restart(void)
         msg.virt_ppid = _virt_ppid;
         msg.real_pid = _real_getpid();
         msg.real_ppid = _real_getppid();
-
+        
+        memcpy(msg.xnd_uuid, xnd_uuid, sizeof(uuid_t));
         msg.xnd_pid = xnd_pid;
         msg.xnd_ppid = xnd_ppid;
         msg.xnd_pgid = xnd_pgid;
+        msg.num_peers = num_peers;
         msg.is_root_of_tree = is_root_of_tree;
 
         err = send_msg_to_coord(&msg);
-        if (err != 0) {
+        if (unlikely(err != 0)) {
                 xnd_error("Failed to register with coordinator!\n");
                 xnd_abort();
         }
 
-        xnd_assert(recv_msg_from_coord(&msg) == 0);
-        xnd_assert(msg.hdr == XND_COORD_ACK && msg.ret == XND_SUCCESS);
+        err = recv_msg_from_coord(&msg);
+        if (unlikely(err != 0)) {
+                xnd_error("Failed to receive message from coordinator\n");
+                xnd_abort();
+        }
+        
+        success = (msg.hdr == XND_COORD_ACK && msg.ret == XND_SUCCESS);
+        if (unlikely(!success)) {
+                xnd_error("Unexpected coordinator reply: %d (%s)\n",
+                          msg.hdr, xnd_msghdr_string(msg.hdr));
+                xnd_abort();
+        }
 
 #if DEBUG || DEVELOPMENT
-        xnd_assert(msg.real_pid == _real_getpid());
-        xnd_assert(msg.real_ppid == _real_getppid());
-        xnd_assert(msg.virt_pid == _virt_pid);
-        xnd_assert(msg.virt_ppid == _virt_ppid);
+        xnd_assert(msg.real_pid == _real_getpid() &&
+                   msg.real_ppid == _real_getppid());
+        xnd_assert(msg.virt_pid == _virt_pid && 
+                   msg.virt_ppid == _virt_ppid);
+        xnd_assert(msg.xnd_pid == xnd_pid && 
+                   msg.xnd_ppid == xnd_ppid &&
+                   msg.xnd_pgid == xnd_pgid);
 #endif
         xnd_trace("Registered with coordinator (post-restart)\n"
-                  "virtual pid=%d, virtual ppid=%d\n"
-                  "real pid=%d, real ppid=%d\n",
-                  msg.virt_pid, msg.virt_ppid, msg.real_pid, msg.real_ppid);
+                  "_virt_pid=%d, _virt_ppid=%d\n"
+                  "_real_pid=%d, _real_ppid=%d\n"
+                  "xnd_pid=%u, xnd_ppid=%u, xnd_pgid=%u\n",
+                  msg.virt_pid, msg.virt_ppid, msg.real_pid, msg.real_ppid,
+                  msg.xnd_pid, msg.xnd_ppid, msg.xnd_pgid);
 }
 
 void send_exit_to_coord(void)
@@ -114,7 +135,7 @@ void send_exit_to_coord(void)
         xnd_assert(send_msg_to_coord(&msg) == 0);
 }
 
-void wait_for_coord_msg(void)
+enum xnd_msghdr wait_for_coord_msg(void)
 {
         struct xnd_msg  msg;
         int             err;
@@ -129,12 +150,10 @@ retry:
                 xnd_abort();
         }
         
-        if (msg.hdr == XND_CKPT_REQUEST) {
-                notify_coord_before_checkpoint();
-        }
+        return msg.hdr;
 }
 
-void notify_coord_before_checkpoint(void)
+void preckpt_coord_barrier(void)
 {
         struct xnd_msg  msg;
         int             err;
@@ -148,10 +167,22 @@ void notify_coord_before_checkpoint(void)
                 xnd_abort();
         }
 
-        enter_coord_barrier(XND_CKPT_READY);
+        err = recv_msg_from_coord(&msg);
+        if (unlikely(err != 0)) {
+                xnd_error("Failed to receive coordinator message\n");
+                xnd_abort();
+        }
+        
+        if (unlikely(msg.hdr != XND_CKPT_START)) {
+                xnd_error("Unexpected coordinator message: %d (%s)\n",
+                          msg.hdr, xnd_msghdr_string(msg.hdr));
+                xnd_abort();
+        }
+
+        num_peers = msg.num_peers;
 }
 
-void notify_coord_after_checkpoint(void)
+void postckpt_coord_barrier(void)
 {
         struct xnd_msg  msg;
         int             err;
@@ -165,34 +196,33 @@ void notify_coord_after_checkpoint(void)
                 xnd_abort();
         }
 
-        enter_coord_barrier(XND_CKPT_DONE);
+        err = recv_msg_from_coord(&msg);
+        if (unlikely(err != 0)) {
+                xnd_error("Failed to receive coordinator message\n");
+                xnd_abort();
+        }
+
+        if (unlikely(msg.hdr != XND_RESUME_AFTER_CKPT)) {
+                xnd_error("Unexpected coordinator message: %d (%s)\n",
+                          msg.hdr, xnd_msghdr_string(msg.hdr));
+                xnd_abort();
+        }
 }
 
-void enter_coord_barrier(enum xnd_msghdr event)
+void postrestart_coord_barrier(void)
 {
         struct xnd_msg  msg;
         int             err;
 
         err = recv_msg_from_coord(&msg);
         if (unlikely(err != 0)) {
-                xnd_error("Failed to receive message from coordinator!\n");
+                xnd_error("Failed to receive coordinator message\n");
                 xnd_abort();
         }
 
-        if (event == XND_CKPT_READY) {
-                if (msg.hdr == XND_CKPT_START) {
-                        num_peers = msg.num_peers;
-                        return;
-                }
-                xnd_error("Unrecognized coordinator reply: %d\n", msg.hdr);
-                xnd_abort();
-        }
-
-        if (event == XND_CKPT_DONE) {
-                if (msg.hdr == XND_RESUME_AFTER_CKPT) {
-                        return;
-                }
-                xnd_error("Unrecognized coordinator reply: %d\n", msg.hdr);
+        if (unlikely(msg.hdr != XND_RESUME_AFTER_RESTART)) {
+                xnd_error("Unexpected coordinator reply: %d (%s)\n",
+                          msg.hdr, xnd_msghdr_string(msg.hdr));
                 xnd_abort();
         }
 }

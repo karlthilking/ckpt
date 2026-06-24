@@ -9,6 +9,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <errno.h>
+#include <uuid/uuid.h>
 #include <signal.h>
 #include <sys/socket.h>
 #include <sys/types.h>
@@ -17,11 +18,13 @@
 
 static struct proc_list *proc_list      = NULL;
 static struct proc      *group_leader   = NULL;
-static pid_t            next_virt_pid   = 1;
-static u32              next_xnd_pid    = 0;
-static int              listen_fd       = -1;
-static u32              num_peers       = 0;
 static enum coord_state coord_state     = COORD_NULL;
+
+static uuid_t   xnd_uuid;
+static pid_t    next_virt_pid   = 1;
+static u32      next_xnd_pid    = 0;
+static int      listen_fd       = -1;
+static u32      num_peers       = 0;
 
 void proc_list_init(void)
 {
@@ -108,7 +111,8 @@ void coord_init(void)
 {
         int                     err;
         struct sockaddr_un      addr;
-
+        
+        uuid_generate(xnd_uuid);
         coord_setup_handler(SIGINT);
         coord_setup_handler(SIGTERM);
         coord_setup_handler(SIGQUIT);
@@ -208,16 +212,13 @@ void coord_event_loop(void)
                 coord_await_connection();
         }
 
-        while (coord_state != COORD_EXITING) {
+        for (;;) {
                 for (int iter = 0; iter < 100; iter++) {
                         coord_await_connection();
                         coord_await_msg();
                 }
                 coord_check_status();
         }
-        
-        xnd_assert(coord_state == COORD_EXITING);
-        xnd_assert(proc_list->size == 0);
 }
 
 void coord_check_status(void)
@@ -234,7 +235,7 @@ void coord_check_status(void)
         }
 
         if (proc_list->size == 0) {
-                coord_state = COORD_EXITING;
+                coord_exit(COORD_EXIT_SUCCESS);
         }
 }
 
@@ -276,9 +277,7 @@ void coord_await_connection(void)
                 coord_register_process(fd, &msg);
                 break;
         case XND_PROC_CONNECT_RESTART:
-                coord_state = COORD_RESTARTINPROG;
-                coord_register_process(fd, &msg);
-                coord_state = COORD_RUNNING;
+                coord_do_restart(fd, &msg);
                 break;
         case XND_COMMAND:
                 coord_handle_command(&msg);
@@ -312,12 +311,7 @@ void coord_register_process(int fd, struct xnd_msg *msg)
         p->fd = fd;
         p->real_pid = msg->real_pid;
         p->real_ppid = msg->real_ppid;
-
-        if (msg->is_root_of_tree) {
-                p->is_root_of_tree = true;
-        } else {
-                p->is_root_of_tree = false;
-        }
+        p->is_root_of_tree = msg->is_root_of_tree;
 
         if (coord_state == COORD_RESTARTINPROG) {
                 /**
@@ -336,6 +330,7 @@ void coord_register_process(int fd, struct xnd_msg *msg)
                 if (p->xnd_pid + 1 > next_xnd_pid) {
                         next_xnd_pid = p->xnd_pid + 1;
                 }
+                p->state = P_RESTARTINPROG;
         } else {
                 if (p->is_root_of_tree) {
                         p->virt_ppid = next_virt_pid++;
@@ -352,9 +347,9 @@ void coord_register_process(int fd, struct xnd_msg *msg)
                         p->xnd_pgid = parent->xnd_pgid;
                         p->xnd_pid = next_xnd_pid++;
                 }
+                p->state = P_RUNNING;
         }
 
-        p->state = P_RUNNING;
         p->next = NULL;
         p->prev = NULL;
 
@@ -365,7 +360,8 @@ void coord_register_process(int fd, struct xnd_msg *msg)
         resp.real_ppid = p->real_ppid;
         resp.virt_pid = p->virt_pid;
         resp.virt_ppid = p->virt_ppid;
-
+        
+        memcpy(resp.xnd_uuid, xnd_uuid, sizeof(uuid_t));
         resp.xnd_pid = p->xnd_pid;
         resp.xnd_ppid = p->xnd_ppid;
         resp.xnd_pgid = p->xnd_pgid;
@@ -441,6 +437,44 @@ __noreturn void coord_kill_processes(void)
         
         coord_exit(COORD_EXIT_SUCCESS);
         unreachable();
+}
+
+void coord_do_restart(int first_fd, struct xnd_msg *first_msg)
+{
+        int             fd, expected, sent;
+        struct xnd_msg  msg, resp;
+        ssize_t         bytes;
+
+        coord_state = COORD_RESTARTINPROG;
+        num_peers = first_msg->num_peers;
+        memcpy(xnd_uuid, first_msg->xnd_uuid, sizeof(uuid_t));
+        coord_register_process(first_fd, first_msg);
+
+        while (proc_list->size < num_peers) {
+                fd = accept(listen_fd, NULL, NULL);
+                if (unlikely(fd < 0)) {
+                        xnd_error("accept: %s\n", strerror(errno));
+                        continue;
+                }
+                bytes = readall(fd, &msg, sizeof(msg));
+                xnd_assert(bytes == sizeof(msg));
+                coord_register_process(fd, &msg);
+        }
+
+        resp.hdr = XND_RESUME_AFTER_RESTART;
+        expected = coord_collective_prepare(COMM_BROADCAST);
+        if (expected != num_peers) {
+                xnd_error("Error before XND_RESUME_AFTER_RESTART\n");
+                xnd_error("num_peers=%u, ready=%d\n", num_peers, expected);
+                coord_exit(COORD_EXIT_FAILURE);
+        }
+        sent = coord_broadcast(&resp, P_RESTARTINPROG, P_RUNNING);
+        if (expected != sent) {
+                xnd_error("Broadcast failed: XND_RESUME_AFTER_RESTART\n");
+                coord_exit(COORD_EXIT_FAILURE);
+        }
+
+        coord_state = COORD_RUNNING;
 }
 
 bool coord_do_checkpoint(void)

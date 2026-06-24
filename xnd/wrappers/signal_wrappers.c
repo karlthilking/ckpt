@@ -71,8 +71,8 @@ sig_t __signal_hook(int sig, sig_t handler)
         if (err != 0) {
                 return SIG_ERR;
         }
-
-        if ((program = getenv("XND_PROGRAM")) != NULL) {
+        
+        if ((program = xnd_program()) != NULL) {
                 xnd_trace("%s installed handler for signal %d: %p\n",
                           program, sig, handler);
         }
@@ -110,7 +110,7 @@ int __sigaction_hook(int sig, const struct sigaction *act,
                 return err;
         }
         
-        if ((program = getenv("XND_PROGRAM")) != NULL) {
+        if ((program = xnd_program()) != NULL) {
                 xnd_trace("%s installed handler for signal %d: %p\n",
                           program, sig, act->sa_handler);
         }

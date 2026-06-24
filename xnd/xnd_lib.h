@@ -15,6 +15,7 @@ enum xnd_state {
         XND_EXITING
 };
 
+char *xnd_program(void);
 int xnd_ckpt_signal(void);
 
 enum xnd_state get_xnd_state(void);
