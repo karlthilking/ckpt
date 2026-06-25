@@ -57,6 +57,8 @@ struct xnd_restart_info {
                 }
         }
 
+        ~xnd_restart_info(void) = default;
+
         [[noreturn]] void process_targets(void) const noexcept;
 };
 
@@ -93,9 +95,9 @@ public:
         void create_orphan(bool) const noexcept;
         void create_process(bool) const noexcept;
 
-        auto path_to_ckpt(void) const noexcept -> std::string_view
+        auto path_to_ckpt(void) const noexcept -> char *
         {
-                return std::string_view(ckptpath);
+                return const_cast<char *>(ckptpath);
         }
         
         auto pid(void) const noexcept -> pid_t
@@ -133,6 +135,21 @@ public:
                 return header.xnd_pgid;
         }
 
+        auto is_orphan(void) const noexcept -> bool
+        {
+                return ppid() == 1;
+        }
+
+        auto is_non_orphan(void) const noexcept -> bool
+        {
+                return is_orphan() == false;
+        }
+
+        auto is_root_of_tree(void) const noexcept -> bool
+        {
+                return header.is_root_of_tree;
+        }
+
         auto is_group_leader(void) const noexcept -> bool
         {
                 return pid() == pgid();
@@ -165,11 +182,6 @@ public:
         const noexcept -> bool
         {
                 return pid() == other.pgid();
-        }
-
-        auto is_root_of_tree(void) const noexcept -> bool
-        {
-                return header.is_root_of_tree;
         }
 
         auto is_child_of(xnd_restart_target *other) 
@@ -243,6 +255,16 @@ public:
                 }
 
                 return false;
+        }
+
+        auto number_of_children(xnd_restart_target *t) 
+        const noexcept -> size_t
+        {
+                if (auto it = _map.find(t); it != _map.end()) {
+                        return it->second.size();
+                }
+
+                return 0u;
         }
         
         auto children_of(xnd_restart_target *t)

@@ -54,18 +54,6 @@ char *xnd_program(void)
 #endif
 }
 
-static __always_inline pid_t xnd_root_pid(void)
-{
-        char *root;
-
-        if ((root = getenv("XND_ROOT_PID")) != NULL) {
-                xnd_trace("XND_ROOT_PID=%s\n", root);
-                return (pid_t)atoi(root);
-        }
-        
-        return -1;
-}
-
 int xnd_ckpt_signal(void)
 {
         char            *str;
@@ -196,7 +184,6 @@ static __constructor(101) void xnd_setup(void)
         sigset_t                set;
         int                     err;
         
-        is_root_of_tree = (xnd_root_pid() == _real_getpid());
         connect_to_coord();
         register_with_coord_on_launch();
         

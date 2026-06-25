@@ -93,6 +93,7 @@ int coord_collective_prepare(enum coord_comm_type);
 int coord_broadcast(struct xnd_msg *, enum proc_state, enum proc_state);
 int coord_reduce(enum xnd_msghdr, enum proc_state, enum proc_state);
 
+void coord_determine_roots(void);
 void coord_write_msg_metainfo(struct proc *, struct xnd_msg *);
 
 void coord_await_msg(void);

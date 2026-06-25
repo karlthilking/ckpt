@@ -106,7 +106,6 @@ static __noreturn void launch(char **argv)
                 xnd_exit(XND_EXIT_FAILURE);
         } else if (pid == 0) {
                 snprintf(pid_str, sizeof(pid_str), "%d", getpid());
-                xnd_assert(setenv("XND_ROOT_PID", pid_str, 1) == 0);
                 xnd_printf("Executing %s (pid=%s)\n", xnd_program, pid_str);
 
                 err = execvp(argv[0], argv);

@@ -18,7 +18,6 @@
 #include <sys/select.h>
 
 static struct proc_list *proc_list      = NULL;
-static struct proc      *group_leader   = NULL;
 static enum coord_state coord_state     = COORD_NULL;
 
 static uuid_t   xnd_uuid;
@@ -55,10 +54,6 @@ void proc_list_add(struct proc *p)
 
         if (p->next) {
                 p->next->prev = p;
-        }
-        
-        if (p->is_root_of_tree) {
-                group_leader = p;
         }
 
         proc_list->size++;
@@ -320,7 +315,6 @@ void coord_register_process(int fd, struct xnd_msg *msg)
         p->fd = fd;
         p->real_pid = msg->real_pid;
         p->real_ppid = msg->real_ppid;
-        p->is_root_of_tree = msg->is_root_of_tree;
 
         if (coord_state == COORD_RESTARTINPROG) {
                 /**
@@ -342,7 +336,19 @@ void coord_register_process(int fd, struct xnd_msg *msg)
                 p->state = P_RESTARTINPROG;
         } else {
                 xnd_assert(epoch == 0);
-                if (p->is_root_of_tree) {
+                parent = proc_list_find_real(p->real_ppid);
+                if (parent) {
+                        p->virt_ppid = parent->virt_pid;
+                        p->xnd_ppid = parent->xnd_pid;
+                        p->xnd_pgid = parent->xnd_pgid;
+                        if (virt_pid == -1 && virt_ppid == -1) {
+                                p->virt_pid = next_virt_pid++;
+                                p->xnd_pid = next_xnd_pid++;
+                        } else {
+                                p->virt_pid = virt_pid;
+                                p->xnd_pid = xnd_pid;
+                        }
+                } else {
                         if (virt_pid == -1 && virt_ppid == -1) {
                                 p->virt_ppid = next_virt_pid++;
                                 p->virt_pid = next_virt_pid++;
@@ -355,19 +361,6 @@ void coord_register_process(int fd, struct xnd_msg *msg)
                                 p->xnd_ppid = xnd_ppid;
                                 p->xnd_pid = xnd_pid;
                                 p->xnd_pgid = xnd_pgid;
-                        }
-                } else {
-                        parent = proc_list_find_real(p->real_ppid);
-                        xnd_assert(parent != NULL);
-                        p->virt_ppid = parent->virt_pid;
-                        p->xnd_ppid = parent->xnd_pid;
-                        p->xnd_pgid = parent->xnd_pgid;
-                        if (virt_pid == -1 && virt_ppid == -1) {
-                                p->virt_pid = next_virt_pid++;
-                                p->xnd_pid = next_xnd_pid++;
-                        } else {
-                                p->virt_pid = virt_pid;
-                                p->xnd_pid = xnd_pid;
                         }
                 }
                 p->state = P_RUNNING;
@@ -589,6 +582,12 @@ recv_ckpt_ready:
         }
 
         /**
+         * Determine which processes are the roots of their trees
+         * (part of checkpoint header metadata).
+         */
+        coord_determine_roots();
+
+        /**
          * Broadcast to all processes to inform them to start their local
          * checkpoint. If any processes have exited between the previous
          * phase and receiving XND_CKPT_START, the checkpoint will fail.
@@ -787,6 +786,19 @@ int coord_reduce(enum xnd_msghdr expected, enum proc_state old,
         }
 
         return total;
+}
+
+void coord_determine_roots(void)
+{
+        struct proc *p;
+
+        for (p = proc_list->head; p; p = p->next) {
+                if (proc_list_find_real(p->real_ppid)) {
+                        p->is_root_of_tree = false;
+                } else {
+                        p->is_root_of_tree = true;
+                }
+        }
 }
 
 void coord_write_msg_metainfo(struct proc *p, struct xnd_msg *msg)

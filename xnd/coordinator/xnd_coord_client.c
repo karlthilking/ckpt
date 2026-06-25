@@ -27,7 +27,6 @@ static __always_inline void write_msg_metainfo(struct xnd_msg *msg)
         msg->real_ppid = _real_ppid;
         msg->virt_pid = _virt_pid;
         msg->virt_ppid = _virt_ppid;
-        msg->is_root_of_tree = is_root_of_tree;
 }
 
 void register_with_coord_on_launch(void)
@@ -38,7 +37,6 @@ void register_with_coord_on_launch(void)
         msg.hdr = XND_PROC_CONNECT_LAUNCH;
         msg.real_pid = _real_getpid();
         msg.real_ppid = _real_getppid();
-        msg.is_root_of_tree = is_root_of_tree;
 
         err = send_msg_to_coord(&msg);
         if (err != 0) {
@@ -180,8 +178,9 @@ void preckpt_coord_barrier(void)
                           msg.hdr, xnd_msghdr_string(msg.hdr));
                 xnd_abort();
         }
-
+        
         num_peers = msg.num_peers;
+        is_root_of_tree = msg.is_root_of_tree;
 }
 
 void postckpt_coord_barrier(void)
