@@ -56,6 +56,8 @@ struct xnd_restart_info {
                         exit(XND_EXIT_FAILURE);
                 }
         }
+
+        [[noreturn]] void process_targets(void) const noexcept;
 };
 
 class xnd_restart_target {
@@ -87,6 +89,9 @@ public:
         }
 
         [[noreturn]] void exec_restart(void) const noexcept;
+        void create_child(void) const noexcept;
+        void create_orphan(bool) const noexcept;
+        void create_process(bool) const noexcept;
 
         auto path_to_ckpt(void) const noexcept -> std::string_view
         {

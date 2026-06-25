@@ -18,18 +18,13 @@
 
 using namespace xnd;
 
-static void create_child_process(xnd_restart_target *);
-static void create_orphan_process(xnd_restart_target *, bool);
-static void create_process(xnd_restart_target *, bool);
-[[noreturn]] static void process_restart_targets(void);
+extern char **environ;
 
 static std::vector<xnd_restart_target *> targets;
 static std::vector<xnd_restart_target *> roots;
 
 static xnd_restart_info *info   = nullptr;
 static xnd_restart_dag  *dag    = nullptr;
-
-extern char **environ;
 
 [[noreturn]] void xnd_restart_target::exec_restart(void) const noexcept
 {
@@ -49,7 +44,7 @@ extern char **environ;
         }
         
         argv[0] = info->restart;
-        argv[1] = const_cast<char *>(ckptpath);
+        argv[1] = const_cast<char *>(this->ckptpath);
         argv[2] = nullptr;
 
         err = posix_spawn(&pid, info->restart, nullptr, &attr, argv, environ);
@@ -62,21 +57,21 @@ extern char **environ;
         unreachable();
 }
 
-static void create_child_process(xnd_restart_target *self)
+void xnd_restart_target::create_child(void) const noexcept
 {
         switch (fork()) {
         case -1:
                 xnd_error("fork: %s\n", strerror(errno));
                 exit(XND_EXIT_FAILURE);
         case 0:
-                create_process(self, false);
+                this->create_process(false);
                 unreachable();
         default:
                 return;
         }
 }
 
-static void create_orphan_process(xnd_restart_target *self, bool create_roots)
+void xnd_restart_target::create_orphan(bool create_roots) const noexcept
 {
         pid_t child;
 
@@ -91,24 +86,25 @@ static void create_orphan_process(xnd_restart_target *self, bool create_roots)
                         xnd_error("fork: %s\n", strerror(errno));
                         exit(XND_EXIT_FAILURE);
                 case 0:
-                        create_process(self, create_roots);
+                        this->create_process(create_roots);
                         unreachable();
                 default:
                         exit(0);
                 }
         default:
-                xnd_assert(waitpid(child, NULL, 0) == child);
+                xnd_assert(waitpid(child, nullptr, 0) == child);
                 return;
         }
 }
 
-static void create_process(xnd_restart_target *self, bool create_roots)
+void xnd_restart_target::create_process(bool create_roots) const noexcept
 {
+        auto self = const_cast<xnd_restart_target *>(this);
         if (dag->has_children(self)) {
                 for (auto child : dag->children_of(self)) {
                         xnd_assert(child != self);
                         if (child->sid() != self->pid()) {
-                                create_child_process(child);
+                                child->create_child();
                         }
                 }
         }
@@ -118,7 +114,7 @@ static void create_process(xnd_restart_target *self, bool create_roots)
                         if (root == self) {
                                 continue;
                         }
-                        create_orphan_process(root, false);
+                        root->create_orphan(false);
                 }
         }
 
@@ -133,9 +129,9 @@ static void create_process(xnd_restart_target *self, bool create_roots)
                         continue;
                 } else if (t->sid() == self->pid()) {
                         if (self->is_parent_of(t)) {
-                                create_child_process(t);
+                                t->create_child();
                         } else if (t->is_root_of_tree()) {
-                                create_orphan_process(t, false);
+                                t->create_orphan(false);
                         }
                 }
         }
@@ -143,12 +139,12 @@ static void create_process(xnd_restart_target *self, bool create_roots)
         self->exec_restart(); 
 }
 
-[[noreturn]] static void process_restart_targets(void)
+[[noreturn]] void xnd_restart_info::process_targets(void) const noexcept
 {
-        targets.reserve(info->manifest.entry_count);
-        for (u32 idx = 0; idx < info->manifest.entry_count; idx++) {
-                auto xnd_pid = info->manifest.xnd_pids[idx];
-                auto t = new xnd_restart_target(info->ckptdir, xnd_pid);
+        targets.reserve(this->manifest.entry_count);
+        for (u32 idx = 0; idx < this->manifest.entry_count; idx++) {
+                auto xnd_pid = this->manifest.xnd_pids[idx];
+                auto t = new xnd_restart_target(this->ckptdir, xnd_pid);
                 targets.push_back(t);
         }
 
@@ -158,12 +154,12 @@ static void create_process(xnd_restart_target *self, bool create_roots)
                         roots.push_back(t);
                 }
         }
-
+        
         xnd_assert(roots.size() != 0);
         if (roots.size() == 1) {
-                create_process(roots[0], true);
+                roots[0]->create_process(true);
         } else {
-                create_orphan_process(roots[0], true);
+                roots[0]->create_orphan(true);
         }
 
         unreachable();
@@ -191,6 +187,6 @@ int main(int argc, char *argv[])
         }
         
         info = new xnd_restart_info(argv[1]);
-        process_restart_targets();
+        info->process_targets();
         unreachable();
 }
