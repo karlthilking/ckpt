@@ -67,8 +67,8 @@ LIBXND_OBJECTS := \
         $(BUILD)/file_wrappers.o \
         $(BUILD)/pid_wrappers.o
 
-XND_RESTART_SOURCES := \
-        xnd/restart.c \
+XND_RESTART_INTERNAL_SOURCES := \
+        xnd/xnd_restart_internal.c \
         xnd/pac.c \
         xnd/vm_common.c \
         xnd/vm_restore.c \
@@ -79,8 +79,8 @@ XND_RESTART_SOURCES := \
         xnd/util/path.c \
         xnd/util/io.c
 
-XND_RUN_SOURCES := \
-        xnd/xnd_run.c \
+XND_LAUNCH_SOURCES := \
+        xnd/xnd_launch.c \
         xnd/ckptfile.c \
         xnd/platform/exe.c \
         xnd/util/path.c \
@@ -105,10 +105,21 @@ XND_COORD_SOURCES := \
         xnd/util/path.c \
         xnd/coordinator/xnd_coord.c \
 
+XND_RESTART_OBJECTS := \
+        $(BUILD)/xnd_restart.o \
+        $(BUILD)/exe.o \
+        $(BUILD)/path.o \
+        $(BUILD)/io.o \
+        $(BUILD)/xnd_coord_api.o \
+        $(BUILD)/shared_cache.o \
+        $(BUILD)/log.o \
+        $(BUILD)/ckptfile.o
+
 ALL := \
-        $(BUILD)/xnd_run \
+        $(BUILD)/xnd_launch \
         $(BUILD)/xnd_print \
         $(BUILD)/xnd_restart \
+        $(BUILD)/xnd_restart_internal \
         $(BUILD)/xnd_command \
         $(BUILD)/xnd_coordinator \
         $(BUILD)/libxnd.dylib
@@ -139,6 +150,9 @@ $(BUILD)/%.o: xnd/coordinator/%.c | $(BUILD)
 $(BUILD)/%.o: xnd/pid/%.c | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
+$(BUILD)/%.o: xnd/%.cpp | $(BUILD)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
 $(BUILD)/%.o: xnd/pid/%.cpp | $(BUILD)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
@@ -154,7 +168,7 @@ __DATA          := 0x500000008000
 __DATA_CONST    := 0x50000000c000
 __LINKEDIT      := 0x500000010000
 STACKADDR       := 0x500000110000
-$(BUILD)/xnd_restart: $(XND_RESTART_SOURCES) | $(BUILD)
+$(BUILD)/xnd_restart_internal: $(XND_RESTART_INTERNAL_SOURCES) | $(BUILD)
 	$(CC) $(CFLAGS) \
         -DXND_RESTART_STACKADDR=$(STACKADDR) \
         -Wl,-segaddr,__TEXT,$(__TEXT) \
@@ -164,7 +178,11 @@ $(BUILD)/xnd_restart: $(XND_RESTART_SOURCES) | $(BUILD)
         -Wl,-ld_classic \
         -o $@ $^
 
-$(BUILD)/xnd_run: $(XND_RUN_SOURCES) | $(BUILD)
+$(BUILD)/xnd_restart: $(XND_RESTART_OBJECTS) | $(BUILD)
+	$(CXX) $(CXXFLAGS) -o $@ $^
+	dsymutil $@
+
+$(BUILD)/xnd_launch: $(XND_LAUNCH_SOURCES) | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ $^
 
 $(BUILD)/xnd_print: xnd/xnd_print.c | $(BUILD)
@@ -185,4 +203,4 @@ clean:
 	rm -f xnd.log xnd-debug.sh
 
 .PHONY: all clean test
-.INTERMEDIATE: $(LIBXND_OBJECTS)
+.INTERMEDIATE: $(LIBXND_OBJECTS) $(XND_RESTART_OBJECTS)

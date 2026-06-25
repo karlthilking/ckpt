@@ -335,7 +335,7 @@ void xnd_ckptfile_write_header(struct xnd_ckpt_header *hdr,
         hdr->pid = _real_getpid();
         hdr->ppid = _real_getppid();
         hdr->sid = _real_getsid(0);
-        hdr->gid = _real_getgid();
+        hdr->pgid = _real_getpgid(0);
 
         hdr->num_peers = num_peers;
         hdr->is_root_of_tree = is_root_of_tree;

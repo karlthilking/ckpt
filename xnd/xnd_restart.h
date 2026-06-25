@@ -1,0 +1,250 @@
+/* xnd_restart.h */
+#ifndef XND_RESTART_INTERNAL
+#define XND_RESTART_INTERNAL
+
+#include "xnd/xnd.h"
+#include "xnd/ckptfile.h"
+#include "xnd/util/path.h"
+#include "xnd/util/io.h"
+#include "xnd/platform/exe.h"
+#include <fcntl.h>
+#include <errno.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
+#include <limits.h>
+#include <vector>
+#include <unordered_map>
+
+#define XND_RESTART_BINARY "xnd_restart_internal"
+
+#ifndef POSIX_SPAWN_DISABLE_ASLR
+# define POSIX_SPAWN_DISABLE_ASLR 0x0100
+#endif
+
+namespace xnd {
+struct xnd_restart_info {
+        struct xnd_manifest     manifest;
+        char                    ckptdir[XND_CKPTDIR_MAXLEN];
+        char                    restart[PATH_MAX];
+
+        xnd_restart_info(const char *dir) noexcept
+        {
+                int     err;
+                char    path[XND_MANIFEST_MAXLEN];
+
+                strncpy(ckptdir, dir, XND_CKPTDIR_MAXLEN);
+
+                err = xnd_exe_path_of(XND_RESTART_BINARY, restart,
+                                      sizeof(restart));
+                if (err != 0) {
+                        xnd_error("xnd_exe_path_of failed\n");
+                        exit(XND_EXIT_FAILURE);
+                }
+
+                err = xnd_path_join(path, sizeof(path), 
+                                    ckptdir, XND_MANIFEST_NAME);
+                if (err != 0) {
+                        xnd_error("xnd_path_join failed: %s + %s\n",
+                                  ckptdir, XND_MANIFEST_NAME);
+                        exit(XND_EXIT_FAILURE);
+                }
+
+                err = xnd_ckptfile_extract_manifest(path, &manifest);
+                if (err != 0) {
+                        xnd_error("xnd_ckptfile_extract_manifest failed\n");
+                        exit(XND_EXIT_FAILURE);
+                }
+        }
+};
+
+class xnd_restart_target {
+private:
+        struct xnd_ckpt_header  header;
+        char                    ckptpath[XND_CKPTPATH_MAXLEN];
+        u32                     xnd_pid_;
+
+public:
+        xnd_restart_target(void) = default;
+        
+        xnd_restart_target(const char *dir, u32 id) noexcept
+                : xnd_pid_(id)
+        {
+                int     fd;
+                ssize_t bytes;
+        
+                sprintf(ckptpath, "%s/ckpt-%u.xnd", dir, id);
+                fd = open(ckptpath, O_RDONLY);
+                if (fd < 0) {
+                        xnd_error("open: %s\n", strerror(errno));
+                        exit(XND_EXIT_FAILURE);
+                }
+
+                bytes = readall(fd, &header, sizeof(header));
+                xnd_assert(bytes == sizeof(header));
+                xnd_assert(xnd_pid_ == header.xnd_pid);
+                close(fd);
+        }
+
+        [[noreturn]] void exec_restart(void) const noexcept;
+
+        auto path_to_ckpt(void) const noexcept -> std::string_view
+        {
+                return std::string_view(ckptpath);
+        }
+        
+        auto pid(void) const noexcept -> pid_t
+        {
+                return header.pid;
+        }
+
+        auto ppid(void) const noexcept -> pid_t
+        {
+                return header.ppid;
+        }
+
+        auto sid(void) const noexcept -> pid_t
+        {
+                return header.sid;
+        }
+
+        auto pgid(void) const noexcept -> pid_t
+        {
+                return header.pgid;
+        }
+
+        auto xnd_pid(void) const noexcept -> u32
+        {
+                return xnd_pid_;
+        }
+
+        auto xnd_ppid(void) const noexcept -> u32
+        {
+                return header.xnd_ppid;
+        }
+
+        auto xnd_pgid(void) const noexcept -> u32
+        {
+                return header.xnd_pgid;
+        }
+
+        auto is_group_leader(void) const noexcept -> bool
+        {
+                return pid() == pgid();
+        }
+
+        auto is_session_leader(void) const noexcept -> bool
+        {
+                return pid() == sid();
+        }
+
+        auto is_session_leader_of(xnd_restart_target *other)
+        const noexcept -> bool
+        {
+                return pid() == other->sid();
+        }
+
+        auto is_session_leader_of(const xnd_restart_target &other)
+        const noexcept -> bool
+        {
+                return pid() == other.sid();
+        }
+
+        auto is_group_leader_of(xnd_restart_target *other)
+        const noexcept -> bool
+        {
+                return pid() == other->pgid();
+        }
+
+        auto is_group_leader_of(const xnd_restart_target &other)
+        const noexcept -> bool
+        {
+                return pid() == other.pgid();
+        }
+
+        auto is_root_of_tree(void) const noexcept -> bool
+        {
+                return header.is_root_of_tree;
+        }
+
+        auto is_child_of(xnd_restart_target *other) 
+        const noexcept -> bool
+        {
+                return xnd_ppid() == other->xnd_pid();
+        }
+
+        auto is_child_of(const xnd_restart_target &other) 
+        const noexcept -> bool
+        {
+                return xnd_ppid() == other.xnd_pid();
+        }
+
+        auto is_parent_of(xnd_restart_target *other) 
+        const noexcept -> bool
+        {
+                return xnd_pid() == other->xnd_ppid();
+        }
+
+        auto is_parent_of(const xnd_restart_target &other) 
+        const noexcept -> bool
+        {
+                return xnd_pid() == other.xnd_ppid();
+        }
+};
+
+class xnd_restart_dag {
+private:
+        std::unordered_map<xnd_restart_target *, uint> _indegree;
+        std::unordered_map<xnd_restart_target *, 
+                           std::vector<xnd_restart_target *>> _map;
+public:
+        xnd_restart_dag(std::vector<xnd_restart_target *> &targets) noexcept
+        {
+                for (auto t : targets) {
+                        _indegree[t] = 0;
+                        for (auto c : targets) {
+                                if (t == c) {
+                                        continue;
+                                } else if (c->is_child_of(t)) {
+                                        _map[t].push_back(c);
+                                }
+                        }
+                }
+
+                for (auto &[t, children] : _map) {
+                        for (auto c : children) {
+                                _indegree[c]++;
+                        }
+                }
+        }
+        
+        auto indegree_of(xnd_restart_target *t) 
+        const noexcept -> unsigned int
+        {
+                if (auto it = _indegree.find(t); it != _indegree.end()) {
+                        return it->second;
+                }
+
+                return 0u;
+        }
+
+        auto has_children(xnd_restart_target *t) const noexcept -> bool
+        {
+                if (auto it = _map.find(t); it != _map.end()) {
+                        if (it->second.empty()) {
+                                return false;
+                        }
+                        return true;
+                }
+
+                return false;
+        }
+        
+        auto children_of(xnd_restart_target *t)
+        const noexcept -> const std::vector<xnd_restart_target *> &
+        {
+                return _map.find(t)->second;
+        }
+};
+} /* namespace xnd */
+#endif /* XND_RESTART_INTERNAL */

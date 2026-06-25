@@ -85,10 +85,17 @@ enum xnd_log_fd {
         xnd_abort();                                            \
 } while (0)
 
+#ifdef __cplusplus
+extern "C" {
+#endif /* __cplusplus */
+
 void xnd_log_setup(void);
 void xnd_log_cleanup(void);
 void xnd_log_setup_direct(int);
 void xnd_log_shared_cache_info(void);
 void xnd_log_main_thread_info(void);
 
+#ifdef __cplusplus
+}
+#endif /* __cplusplus */
 #endif /* XND_LOG_H */

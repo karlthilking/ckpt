@@ -9,15 +9,22 @@
 
 #define XND_HEADER_MAGIC        "xnd_ckptfile_v0"
 
+#define XND_CKPTPATH_FMT        "%s-checkpoints/epoch-%llu/ckpt-%u.xnd"
+#define XND_CKPTPATH_MAXLEN     (XND_CKPTDIR_MAXLEN + XND_CKPTFILE_MAXLEN)
+
 #define XND_CKPTFILE_FMT        "ckpt-%u.xnd"
 #define XND_CKPTFILE_MAXLEN     (sizeof("ckpt-") + 10 + sizeof(".xnd") + 1)
 #define XND_CKPTFILE_SUFFIX     "xnd"
 
-#define XND_MANIFEST_NAME               "ckpt-manifest.xnd"
-#define XND_MANIFEST_MAX_ENTRIES        256
-
+#define XND_CKPTDIR_MAXLEN      (XND_CKPTDIR_BASELEN + XND_CKPTDIR_SUBLEN)
 #define XND_CKPTDIR_BASELEN     (36 + sizeof("-checkpoints") + 1)
 #define XND_CKPTDIR_SUBLEN      (sizeof("epoch-") + 21)
+
+#define XND_MANIFEST_MAXLEN     (XND_CKPTDIR_MAXLEN + \
+                                 sizeof(XND_MANIFEST_NAME))
+
+#define XND_MANIFEST_NAME       "ckpt-manifest.xnd"
+#define XND_MANIFEST_ENTRY_MAX  256
 
 #define XND_CKPT_ENTRY_MAX      1024
 #define XND_CKPT_VM_REGION_MAX  1023
@@ -32,8 +39,8 @@ struct xnd_ckpt_header {
 
         pid_t                           pid;
         pid_t                           ppid;
+        pid_t                           pgid;
         pid_t                           sid;
-        pid_t                           gid;
 
         u32                             num_peers;
         u32                             is_root_of_tree;
@@ -50,8 +57,12 @@ enum xnd_ckpt_entry {
 
 struct xnd_manifest {
         u32     entry_count;
-        u32     xnd_pids[XND_MANIFEST_MAX_ENTRIES];
+        u32     xnd_pids[XND_MANIFEST_ENTRY_MAX];
 };
+
+#ifdef __cplusplus
+extern "C" {
+#endif /* __cplusplus */
 
 void xnd_ckptdir_name(char *, char *, const uuid_t, u64);
 int xnd_ckptdir_create(uuid_t, u64);
@@ -72,4 +83,7 @@ int xnd_ckptfile_extract_header(char *, struct xnd_ckpt_header *);
 void xnd_ckptfile_write_header(struct xnd_ckpt_header *, 
                                u32, u32, uuid_t, u32, u32, u32, u32, bool);
 
+#ifdef __cplusplus
+}
+#endif /* __cplusplus */
 #endif /* XND_CKPTFILE_H */

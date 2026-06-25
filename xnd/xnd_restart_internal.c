@@ -1,4 +1,4 @@
-/* restart.c */
+/* xnd_restart_internal.c */
 #include "xnd/xnd.h"
 #include "xnd/readckpt.h"
 #include "xnd/pac.h"

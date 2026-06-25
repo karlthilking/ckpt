@@ -123,7 +123,7 @@ int main(int argc, char *argv[])
         argc--;
         do {
                 argc--; argv++;
-                if (strstr(argv[0], ".ckpt"))
+                if (strstr(argv[0], XND_CKPTFILE_SUFFIX))
                         break;
 
                 if (!strcmp(argv[0], "-a") || !strcmp(argv[0], "--all")) {
@@ -150,8 +150,9 @@ int main(int argc, char *argv[])
         } while (argc);
 
         fd = open(argv[0], O_RDONLY);
-        if (fd < 0)
+        if (fd < 0) {
                 err(EXIT_FAILURE, "open(%s)", argv[0]);
+        }
                                 
         print_checkpoint(fd);
         exit(0);
@@ -384,8 +385,8 @@ static void print_ckpt_header(struct xnd_ckpt_header *hdr)
                "                xnd_pgid: %u\n"
                "                     pid: %d\n"
                "                    ppid: %d\n"
+               "                    pgid: %d\n"
                "                     sid: %d\n"
-               "                     gid: %d\n"
                "              # of peers: %u\n"
                "   Root of process tree?: %s\n"
                "            # of entries: %u\n"
@@ -395,7 +396,7 @@ static void print_ckpt_header(struct xnd_ckpt_header *hdr)
                "  dyld shared cache size: %zu\n"
                "  dyld shared cache uuid: %s\n",
                hdr->magic, hdr->xnd_pid, hdr->xnd_ppid, hdr->xnd_pgid,
-               hdr->pid, hdr->ppid, hdr->sid, hdr->gid, hdr->num_peers,
+               hdr->pid, hdr->ppid, hdr->pgid, hdr->sid, hdr->num_peers,
                (hdr->is_root_of_tree ? "TRUE" : "FALSE"), hdr->entry_count,
                hdr->region_count, dyld_cache_info->base,
                dyld_cache_info->base + dyld_cache_info->size,

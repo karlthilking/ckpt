@@ -66,8 +66,10 @@ int write_ckpt(const struct xnd_ckpt_header *header,
                const struct xnd_vm_region *regions, 
                const ucontext_t *uctx)
 {
-        int                             dirfd, fd, retval;
+        int                             err, fd = -1, dirfd = -1;
         char                            ckptfile[XND_CKPTFILE_MAXLEN];
+        char                            path[XND_CKPTPATH_MAXLEN];
+        char                            uuid_str[37];
         const struct xnd_vm_region      *rgn = regions;
         ssize_t                         bytes;
         
@@ -75,13 +77,13 @@ int write_ckpt(const struct xnd_ckpt_header *header,
         dirfd = xnd_ckptdir_open(header->xnd_uuid, epoch);
         if (dirfd < 0) {
                 xnd_error("Failed to open checkpoint directory\n");
-                return -1;
+                goto bad;
         }
 
         fd = xnd_ckptfile_create(dirfd, ckptfile);
         if (fd < 0) {
                 xnd_error("Failed to create checkpoint file\n");
-                return -1;
+                goto bad;
         }
         
         bytes = writeall(fd, header, sizeof(struct xnd_ckpt_header));
@@ -98,28 +100,42 @@ int write_ckpt(const struct xnd_ckpt_header *header,
 
                 switch (entries[i]) {
                 case XND_VM_REGION_ENTRY:
-                        retval = write_vm_region(fd, rgn);
+                        err = write_vm_region(fd, rgn);
                         rgn++;
                         break;
                 case XND_UCONTEXT_ENTRY:
-                        retval = write_context(fd, uctx);
+                        err = write_context(fd, uctx);
                         break;
                 default:
                         /* Unrecognized header */
                         xnd_abort();
                 }
 
-                if (retval < 0) {
+                if (err < 0) {
                         xnd_error("Failed to write checkpoint data\n");
                         goto bad;
                 }
         }
         
-        printf("Checkpoint written to %s\n", ckptfile);
+        uuid_unparse(header->xnd_uuid, uuid_str);
+        snprintf(path, sizeof(path), XND_CKPTPATH_FMT, 
+                 uuid_str, epoch, xnd_pid);
+
+        xnd_printf("Checkpoint complete: %s\n", path);
+        close(dirfd);
         close(fd);
         return 0;
 bad:
-        xnd_error("Checkpoint failed (%s)\n", ckptfile);
-        close(fd);
+        uuid_unparse(header->xnd_uuid, uuid_str);
+        snprintf(path, sizeof(path), XND_CKPTPATH_FMT,
+                 uuid_str, epoch, xnd_pid);
+        
+        xnd_error("Checkpoint failed: %s\n", path);
+        if (dirfd != -1) {
+                close(dirfd);
+        }
+        if (fd != -1) {
+                close(fd);
+        }
         return -1;
 }
