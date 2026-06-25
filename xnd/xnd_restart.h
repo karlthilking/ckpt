@@ -135,74 +135,74 @@ public:
                 return header.xnd_pgid;
         }
 
-        auto is_orphan(void) const noexcept -> bool
+        auto was_orphan(void) const noexcept -> bool
         {
                 return ppid() == 1;
         }
 
-        auto is_non_orphan(void) const noexcept -> bool
+        auto was_not_orphan(void) const noexcept -> bool
         {
-                return is_orphan() == false;
+                return !(was_orphan());
         }
 
-        auto is_root_of_tree(void) const noexcept -> bool
+        auto was_root_of_tree(void) const noexcept -> bool
         {
                 return header.is_root_of_tree;
         }
 
-        auto is_group_leader(void) const noexcept -> bool
+        auto was_group_leader(void) const noexcept -> bool
         {
                 return pid() == pgid();
         }
 
-        auto is_session_leader(void) const noexcept -> bool
-        {
-                return pid() == sid();
-        }
-
-        auto is_session_leader_of(xnd_restart_target *other)
-        const noexcept -> bool
-        {
-                return pid() == other->sid();
-        }
-
-        auto is_session_leader_of(const xnd_restart_target &other)
-        const noexcept -> bool
-        {
-                return pid() == other.sid();
-        }
-
-        auto is_group_leader_of(xnd_restart_target *other)
+        auto was_group_leader_of(xnd_restart_target *other)
         const noexcept -> bool
         {
                 return pid() == other->pgid();
         }
 
-        auto is_group_leader_of(const xnd_restart_target &other)
+        auto was_group_leader_of(const xnd_restart_target &other)
         const noexcept -> bool
         {
                 return pid() == other.pgid();
         }
 
-        auto is_child_of(xnd_restart_target *other) 
+        auto was_session_leader(void) const noexcept -> bool
+        {
+                return pid() == sid();
+        }
+
+        auto was_session_leader_of(xnd_restart_target *other)
+        const noexcept -> bool
+        {
+                return pid() == other->sid();
+        }
+
+        auto was_session_leader_of(const xnd_restart_target &other)
+        const noexcept -> bool
+        {
+                return pid() == other.sid();
+        }
+
+        auto was_child_of(xnd_restart_target *other) 
         const noexcept -> bool
         {
                 return xnd_ppid() == other->xnd_pid();
         }
 
-        auto is_child_of(const xnd_restart_target &other) 
+        auto was_child_of(const xnd_restart_target &other) 
         const noexcept -> bool
         {
                 return xnd_ppid() == other.xnd_pid();
         }
 
-        auto is_parent_of(xnd_restart_target *other) 
+        auto was_parent_of(xnd_restart_target *other) 
         const noexcept -> bool
         {
                 return xnd_pid() == other->xnd_ppid();
         }
 
-        auto is_parent_of(const xnd_restart_target &other) 
+        auto was_parent_of(const xnd_restart_target &other) 
         const noexcept -> bool
         {
                 return xnd_pid() == other.xnd_ppid();
@@ -222,7 +222,7 @@ public:
                         for (auto c : targets) {
                                 if (t == c) {
                                         continue;
-                                } else if (c->is_child_of(t)) {
+                                } else if (c->was_child_of(t)) {
                                         _map[t].push_back(c);
                                 }
                         }
@@ -257,20 +257,14 @@ public:
                 return false;
         }
 
-        auto number_of_children(xnd_restart_target *t) 
-        const noexcept -> size_t
+        auto children_of(xnd_restart_target *t)
+        const noexcept -> std::vector<xnd_restart_target *>
         {
                 if (auto it = _map.find(t); it != _map.end()) {
-                        return it->second.size();
+                        return it->second;
                 }
 
-                return 0u;
-        }
-        
-        auto children_of(xnd_restart_target *t)
-        const noexcept -> const std::vector<xnd_restart_target *> &
-        {
-                return _map.find(t)->second;
+                return {};
         }
 };
 } /* namespace xnd */

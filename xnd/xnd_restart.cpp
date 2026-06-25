@@ -97,16 +97,6 @@ void xnd_restart_target::create_orphan(bool create_roots) const noexcept
 void xnd_restart_target::create_process(bool create_roots) const noexcept
 {
         auto self = const_cast<xnd_restart_target *>(this);
-        auto has_children = dag->has_children(self);
-
-        if (has_children) {
-                for (auto child : dag->children_of(self)) {
-                        xnd_assert(child != self);
-                        if (self->pid() != child->sid()) {
-                                child->create_child();
-                        }
-                }
-        }
 
         if (create_roots) {
                 for (auto ir : independent_roots) {
@@ -116,17 +106,41 @@ void xnd_restart_target::create_process(bool create_roots) const noexcept
                 }
         }
 
-        if (self->is_session_leader()) {
+        for (auto child : dag->children_of(self)) {
+                xnd_assert(child != self);
+                if (self->was_session_leader_of(child)) {
+                        continue;
+                } else if (self->was_group_leader_of(child)) {
+                        continue;
+                }
+                child->create_child();
+        }
+
+        if (self->was_session_leader()) {
                 if (getpid() != getsid(0)) {
-                        xnd_assert(getpgrp() != getpid());
+                        xnd_assert(getpid() != getpgrp());
                         setsid();
+                }
+        } else if (self->was_group_leader()) {
+                if (getpid() != getpgrp()) {
+                        xnd_assert(setpgid(0, 0) != -1);
                 }
         }
 
-        if (has_children) {
-                for (auto child : dag->children_of(self)) {
-                        if (self->pid() == child->sid()) {
-                                child->create_child();
+        for (auto t : targets) {
+                if (t == self) {
+                        continue;
+                } else if (self->was_session_leader_of(t)) {
+                        if (self->was_parent_of(t)) {
+                                t->create_child();
+                        } else if (t->was_root_of_tree()) {
+                                t->create_orphan(false);
+                        }
+                } else if (self->was_group_leader_of(t)) {
+                        if (self->was_parent_of(t)) {
+                                t->create_child();
+                        } else if (t->was_root_of_tree()) {
+                                t->create_orphan(false);
                         }
                 }
         }
@@ -146,20 +160,23 @@ void xnd_restart_target::create_process(bool create_roots) const noexcept
         dag = new xnd_restart_dag(targets);
         std::ranges::for_each(targets, [&](auto t) {
                 if (dag->indegree_of(t)) {
+                        xnd_assert(t->was_root_of_tree() == false);
                         return;
                 }
+                xnd_assert(t->was_root_of_tree());
                 auto it = std::ranges::find_if(targets, [&](auto s) {
-                        return s != t && s->is_session_leader_of(t);
+                        return s != t && s->was_session_leader_of(t);
                 });
                 if (it == targets.end()) {
                         independent_roots.push_back(t);
                 }
         });
-        
+
         xnd_assert(independent_roots.size() != 0);
         auto it = std::ranges::find_if(independent_roots, [&](auto ir) {
-                return ir->is_non_orphan();
+                return ir->was_not_orphan();
         });
+
         if (it != independent_roots.end()) {
                 static_cast<xnd_restart_target *>(*it)->create_process(true);
         } else {
