@@ -102,9 +102,7 @@ void xnd_restart_target::create_process(bool create_roots) const noexcept
         if (has_children) {
                 for (auto child : dag->children_of(self)) {
                         xnd_assert(child != self);
-                        if (self->is_session_leader_of(child)) {
-                                continue;
-                        } else {
+                        if (self->pid() != child->sid()) {
                                 child->create_child();
                         }
                 }
@@ -118,15 +116,16 @@ void xnd_restart_target::create_process(bool create_roots) const noexcept
                 }
         }
 
-        if (self->is_session_leader() && getpid() != getsid(0)) {
-                if (setsid() == -1) {
-                        xnd_warn("setsid: %s\n", strerror(errno));
+        if (self->is_session_leader()) {
+                if (getpid() != getsid(0)) {
+                        xnd_assert(getpgrp() != getpid());
+                        setsid();
                 }
         }
 
         if (has_children) {
                 for (auto child : dag->children_of(self)) {
-                        if (self->is_session_leader_of(child)) {
+                        if (self->pid() == child->sid()) {
                                 child->create_child();
                         }
                 }
