@@ -5,6 +5,7 @@
 #include "pac.h"
 #include "tls.h"
 #include "util/env.h"
+#include "util/log.h"
 #include "coordinator/xnd_coord_api.h"
 #include "coordinator/xnd_coord_client.h"
 #include "wrappers/signal_wrappers.h"
@@ -24,7 +25,7 @@
 
 _Thread_local struct thread_info        *myself = NULL;
 static struct thread_info               *_main_thread = NULL;
-static struct thread_info               ckpt_thread;
+__hidden struct thread_info             ckpt_thread;
 
 static struct thread_list       thread_list;
 static struct thread_list       zombie_list;
@@ -37,13 +38,12 @@ static pthread_mutex_t  ckpt_mtx        = PTHREAD_MUTEX_INITIALIZER;
 
 void thread_list_init(void)
 {
-        pthread_mutexattr_t attr;
+        int err;
 
-        pthread_mutexattr_init(&attr);
-#if DEVELOPMENT || DEBUG
-        pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_ERRORCHECK);
-#endif
-        xnd_assert(pthread_mutex_init(&thread_list.lock, &attr) == 0);
+        if ((err = pthread_mutex_init(&thread_list.lock, NULL)) != 0) {
+                xnd_error("pthread_mutex_init: %s\n", strerror(err));
+                xnd_abort();
+        }
 
         /* Initialize main thread info */
         tlv_init();
@@ -55,12 +55,14 @@ void thread_list_init(void)
         myself->state = ST_RUNNING;
         _main_thread = myself;
 
-        xnd_assert(pthread_mutex_init(&myself->lock, &attr) == 0);
-        xnd_assert(pthread_cond_init(&myself->cond, NULL) == 0);
+        if ((err = pthread_mutex_init(&myself->lock, NULL)) != 0) {
+                xnd_error("pthread_mutex_init: %s\n", strerror(err));
+                xnd_abort();
+        }
         
+        xnd_assert(pthread_cond_init(&myself->cond, NULL) == 0);
         zombie_list_init();
         ckpt_thread_init();
-        pthread_mutexattr_destroy(&attr);
 }
 
 void thread_list_destroy(void)
@@ -87,12 +89,24 @@ void thread_list_destroy(void)
 
 void thread_list_acquire(void)
 {
-        xnd_assert(pthread_mutex_lock(&thread_list.lock) == 0);
+        int err;
+        
+        err = pthread_mutex_lock(&thread_list.lock);
+        if (unlikely(err != 0)) {
+                xnd_error("pthread_mutex_lock: %s\n", strerror(err));
+                xnd_abort();
+        }
 }
 
 void thread_list_release(void)
 {
-        xnd_assert(pthread_mutex_unlock(&thread_list.lock) == 0);
+        int err;
+        
+        err = pthread_mutex_unlock(&thread_list.lock);
+        if (unlikely(err != 0)) {
+                xnd_error("pthread_mutex_unlock: %s\n", strerror(err));
+                xnd_abort();
+        }
 }
 
 /**
@@ -175,7 +189,8 @@ void thread_list_atfork_prepare(void)
  */
 void thread_list_atfork_child(void)
 {
-        struct thread_info *th, *next;
+        int                     err;
+        struct thread_info      *th, *next;
         
         for (th = thread_list.head; th; th = next) {
                 next = th->next;
@@ -187,12 +202,29 @@ void thread_list_atfork_child(void)
                 free(th);
         }
 
+        if ((err = pthread_mutex_unlock(&ckpt_mtx)) != 0) {
+                xnd_error("pthread_mutex_unlock: %s\n", strerror(err));
+                xnd_abort();
+        }
+
+        thread_list_release();
+        zombie_list_release();
+
+        if ((err = pthread_mutex_unlock(&ckpt_thread.lock)) != 0) {
+                xnd_error("pthread_mutex_unlock: %s\n", strerror(err));
+                xnd_abort();
+        }
+
         /**
          * Re-initialize all locks and create a new checkpoint thread
          * in the child process.
          */
         thread_list_init();
-        xnd_assert(pthread_mutex_init(&ckpt_mtx, NULL) == 0);
+        if ((err = pthread_mutex_init(&ckpt_mtx, NULL)) != 0) {
+                xnd_error("pthread_mutex_init: %s\n", strerror(err));
+                xnd_abort();
+        }
+        
         xnd_assert(pthread_cond_init(&cond_arrived, NULL) == 0);
         xnd_assert(pthread_cond_init(&cond_released, NULL) == 0);
 }
@@ -219,16 +251,13 @@ void thread_list_atfork_failed(void)
 
 void zombie_list_init(void)
 {
-        zombie_list.head = NULL;
+        int err;
 
-#if DEVELOPMENT || DEBUG
-        pthread_mutexattr_t attr;
-        pthread_mutexattr_init(&attr);
-        pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_ERRORCHECK);
-        xnd_assert(pthread_mutex_init(&zombie_list.lock, &attr) == 0);
-#else
-        xnd_assert(pthread_mutex_init(&zombie_list.lock, NULL) == 0);
-#endif
+        zombie_list.head = NULL;
+        if ((err = pthread_mutex_init(&zombie_list.lock, NULL)) != 0) {
+                xnd_error("pthread_mutex_init: %s\n", strerror(err));
+                xnd_abort();
+        }
 }
 
 void zombie_list_destroy(void)
@@ -246,12 +275,22 @@ void zombie_list_destroy(void)
 
 void zombie_list_acquire(void)
 {
-        xnd_assert(pthread_mutex_lock(&zombie_list.lock) == 0);
+        int err;
+
+        if ((err = pthread_mutex_lock(&zombie_list.lock)) != 0) {
+                xnd_error("pthread_mutex_lock: %s\n", strerror(err));
+                xnd_abort();
+        }
 }
 
 void zombie_list_release(void)
 {
-        xnd_assert(pthread_mutex_unlock(&zombie_list.lock) == 0);
+        int err;
+
+        if ((err = pthread_mutex_unlock(&zombie_list.lock)) != 0) {
+                xnd_error("pthread_mutex_unlock: %s\n", strerror(err));
+                xnd_abort();
+        }
 }
 
 void zombie_list_filter(void)
@@ -321,8 +360,7 @@ void zombie_list_remove(struct thread_info *zombie)
  */
 struct thread_info *thread_init(void *(*fn)(void *), void *arg)
 {
-        struct thread_info *    new;
-        pthread_mutexattr_t     attr;
+        struct thread_info *new;
 
         new = calloc(1, sizeof(struct thread_info));
         xnd_assert(new != NULL);
@@ -331,14 +369,9 @@ struct thread_info *thread_init(void *(*fn)(void *), void *arg)
         new->arg = arg;
         new->state = ST_EMBRYO;
 
-        pthread_mutexattr_init(&attr);
-#if DEVELOPMENT || DEBUG
-        pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_ERRORCHECK);
-#endif
-        xnd_assert(pthread_mutex_init(&new->lock, &attr) == 0);
+        xnd_assert(pthread_mutex_init(&new->lock, NULL) == 0);
         xnd_assert(pthread_cond_init(&new->cond, NULL) == 0);
 
-        pthread_mutexattr_destroy(&attr);
         return new;
 }
 
@@ -389,20 +422,21 @@ struct thread_info *main_thread(void)
 
 void ckpt_thread_init(void)
 {
-        bool ready = false;
+        struct thread_info      *th = &ckpt_thread;
+        bool                    wait = true;
 
-        ckpt_thread.state = ST_CKPT_THREAD;
-        xnd_assert(pthread_mutex_init(&ckpt_thread.lock, NULL) == 0);
-        xnd_assert(pthread_cond_init(&ckpt_thread.cond, NULL) == 0);
+        th->state = ST_CKPT_THREAD;
+        xnd_assert(pthread_mutex_init(&th->lock, NULL) == 0);
+        xnd_assert(pthread_cond_init(&th->cond, NULL) == 0);
 
-        pthread_mutex_lock(&ckpt_thread.lock);
-        pthread_create(&ckpt_thread.self, NULL, ckpt_thread_work,
-                       (void *)&ready);
-        while (!ready) {
-                pthread_cond_wait(&ckpt_thread.cond, &ckpt_thread.lock);
+        pthread_mutex_lock(&th->lock);
+        pthread_create(&th->self, NULL, ckpt_thread_work, (void *)&wait);
+        while (wait) {
+                pthread_cond_wait(&th->cond, &th->lock);
         }
-        pthread_mutex_unlock(&ckpt_thread.lock);
+        pthread_mutex_unlock(&th->lock);
 }
+
 
 __noreturn void ckpt_thread_exit(void)
 {
@@ -429,7 +463,7 @@ void ckpt_thread_wait(void)
         set_xnd_state(XND_CKPT_PENDING);
 }
 
-void *ckpt_thread_work(void *ready)
+void *ckpt_thread_work(void *wait)
 {
         static volatile bool    restart;
         sigset_t                set;
@@ -441,13 +475,13 @@ void *ckpt_thread_work(void *ready)
         tlv_init();
         myself = &ckpt_thread;
         myself->self = pthread_self();
-        
+
         /**
          * Signal to main thread that the checkpoint thread has
          * initialized itself and is ready
          */
         pthread_mutex_lock(&myself->lock);
-        *(bool *)ready = true;
+        *(bool *)wait = false;
         pthread_cond_signal(&myself->cond);
         pthread_mutex_unlock(&myself->lock);
 
@@ -474,6 +508,7 @@ void *ckpt_thread_work(void *ready)
         
         restart = true;
         for (;;) {
+                xnd_log_ckpt_thread_info(myself);
                 /**
                  * Wait until coordinator sends XND_CKPT_REQUEST, and
                  * transition from XND_RUNNING to XND_CKPTPENDING.
@@ -524,17 +559,17 @@ void *ckpt_thread_work(void *ready)
 
 void ckpt_thread_reap(void)
 {
-        uintptr_t       tls;
-        mach_port_t     port;
         kern_return_t   kr;
+        mach_port_t     port;
 
         xnd_assert(myself != &ckpt_thread);
-        
-        tls = (uintptr_t)ckpt_thread.self + PTHREAD_T_TLS_OFFSET;
-        port = (mach_port_t)(uintptr_t)((void **)tls)[__TSD_MACH_THREAD_SELF];
-        
+
+        port = get_thread_info_mach_port(&ckpt_thread);
         if ((kr = thread_terminate(port)) != KERN_SUCCESS) {
-                xnd_warn("thread_terminate: %s\n", mach_error_string(kr));
+                xnd_trace("thread_terminate(%u): %s\n"
+                          "pthread_mach_thread_np(): %u\n",
+                          (u32)port, mach_error_string(kr),
+                          (u32)pthread_mach_thread_np(ckpt_thread.self));
         }
 
         pthread_mutex_destroy(&ckpt_thread.lock);

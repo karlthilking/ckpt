@@ -4,6 +4,7 @@
 
 #include "xnd/xnd.h"
 #include <pthread.h>
+#include <string.h>
 
 #ifdef __cplusplus
 #include <unordered_map>
@@ -41,7 +42,17 @@ public:
 
         void atfork_child(void) const noexcept
         {
-                xnd_assert(pthread_mutex_init(&mtx, NULL) == 0);
+                int err;
+
+                if ((err = pthread_mutex_unlock(&mtx)) != 0) {
+                        xnd_error("pthread_mutex_unlock: %s\n",
+                                  strerror(err));
+                }
+
+                if ((err = pthread_mutex_init(&mtx, NULL)) != 0) {
+                        xnd_error("pthread_mutex_init: %s\n",
+                                  strerror(err));
+                }
         }
         
         void acquire(void) const noexcept

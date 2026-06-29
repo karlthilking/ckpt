@@ -82,6 +82,22 @@ void xnd_log_shared_cache_info(void)
                   dyld_env, base, base + size, size);
 }
 
+void xnd_log_ckpt_thread_info(struct thread_info *ckpt_thread)
+{
+        uintptr_t       tls, thread_self;
+        mach_port_t     port;
+        
+        thread_self = (uintptr_t)ckpt_thread->self;
+        tls = thread_self + PTHREAD_T_TLS_OFFSET;
+        port = (mach_port_t)(uintptr_t)((void **)tls)[__TSD_MACH_THREAD_SELF];
+
+        xnd_trace("Checkpoint thread info:\n"
+                  "     pthread_self(): 0x%lx\n"
+                  "        tpidrro_el0: 0x%lx\n"
+                  " mach_thread_self(): %u\n",
+                  thread_self, tls, (u32)port);
+}
+
 void xnd_log_main_thread_info(void)
 {
         uintptr_t tls, main_thread, signature, munge_token;

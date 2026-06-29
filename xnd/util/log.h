@@ -9,6 +9,8 @@
 #include <signal.h>
 #include <sys/syscall.h>
 
+struct thread_info;
+
 enum xnd_log_type {
         XND_ERRORS      = 0,
         XND_WARNINGS    = 1,
@@ -95,6 +97,7 @@ void xnd_log_setup(void);
 void xnd_log_cleanup(void);
 void xnd_log_setup_direct(int);
 void xnd_log_shared_cache_info(void);
+void xnd_log_ckpt_thread_info(struct thread_info *);
 void xnd_log_main_thread_info(void);
 
 #ifdef __cplusplus

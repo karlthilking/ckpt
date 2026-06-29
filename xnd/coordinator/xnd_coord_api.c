@@ -168,7 +168,6 @@ bool coord_exited(int fd)
 {
         int     err, flags;
         pid_t   coord_pid;
-        ssize_t bytes;
         char    *coord_pid_str, buf[32];
         bool    exited;
         
@@ -179,19 +178,23 @@ bool coord_exited(int fd)
                         return true;
                 }
         }
+        
+        if ((flags = fcntl(fd, F_GETFL)) == -1 ||
+             fcntl(fd, F_SETFL, flags | O_NONBLOCK) == -1) {
+                return true;
+        }
 
-        xnd_assert((flags = fcntl(fd, F_GETFL)) != -1);
-        xnd_assert(fcntl(fd, F_SETFL, flags | O_NONBLOCK) != -1);
-
-        bytes = recv(fd, buf, sizeof(buf), MSG_PEEK);
-        if (bytes == 0) {
+        if (recv(fd, buf, sizeof(buf), MSG_PEEK) == 0) {
                 exited = true;
         } else {
                 exited = false;
         }
         
-        xnd_assert((flags = fcntl(fd, F_GETFL)) != -1);
-        xnd_assert(fcntl(fd, F_SETFL, flags & ~O_NONBLOCK) != -1);
+        if ((flags = fcntl(fd, F_GETFL)) == -1 ||
+             fcntl(fd, F_SETFL, flags & ~O_NONBLOCK) == -1) {
+                return true;
+        }
+
         return exited;
 }
 

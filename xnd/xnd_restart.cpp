@@ -119,11 +119,15 @@ void xnd_restart_target::create_process(bool create_roots) const noexcept
         if (self->was_session_leader()) {
                 if (getpid() != getsid(0)) {
                         xnd_assert(getpid() != getpgrp());
-                        setsid();
+                        if (setsid() == -1) {
+                                xnd_error("setsid: %s\n", strerror(errno));
+                        }
                 }
         } else if (self->was_group_leader()) {
                 if (getpid() != getpgrp()) {
-                        xnd_assert(setpgid(0, 0) != -1);
+                        if (setpgid(0, 0) == -1) {
+                                xnd_error("setpgid: %s\n", strerror(errno));
+                        }
                 }
         }
 

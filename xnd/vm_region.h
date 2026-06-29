@@ -83,7 +83,7 @@ int ckpt_vm_valid_region(const vm_region_submap_info_data_64_t *,
 u32 ckpt_vm_save_regions(struct xnd_vm_region *);
 void ckpt_vm_deallocate_regions(void);
 
-int ckpt_vm_protect(const struct xnd_vm_region *, int, vm_prot_t);
+int ckpt_vm_protect(const struct xnd_vm_region *, bool, vm_prot_t);
 
 
 #endif /* XND_VM_REGION_H */

@@ -28,6 +28,7 @@
 #include <signal.h>
 
 static _Atomic enum xnd_state   libxnd_state = XND_UNINITIALIZED;
+static bool                     xnd_atfork_registered = false;
 static uintptr_t                _pthread_ptr_munge_token;
 
 __hidden uuid_t xnd_uuid;
@@ -106,7 +107,7 @@ void xnd_checkpoint(ucontext_t *uctx)
 
 void xnd_atfork_prepare(void)
 {
-        xnd_trace("called %s\n", __func__);
+        xnd_trace("Called %s\n", __func__);
 
         coord_client_atfork_prepare();
         pid_table_atfork_prepare();
@@ -115,19 +116,18 @@ void xnd_atfork_prepare(void)
 
 void xnd_atfork_child(void)
 {
-        xnd_trace("called %s\n", __func__);
+        xnd_trace("Called %s\n", __func__);
 
         coord_client_atfork_child();
         pid_table_atfork_child();
         thread_list_atfork_child();
 
-        /* Re-register atfork handlers */
-        xnd_register_fork_handlers();
+        xnd_trace("Returning from %s\n", __func__);
 }
 
 void xnd_atfork_parent(void)
 {
-        xnd_trace("called %s\n", __func__);
+        xnd_trace("Called %s\n", __func__);
 
         coord_client_atfork_parent();
         pid_table_atfork_parent();
@@ -143,15 +143,22 @@ void xnd_atfork_failed(void)
 
 void xnd_register_fork_handlers(void)
 {
-        int err;
+        void (*prepare)(void), (*parent)(void), (*child)(void);
+
+        if (xnd_atfork_registered) {
+                return;
+        }
         
-        err = pthread_atfork(xnd_atfork_prepare, 
-                             xnd_atfork_parent, 
-                             xnd_atfork_child);
-        if (err != 0) {
-                xnd_error("pthread_atfork: %s\n", strerror(err));
+        child = xnd_atfork_child;
+        parent = xnd_atfork_parent;
+        prepare = xnd_atfork_prepare;
+
+        if (pthread_atfork(prepare, parent, child) != 0) {
+                xnd_error("pthread_atfork: %s\n", strerror(errno));
                 xnd_abort();
         }
+
+        xnd_atfork_registered = true;
 }
 
 /**
@@ -179,7 +186,6 @@ static __constructor(101) void xnd_setup(void)
                 xnd_abort();
         }
         
-        xnd_register_fork_handlers();
         fd_table_init();
         thread_list_init();
 

@@ -45,7 +45,7 @@ static pid_t real_to_virtual_pid(pid_t real)
         pid_t virt;
 
         pid_table_acquire();
-        if ((virt = pid_table_virtual_to_real(real)) != -1) {
+        if ((virt = pid_table_real_to_virtual(real)) != -1) {
                 goto out;
         }
 
@@ -127,8 +127,9 @@ pid_t __fork_hook(void)
         unsafe_enter();
         
         /**
-         * Atfork handlers are already registered here.
-         * 
+         * Register atfork handlers if not already registered; prepare
+         * and child responsibilities at the time of fork() are as follows:
+         *
          * xnd_atfork_prepare():
          *  Connect to the coordinator for the child and inform the
          *  coordinator that a child is about to connect (coordinator will
@@ -142,6 +143,8 @@ pid_t __fork_hook(void)
          *  its virtual pid. Then, the child will update its pid table
          *  with its new virtual -> real pid mapping.
          */
+        xnd_register_fork_handlers();
+
         switch ((real_ret = fork())) {
         case -1:
                 xnd_atfork_failed();

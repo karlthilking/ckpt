@@ -89,13 +89,14 @@ int ckpt_vm_restore_region(int fd, const struct xnd_vm_region *region)
         }
 
         if (region->prot != VM_PROT_DEFAULT) {
-                if (ckpt_vm_protect(region, 0, region->prot) < 0) {
+                if (ckpt_vm_protect(region, false, region->prot) < 0) {
                         return -1;
                 }
         }
-
+        
+        xnd_assert(region->max_prot >= region->prot);
         if (region->max_prot != VM_PROT_ALL) {
-                if (ckpt_vm_protect(region, 1, region->max_prot) < 0) {
+                if (ckpt_vm_protect(region, true, region->max_prot) < 0) {
                         return -1;
                 }
         }

@@ -175,6 +175,7 @@ void coord_client_atfork_prepare(void)
          * and return child_virt from __fork_wrapper() so the caller of
          * fork() correctly sees the child's virtual pid.
          */
+        xnd_trace("Child virtual pid: %d\n", msg.virt_pid);
         env_set_pid_info(msg.virt_pid, -1, -1, -1);
 }
 
