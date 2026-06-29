@@ -422,10 +422,8 @@ __noreturn void ckpt_thread_exit(void)
 
 void ckpt_thread_wait(void)
 {
-        while (wait_for_ckpt_request_from_coord() != 0) {
-                if (get_xnd_state() == XND_EXITING) {
-                        ckpt_thread_exit();
-                }
+        if (wait_for_ckpt_request_from_coord() != 0) {
+                ckpt_thread_exit();
         }
 
         set_xnd_state(XND_CKPT_PENDING);

@@ -54,17 +54,9 @@ void send_recv_coord_handshake(enum xnd_msghdr hdr)
                 msg.epoch = epoch;
                 msg.num_peers = num_peers;
         }
-
-        if (send_msg_to_coord(coord_fd, &msg) != 0) {
-                xnd_error("Failed to send %s to coordinator\n",
-                          xnd_msghdr_string(msg.hdr));
-                xnd_abort();
-        }
-
-        if (recv_msg_from_coord(coord_fd, &msg) != 0) {
-                xnd_error("Failed to receive message from coordinator\n");
-                xnd_abort();
-        }
+        
+        xnd_assert(send_msg_to_coord(coord_fd, &msg) == 0);
+        xnd_assert(recv_msg_from_coord(coord_fd, &msg) == 0);
 
         if (msg.hdr != XND_COORD_ACK || msg.ret != XND_SUCCESS) {
                 xnd_error("Unexpected coordinator response: %s\n",
@@ -221,11 +213,14 @@ int wait_for_ckpt_request_from_coord(void)
         
         xnd_assert(coord_fd != -1);
         bzero(&msg, sizeof(msg));
+
         for (;;) {
                 err = recv_msg_from_coord(coord_fd, &msg);
                 if (err == 0) {
                         break;
-                } else if ((err = check_coord_status(coord_fd)) != 0) {
+                } else if (coord_exited(coord_fd)) {
+                        return -1;
+                } else if ((err = coord_socket_status(coord_fd)) != 0) {
                         xnd_error("Coordinator socket error: %s\n",
                                   strerror(err));
                         return -1;

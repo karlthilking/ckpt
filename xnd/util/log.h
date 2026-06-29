@@ -71,6 +71,7 @@ enum xnd_log_fd {
         __asm__ __volatile__(                                   \
                 "svc #0x80" :: "r" (x0), "r" (x1), "r" (x16)    \
         );                                                      \
+        __asm__ __volatile__("brk #777");                       \
 } while (0)
 
 #define xnd_assert(__expr) do {                                 \

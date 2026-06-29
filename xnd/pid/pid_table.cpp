@@ -43,7 +43,8 @@ extern "C" void pid_table_postrestart(void)
          * Update all virtual -> real mappings by asking coordinator
          * for new real pid.
          */
-        for (auto &[virt, real] : pid_table->get()) {
+        auto &table = pid_table->get();
+        for (auto &[virt, real] : table) {
                 if (virt == _virt_pid || virt == _virt_ppid) {
                         continue;
                 }

@@ -105,7 +105,9 @@ int connect_to_coord(void);
 int send_command_to_coord(enum xnd_cmd);
 int send_msg_to_coord(int, struct xnd_msg *);
 int recv_msg_from_coord(int, struct xnd_msg *);
-int check_coord_status(int);
+
+bool coord_exited(int);
+int coord_socket_status(int);
 
 #ifdef __cplusplus
 }

@@ -10,36 +10,6 @@ CXXFLAGS := -std=c++20 -Wall -Wno-deprecated-declarations \
 	    -DDEVELOPMENT=1 -g3 -O0 -arch $(ARCH) \
 	    -iquote . -iquote ./include
 
-LIBXND_WRAPPERS := \
-        xnd/wrappers/time_wrappers.c \
-        xnd/wrappers/stdlib_wrappers.c \
-        xnd/wrappers/pthread_wrappers.c \
-        xnd/wrappers/file_wrappers.c \
-        xnd/wrappers/signal_wrappers.c \
-        xnd/pid/pid_wrappers.c
-
-LIBXND_SOURCES := \
-        xnd/xnd_lib.c \
-        xnd/pac.c \
-        xnd/vm_common.c \
-        xnd/vm_checkpoint.c \
-        xnd/writeckpt.c \
-        xnd/shared_cache.c \
-        xnd/thread_info.c \
-        xnd/ckptfile.c \
-        xnd/util/log.c \
-        xnd/util/path.c \
-        xnd/util/debug.c \
-        xnd/util/io.c \
-        xnd/platform/signal.c \
-        xnd/platform/ucontext/_setcontext.s \
-        xnd/platform/ucontext/setcontext.c \
-        xnd/platform/exe.c \
-        xnd/pid/pid_table.cpp \
-        xnd/coordinator/xnd_coord_api.c \
-        xnd/coordinator/xnd_coord_client.c \
-        $(LIBXND_WRAPPERS)
-
 LIBXND_OBJECTS := \
         $(BUILD)/xnd_lib.o \
         $(BUILD)/pac.o \
@@ -56,6 +26,7 @@ LIBXND_OBJECTS := \
         $(BUILD)/_setcontext.o \
         $(BUILD)/setcontext.o \
         $(BUILD)/pid_table.o \
+        $(BUILD)/pid_table_common.o \
         $(BUILD)/io.o \
         $(BUILD)/exe.o \
         $(BUILD)/xnd_coord_api.o \
@@ -65,7 +36,9 @@ LIBXND_OBJECTS := \
         $(BUILD)/signal_wrappers.o \
         $(BUILD)/pthread_wrappers.o \
         $(BUILD)/file_wrappers.o \
-        $(BUILD)/pid_wrappers.o
+        $(BUILD)/pid_wrappers.o \
+        $(BUILD)/fd.o \
+        $(BUILD)/env.o
 
 XND_RESTART_INTERNAL_SOURCES := \
         xnd/xnd_restart_internal.c \
@@ -87,6 +60,7 @@ XND_LAUNCH_SOURCES := \
         xnd/shared_cache.c \
         xnd/util/io.c \
         xnd/util/log.c \
+        xnd/util/env.c \
         xnd/coordinator/xnd_coord_api.c
 
 XND_COMMAND_SOURCES := \
@@ -97,13 +71,16 @@ XND_COMMAND_SOURCES := \
         xnd/platform/exe.c \
         xnd/coordinator/xnd_coord_api.c
 
-XND_COORD_SOURCES := \
-        xnd/shared_cache.c \
-        xnd/ckptfile.c \
-        xnd/util/io.c \
-        xnd/util/log.c \
-        xnd/util/path.c \
-        xnd/coordinator/xnd_coord.c \
+XND_COORD_OBJECTS := \
+        $(BUILD)/shared_cache.o \
+        $(BUILD)/ckptfile.o \
+        $(BUILD)/io.o \
+        $(BUILD)/log.o \
+        $(BUILD)/fd.o \
+        $(BUILD)/path.o \
+        $(BUILD)/pid_table_common.o \
+        $(BUILD)/proc_list.o \
+        $(BUILD)/xnd_coord.o \
 
 XND_RESTART_OBJECTS := \
         $(BUILD)/xnd_restart.o \
@@ -132,6 +109,9 @@ $(BUILD):
 $(BUILD)/%.o: xnd/%.c | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
+$(BUILD)/%.o: xnd/%.cpp | $(BUILD)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
 $(BUILD)/%.o: xnd/util/%.c | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
@@ -149,9 +129,6 @@ $(BUILD)/%.o: xnd/coordinator/%.c | $(BUILD)
 
 $(BUILD)/%.o: xnd/pid/%.c | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
-
-$(BUILD)/%.o: xnd/%.cpp | $(BUILD)
-	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 $(BUILD)/%.o: xnd/pid/%.cpp | $(BUILD)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
@@ -191,8 +168,9 @@ $(BUILD)/xnd_print: xnd/xnd_print.c | $(BUILD)
 $(BUILD)/xnd_command: $(XND_COMMAND_SOURCES) | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ $^
 
-$(BUILD)/xnd_coordinator: $(XND_COORD_SOURCES) | $(BUILD)
-	$(CC) $(CFLAGS) -o $@ $^
+$(BUILD)/xnd_coordinator: $(XND_COORD_OBJECTS) | $(BUILD)
+	$(CXX) $(CXXFLAGS) -o $@ $^
+	dsymutil $@
 
 test:	
 	$(MAKE) -C test all
@@ -203,4 +181,7 @@ clean:
 	rm -f xnd.log xnd-debug.sh
 
 .PHONY: all clean test
-.INTERMEDIATE: $(LIBXND_OBJECTS) $(XND_RESTART_OBJECTS)
+.INTERMEDIATE: \
+        $(LIBXND_OBJECTS) \
+        $(XND_RESTART_OBJECTS) \
+        $(XND_COORD_OBJECTS)

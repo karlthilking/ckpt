@@ -173,7 +173,13 @@ void coord_setup_handler(int sig)
 
 void coord_handler(int sig)
 {
+        struct proc *p;
+
         xnd_trace("Coordinator sent signal: %d\n", sig);
+        proc_foreach(p, proc_list) {
+                kill(p->real_pid, sig);
+        }
+
         coord_cleanup();
         kill(getpid(), sig);
 }
@@ -459,8 +465,10 @@ void coord_connect_with_process_on_launch(int fd, struct xnd_msg *msg)
          * re-registering. Just allow it to re-register.
          */
         if (pid_table_real_pid_exists(msg->real_pid)) {
+                xnd_trace("Process %d re-connecting\n", msg->real_pid);
                 p = proc_list_find_by_real_pid(proc_list, msg->real_pid);
-                xnd_assert(p != NULL);
+                close(p->fd);
+                p->fd = fd;
                 coord_send_handshake(p);
                 return;
         }

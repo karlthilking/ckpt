@@ -11,6 +11,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include <string.h>
 #include <limits.h>
 #include <time.h>
@@ -139,7 +140,6 @@ int send_msg_to_coord(int fd, struct xnd_msg *msg)
         xnd_assert(fd != -1);
         bytes = writeall(fd, msg, sizeof(struct xnd_msg));
         if (bytes != sizeof(struct xnd_msg)) {
-                xnd_error("Failed to send message to coordinator\n");
                 return -1;
         }
 
@@ -153,7 +153,6 @@ int recv_msg_from_coord(int fd, struct xnd_msg *msg)
         xnd_assert(fd != -1);
         bytes = readall(fd, msg, sizeof(struct xnd_msg));
         if (bytes != sizeof(struct xnd_msg)) {
-                xnd_error("Failed to receive message from coordinator\n");
                 return -1;
         }
 
@@ -165,7 +164,38 @@ int recv_msg_from_coord(int fd, struct xnd_msg *msg)
         return 0;
 }
 
-int check_coord_status(int fd)
+bool coord_exited(int fd)
+{
+        int     err, flags;
+        pid_t   coord_pid;
+        ssize_t bytes;
+        char    *coord_pid_str, buf[32];
+        bool    exited;
+        
+        if ((coord_pid_str = getenv("XND_COORD_PID")) != NULL) {
+                coord_pid = atoi(coord_pid_str);
+                err = kill(coord_pid, 0);
+                if (err != 0 && errno == ESRCH) {
+                        return true;
+                }
+        }
+
+        xnd_assert((flags = fcntl(fd, F_GETFL)) != -1);
+        xnd_assert(fcntl(fd, F_SETFL, flags | O_NONBLOCK) != -1);
+
+        bytes = recv(fd, buf, sizeof(buf), MSG_PEEK);
+        if (bytes == 0) {
+                exited = true;
+        } else {
+                exited = false;
+        }
+        
+        xnd_assert((flags = fcntl(fd, F_GETFL)) != -1);
+        xnd_assert(fcntl(fd, F_SETFL, flags & ~O_NONBLOCK) != -1);
+        return exited;
+}
+
+int coord_socket_status(int fd)
 {
         int             err, stat;
         socklen_t       len = sizeof(stat);
