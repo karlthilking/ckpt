@@ -3,14 +3,30 @@
 #define XND_COORD_CLIENT_H
 
 #include "xnd/xnd.h"
+#include "xnd_coord_api.h"
 
-void register_with_coord_on_launch(void);
-void register_with_coord_on_restart(void);
-void send_exit_to_coord(void);
+#ifdef __cplusplus
+extern "C" {
+#endif /* __cplusplus */
 
-enum xnd_msghdr wait_for_coord_msg(void);
-void preckpt_coord_barrier(void);
-void postckpt_coord_barrier(void);
-void postrestart_coord_barrier(void);
+void send_recv_coord_handshake(enum xnd_msghdr);
+void connect_to_coord_on_launch(void);
+void connect_to_coord_on_restart(void);
+void disconnect_from_coord(void);
+
+void coord_client_atfork_prepare(void);
+void coord_client_atfork_child(void);
+void coord_client_atfork_parent(void);
+void coord_client_atfork_failed(void);
+
+int wait_for_ckpt_request_from_coord(void);
+void enter_coord_barrier(enum coord_barrier_type);
+
+pid_t virt_to_real_pid_from_coord(pid_t);
+pid_t real_to_virt_pid_from_coord(pid_t);
+
+#ifdef __cplusplus
+}
+#endif /* __cplusplus */
 
 #endif /* XND_COORD_CLIENT_H */

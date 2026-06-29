@@ -1,14 +1,15 @@
 /* thread_info.c */
-#include "xnd/xnd.h"
-#include "xnd/thread_info.h"
-#include "xnd/xnd_lib.h"
-#include "xnd/pac.h"
-#include "xnd/tls.h"
-#include "xnd/coordinator/xnd_coord_api.h"
-#include "xnd/coordinator/xnd_coord_client.h"
-#include "xnd/wrappers/signal_wrappers.h"
-#include "xnd/wrappers/pthread_wrappers.h"
-#include "xnd/platform/ucontext/ucontext.h"
+#include "xnd.h"
+#include "thread_info.h"
+#include "xnd_lib.h"
+#include "pac.h"
+#include "tls.h"
+#include "util/env.h"
+#include "coordinator/xnd_coord_api.h"
+#include "coordinator/xnd_coord_client.h"
+#include "wrappers/signal_wrappers.h"
+#include "wrappers/pthread_wrappers.h"
+#include "platform/ucontext/ucontext.h"
 
 #define _XOPEN_SOURCE
 #include <ucontext.h>
@@ -156,8 +157,8 @@ void thread_list_remove(struct thread_info *th)
 
 /**
  * thread_list_atfork_prepare:
- *  Acquire all mutexes before fork() is called so child can release
- *  each mutex and reinitialize thread list after being created.
+ *  Acquire all mutexes before fork() is called so child can reinitialize
+ *  each mutex after fork().
  */
 void thread_list_atfork_prepare(void)
 {
@@ -187,15 +188,10 @@ void thread_list_atfork_child(void)
         }
 
         /**
-         * Unlock every lock that was acquired by thread_list_atfork_prepare
-         * and reinitialize.
+         * Re-initialize all locks and create a new checkpoint thread
+         * in the child process.
          */
-        thread_list_release();
-        zombie_list_release();
-        pthread_mutex_unlock(&ckpt_thread.lock);
         thread_list_init();
-
-        xnd_assert(pthread_mutex_unlock(&ckpt_mtx) == 0);
         xnd_assert(pthread_mutex_init(&ckpt_mtx, NULL) == 0);
         xnd_assert(pthread_cond_init(&cond_arrived, NULL) == 0);
         xnd_assert(pthread_cond_init(&cond_released, NULL) == 0);
@@ -426,17 +422,13 @@ __noreturn void ckpt_thread_exit(void)
 
 void ckpt_thread_wait(void)
 {
-        enum xnd_msghdr hdr;
-
-        for (;;) {
-                hdr = wait_for_coord_msg();
-                if (unlikely(get_xnd_state() == XND_EXITING)) {
+        while (wait_for_ckpt_request_from_coord() != 0) {
+                if (get_xnd_state() == XND_EXITING) {
                         ckpt_thread_exit();
                 }
-                if (hdr == XND_CKPT_REQUEST) {
-                        return;
-                }
         }
+
+        set_xnd_state(XND_CKPT_PENDING);
 }
 
 void *ckpt_thread_work(void *ready)
@@ -445,12 +437,13 @@ void *ckpt_thread_work(void *ready)
         sigset_t                set;
 
         sigemptyset(&set);
-        sigaddset(&set, xnd_ckpt_signal());
+        sigaddset(&set, env_get_ckpt_signal());
         pthread_sigmask(SIG_BLOCK, &set, NULL);
        
         tlv_init();
         myself = &ckpt_thread;
-        myself->self= pthread_self();
+        myself->self = pthread_self();
+        connect_to_coord_on_launch();
         
         /**
          * Signal to main thread that the checkpoint thread has
@@ -485,39 +478,47 @@ void *ckpt_thread_work(void *ready)
         restart = true;
         for (;;) {
                 /**
-                 * ckpt_thread_wait() will wait for the coordinator to
-                 * send a message and will return if the coordinator
-                 * sends XND_CKPT_REQUEST. Now, the checkpoint thread
-                 * will call preckpt_coord_barrier() to enter
-                 * a global barrier and wait for the coordinator to
-                 * send XND_CKPT_START.
+                 * Wait until coordinator sends XND_CKPT_REQUEST, and
+                 * transition from XND_RUNNING to XND_CKPTPENDING.
+                 *
+                 * Now that a checkpoint is pending, enter global coordinator
+                 * barrier until coordinator sends XND_CKPT_START
                  */
                 ckpt_thread_wait();
-                preckpt_coord_barrier();
+                enter_coord_barrier(COORD_BARRIER_PRECKPT);
                 
                 thread_save_tls();
                 thread_save_sig_state();
-
+                
+                /**
+                 * Suspend user threads and transition from XND_CKPTPENDING
+                 * to XND_SUSPINPROG.
+                 */
                 suspend_threads();
-                barrier_arrival_wait();
                 wait_for_exiting_threads();
+                
+                /**
+                 * Wait for all threads to arrive at the barrier and
+                 * transition from XND_SUSPINPROG -> XND_CKPTINPROG.
+                 */
+                barrier_arrival_wait();
 
                 xnd_precheckpoint();
                 set_tls_slot(TLS_TLV_FLAG_SLOT, 0);
                 xnd_checkpoint(&myself->uctx);
                 
                 /**
-                 * postckpt_coord_barrier() will send
-                 * XND_CHECKPOINT_COMPLETE to the coordinator.
-                 * Then, the checkpoint thread will wait in a global
-                 * barrier until the checkpoint thread replies with
-                 * XND_RESUME_AFTER_CHECKPOINT. After this, the
-                 * checkpoint thread can now release the barrier
-                 * for user threads and allow the process to continue.
+                 * Checkpoint is complete, now wait in another coordinator
+                 * barrier while the coordinator writes the checkpoint
+                 * manifest.
                  */
-                postckpt_coord_barrier();
-
+                enter_coord_barrier(COORD_BARRIER_POSTCKPT);
                 set_tls_slot(TLS_TLV_FLAG_SLOT, TLS_TLV_INIT_MAGIC);
+
+                /**
+                 * Release user threads 
+                 *  XND_CKPTINPROG -> XND_RUNNING
+                 */
                 barrier_release();
         }
 
@@ -559,7 +560,6 @@ void barrier_arrival_wait(void)
          */
         set_xnd_state(XND_CKPTINPROG);
         pthread_cond_broadcast(&cond_released);
-
         while (threads_arrived < threads_expected) {
                 pthread_cond_wait(&cond_arrived, &ckpt_mtx);
         }
@@ -586,7 +586,7 @@ void suspend_threads(void)
         bool                    rescan;
 
         set_xnd_state(XND_SUSPINPROG);
-        sig = xnd_ckpt_signal();
+        sig = env_get_ckpt_signal();
         threads_arrived = 0;
 
 again:

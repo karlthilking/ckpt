@@ -32,13 +32,25 @@ enum xnd_log_fd {
 #define XND_MIN_LOG_LEVEL       XND_ERRORS
 #define XND_MAX_LOG_LEVEL       XND_TRACING
 
+#ifndef _real_getpid
+# define _real_getpid() ({                                      \
+        register s64 x0 __asm__("x0");                          \
+        register s64 x16 __asm__("x16") = (s64)SYS_getpid;      \
+        __asm__ __volatile__(                                   \
+                "svc #0x80" : "=r" (x0) : "r" (x16)             \
+        );                                                      \
+        (pid_t)x0;                                              \
+})
+#endif
+
 #define __XND_FILE__ \
         (__builtin_strrchr(__FILE__, '/') ? \
          __builtin_strrchr(__FILE__, '/') + 1 : __FILE__)
 
 #define xnd_print(fd, type, fmt, ...)                   \
-        dprintf(fd, "[xnd:%s %s:%s]:\n" fmt "\n", type, \
-                __XND_FILE__, __func__, ##__VA_ARGS__)
+        dprintf(fd, "[xnd:%s %s:%s %d]:\n" fmt "\n",    \
+                type, __XND_FILE__, __func__,           \
+                _real_getpid(), ##__VA_ARGS__)
 
 #define xnd_printf(fmt, ...) \
         printf("[xnd]: " fmt "\n", ##__VA_ARGS__)
@@ -51,17 +63,6 @@ enum xnd_log_fd {
         xnd_print(XND_DEBUG_FD, "debug", __fmt, ##__VA_ARGS__)
 #define xnd_trace(__fmt, ...) \
         xnd_print(XND_TRACE_FD, "trace", __fmt, ##__VA_ARGS__)
-
-#ifndef _real_getpid
-# define _real_getpid() ({                                      \
-        register s64 x0 __asm__("x0");                          \
-        register s64 x16 __asm__("x16") = (s64)SYS_getpid;      \
-        __asm__ __volatile__(                                   \
-                "svc #0x80" : "=r" (x0) : "r" (x16)             \
-        );                                                      \
-        (pid_t)x0;                                              \
-})
-#endif
 
 #define xnd_abort() do { \
         register s64 x0 __asm__("x0") = (s64)_real_getpid();    \

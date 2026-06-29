@@ -188,23 +188,17 @@ void xnd_restart_target::create_process(bool create_roots) const noexcept
 
 int main(int argc, char *argv[])
 {
-        pid_t coord_pid, child;
+        pid_t child, coord_pid = -1;
         
         xnd_log_setup();
         if (argc != 2) {
                 xnd_error("Usage: ./xnd_restart <ckpt-dir>\n");
-                xnd_log_cleanup();
-                exit(XND_EXIT_SUCCESS);
+                goto fail;
         }
-
-        if ((coord_pid = launch_coordinator()) == -1) {
+        
+        if ((coord_pid = launch_coordinator(true)) == -1) {
                 xnd_error("launch_coordinator() failed\n");
-                xnd_log_cleanup();
-                exit(XND_EXIT_SUCCESS);
-        } else {
-                char buf[11];
-                snprintf(buf, sizeof(buf), "%d", coord_pid);
-                xnd_assert(setenv("XND_COORD", buf, 1) == 0);
+                goto fail;
         }
         
         info = new xnd_restart_info(argv[1]);
@@ -212,7 +206,7 @@ int main(int argc, char *argv[])
         switch (child) {
         case -1:
                 xnd_error("fork: %s\n", strerror(errno));
-                exit(XND_EXIT_FAILURE);
+                goto fail;
         case 0:
                 info->process_targets();
                 unreachable();
@@ -228,4 +222,10 @@ int main(int argc, char *argv[])
         
         xnd_log_cleanup();
         exit(XND_EXIT_SUCCESS);
+fail:
+        xnd_log_cleanup();
+        if (coord_pid != -1) {
+                kill(coord_pid, SIGTERM);
+        }
+        exit(XND_EXIT_FAILURE);
 }

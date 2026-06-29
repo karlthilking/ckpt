@@ -20,54 +20,42 @@ static const char *help =
 "OPTIONS:\n"
 " --checkpoint\n"
 "    Send a checkpoint request to a computation\n"
-" --exit\n"
-"    Request for a computation to exit\n"
 " --kill\n"
 "    Kill a computation running under XND\n";
 
-static void send_command(enum xnd_command);
 static void usage(void);
 
 int main(int argc, char *argv[])
 {
+        int             err;
+        enum xnd_cmd    cmd;
+
         xnd_log_setup();
         if (argc < 2) {
                 usage();
-                xnd_log_cleanup();
-                exit(0);
+                goto out;
         }
-        
-        connect_to_coord();
+
         if (strcmp(argv[1], "--checkpoint") == 0) {
-                send_command(XND_CKPT_CMD);
+                cmd = XND_CKPT_CMD;
         } else if (strcmp(argv[1], "--kill") == 0) {
-                send_command(XND_KILL_CMD);
-        } else if (strcmp(argv[1], "--exit") == 0) {
-                send_command(XND_EXIT_CMD);
+                cmd = XND_KILL_CMD;
         } else {
-                xnd_error("Unrecognized command: %s\n", argv[1]);
+                usage();
+                goto out;
         }
         
+        if ((err = send_command_to_coord(cmd)) != 0) {
+                xnd_error("Command failed: %s\n", xnd_cmd_string(cmd));
+                goto out;
+        }
+
+out:
         xnd_log_cleanup();
-        disconnect_from_coord();
-        exit(0);
+        exit(XND_EXIT_SUCCESS);
 }
 
 static void usage(void)
 {
         xnd_error("%s", help);
-}
-
-static void send_command(enum xnd_command cmd)
-{
-        int             err;
-        struct xnd_msg  msg;
-
-        msg.hdr = XND_COMMAND;
-        msg.cmd = cmd;
-        
-        err = send_msg_to_coord(&msg);
-        if (err != 0) {
-                xnd_error("Failed to send command to coordinator!\n");
-        }
 }

@@ -3,22 +3,33 @@
 #define XND_COORD_H
 
 #include "xnd/xnd.h"
-#include "xnd/coordinator/xnd_coord_api.h"
+#include "proc_list.h"
+#include "xnd_coord_api.h"
 
+#include <unistd.h>
 #include <sys/types.h>
+
+#ifndef NSEC_PER_USEC
+# define NSEC_PER_USEC (1000L)
+#endif
+
+#define INITIAL_VIRT_PID        1
+#define INITIAL_XND_PID         1000
 
 #define COORD_MAX_PROC          256
 #define COORD_EXIT_SUCCESS      0
 #define COORD_EXIT_FAILURE      222
 
-enum coord_state {
-        COORD_NULL,
-        COORD_RUNNING,
-        COORD_PRECKPT,
-        COORD_CKPTINPROG,
-        COORD_POSTCKPT,
-        COORD_RESTARTINPROG,
-        COORD_EXITING
+#define COORD_TIMEOUT_USEC      10000
+#define COORD_TIMEOUT_NSEC      COORD_TIMEOUT_USEC * NSEC_PER_USEC
+
+struct coord_info {
+        uuid_t  xnd_uuid;
+        u64     epoch;
+        pid_t   next_virt_pid;
+        u32     next_xnd_pid;
+        u32     num_peers;
+        int     listen_fd;
 };
 
 enum coord_comm_type {
@@ -26,79 +37,44 @@ enum coord_comm_type {
         COMM_REDUCE
 };
 
-enum proc_state {
-        P_RUNNING,
-        P_CKPTRECV,
-        P_CKPTRDY,
-        P_CKPTINPROG,
-        P_CKPTDONE,
-        P_RESTARTINPROG,
-        P_EXITED
-};
+void proc_exit_callback(struct proc *);
+pid_t coord_next_virt_pid(void);
+u32 coord_next_xnd_pid(void);
 
-struct proc {
-        int             fd;
-        u32             xnd_pid;
-        u32             xnd_ppid;
-        u32             xnd_pgid;
-
-        pid_t           virt_pid;
-        pid_t           virt_ppid;
-        pid_t           real_pid;
-        pid_t           real_ppid;
-
-        u32             num_peers;
-        bool            is_root_of_tree;
-        enum proc_state state;
-
-        struct proc     *next;
-        struct proc     *prev;
-};
-
-struct proc_list {
-        struct proc     *head;
-        size_t          size;
-};
-
-void proc_list_init(void);
-void proc_list_destroy(void);
-void proc_list_add(struct proc *);
-void proc_list_remove(struct proc *);
-struct proc *proc_list_find_real(pid_t);
-struct proc *proc_list_find_virt(pid_t);
-
+void coord_work(void);
 void coord_init(void);
 void coord_cleanup(void);
 void coord_exit(int);
+
 void coord_setup_handler(int);
 void coord_handler(int);
-void coord_event_loop(void);
-void coord_check_status(void);
-
-void coord_await_connection(void);
-void coord_register_process(int, struct xnd_msg *);
-
+void coord_broadcast_kill(void);
 void coord_handle_command(struct xnd_msg *);
+void coord_handle_msg(int, struct xnd_msg *);
 
-void coord_broadcast_exit(void);
-void coord_kill_processes(void);
-
-void coord_do_restart(int, struct xnd_msg *);
-int coord_write_ckpt_manifest(void);
-bool coord_do_checkpoint(void);
-
-int coord_multicast_prepare(enum coord_comm_type, enum proc_state);
+int coord_send_msg(int, struct xnd_msg *);
+int coord_recv_msg(int, struct xnd_msg *);
+int coord_release_barrier(enum coord_barrier_type type);
 int coord_collective_prepare(enum coord_comm_type);
 
-int coord_broadcast(struct xnd_msg *, enum proc_state, enum proc_state);
-int coord_reduce(enum xnd_msghdr, enum proc_state, enum proc_state);
+void coord_wait_for_msg(void);
+void coord_wait_for_connection(void);
+void coord_connect_with_process_on_launch(int, struct xnd_msg *);
+void coord_connect_with_process_on_restart(int, struct xnd_msg *);
+void coord_send_handshake(struct proc *);
 
+void coord_write_ckpt_manifest(void);
 void coord_determine_roots(void);
-void coord_write_msg_metainfo(struct proc *, struct xnd_msg *);
+void coord_suspend_processes(void);
+void coord_wait_for_ckpt_completions(void);
+void coord_do_checkpoint(void);
 
-void coord_await_msg(void);
-void coord_handle_proc_msg(struct proc *);
-void coord_send_virt_to_real(struct proc *, struct xnd_msg *);
-void coord_send_real_to_virt(struct proc *, struct xnd_msg *);
+void coord_send_virt_to_real(int, struct xnd_msg *);
+void coord_send_real_to_virt(int, struct xnd_msg *);
+
+void coord_do_restart(void);
+bool coord_is_restart(int, char **);
+
+void coord_atfork(int, struct xnd_msg *);
 
 #endif /* XND_COORD_H */

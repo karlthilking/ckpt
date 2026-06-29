@@ -1,20 +1,22 @@
 /* libckpt.c */
-#include "xnd/xnd.h"
-#include "xnd/xnd_lib.h"
-#include "xnd/writeckpt.h"
-#include "xnd/vm_region.h"
-#include "xnd/pac.h"
-#include "xnd/tls.h"
-#include "xnd/thread_info.h"
-#include "xnd/shared_cache.h"
-#include "xnd/pid/pid.h"
-#include "xnd/util/debug.h"
-#include "xnd/platform/signal.h"
-#include "xnd/pid/pid_table.h"
-#include "xnd/wrappers/file_wrappers.h"
-#include "xnd/wrappers/signal_wrappers.h"
-#include "xnd/coordinator/xnd_coord_api.h"
-#include "xnd/coordinator/xnd_coord_client.h"
+#include "xnd.h"
+#include "xnd_lib.h"
+#include "writeckpt.h"
+#include "vm_region.h"
+#include "pac.h"
+#include "tls.h"
+#include "thread_info.h"
+#include "shared_cache.h"
+#include "pid/pid.h"
+#include "util/debug.h"
+#include "util/env.h"
+#include "platform/signal.h"
+#include "pid/pid_table.h"
+#include "pid/pid_table_common.h"
+#include "wrappers/file_wrappers.h"
+#include "wrappers/signal_wrappers.h"
+#include "coordinator/xnd_coord_api.h"
+#include "coordinator/xnd_coord_client.h"
 
 #define _XOPEN_SOURCE
 #include <ucontext.h>
@@ -34,41 +36,8 @@ __hidden u32    xnd_ppid;
 __hidden u32    xnd_pgid;
 
 __hidden u64    epoch           = 0;
-__hidden int    xnd_ckpt_sig    = -1;
 __hidden u32    num_peers       = 0;
 __hidden bool   is_root_of_tree = false;
-
-char *xnd_program(void)
-{
-#if DEVELOPMENT || DEBUG
-        static char *program = NULL;
-        
-        if (unlikely(program == NULL)) {
-                program = getenv("XND_PROGRAM");
-                xnd_trace("XND_PROGRAM=%s\n", program);
-        }
-
-        return program;
-#else
-        return NULL;
-#endif
-}
-
-int xnd_ckpt_signal(void)
-{
-        char            *str;
-        static int      ckpt_sig = -1;
-
-        if (unlikely(ckpt_sig == -1)) {
-                if ((str = getenv("XND_CKPT_SIGNAL"))) {
-                        ckpt_sig = atoi(str);
-                } else {
-                        ckpt_sig = XND_DEFAULT_CKPT_SIGNAL;
-                }
-        }
-
-        return ckpt_sig;
-}
 
 enum xnd_state get_xnd_state(void)
 {
@@ -95,9 +64,8 @@ void xnd_precheckpoint(void)
 void xnd_postrestart(void)
 {
         epoch++;
-        connect_to_coord();
-        register_with_coord_on_restart();
-        postrestart_coord_barrier();
+        connect_to_coord_on_restart();
+        enter_coord_barrier(COORD_BARRIER_POSTRESTART);
         
         thread_sig_fixup(_pthread_ptr_munge_token);
         ckpt_vm_deallocate_regions();
@@ -138,38 +106,52 @@ void xnd_checkpoint(ucontext_t *uctx)
 
 void xnd_atfork_prepare(void)
 {
-        /**
-         * TODO
-         * pid_table_atfork_prepare();
-         * thread_list_atfork_prepare();
-         */
+        xnd_trace("called %s\n", __func__);
+
+        coord_client_atfork_prepare();
+        pid_table_atfork_prepare();
+        thread_list_atfork_prepare();
 }
 
-void xnd_atfork_child(pid_t virt_pid, pid_t virt_ppid)
+void xnd_atfork_child(void)
 {
-        /**
-         * TODO
-         * pid_table_atfork_child(virt_pid, virt_ppid);
-         * thread_list_atfork_child();
-         */
+        xnd_trace("called %s\n", __func__);
+
+        coord_client_atfork_child();
+        pid_table_atfork_child();
+        thread_list_atfork_child();
+
+        /* Re-register atfork handlers */
+        xnd_register_fork_handlers();
 }
 
-void xnd_atfork_parent(pid_t virt_cpid, pid_t real_cpid)
+void xnd_atfork_parent(void)
 {
-        /**
-         * TODO
-         * pid_table_atfork_parent(virt_cpid, real_cpid);
-         * thread_list_atfork_parent();
-         */
+        xnd_trace("called %s\n", __func__);
+
+        coord_client_atfork_parent();
+        pid_table_atfork_parent();
+        thread_list_atfork_parent();
 }
 
 void xnd_atfork_failed(void)
 {
-        /**
-         * TODO
-         * pid_table_atfork_failed();
-         * thread_list_atfork_failed();
-         */
+        coord_client_atfork_failed();
+        pid_table_atfork_failed();
+        thread_list_atfork_failed();
+}
+
+void xnd_register_fork_handlers(void)
+{
+        int err;
+        
+        err = pthread_atfork(xnd_atfork_prepare, 
+                             xnd_atfork_parent, 
+                             xnd_atfork_child);
+        if (err != 0) {
+                xnd_error("pthread_atfork: %s\n", strerror(err));
+                xnd_abort();
+        }
 }
 
 /**
@@ -182,25 +164,26 @@ static __constructor(101) void xnd_setup(void)
 {
         struct sigaction        sa;
         sigset_t                set;
-        int                     err;
-        
-        connect_to_coord();
-        register_with_coord_on_launch();
-        
-        xnd_ckpt_sig = xnd_ckpt_signal();
+        int                     err, sig;
+
         sigfillset(&set);
         sa.sa_flags = SA_SIGINFO;
         sa.sa_sigaction = thread_sighandler;
-
-        err = __xnd_sigaction(xnd_ckpt_sig, &sa, NULL);
+        
+        sig = env_get_ckpt_signal();
+        err = __xnd_sigaction(sig, &sa, NULL);
         if (err != 0) {
                 xnd_error("__xnd_sigaction failed!\n");
                 xnd_abort();
         }
         
+        xnd_register_fork_handlers();
         fd_table_init();
         thread_list_init();
+
         pid_table_init();
+        pid_table_init_pid_info();
+
         set_xnd_state(XND_RUNNING);
 
 #if DEVELOPMENT || DEBUG
@@ -213,11 +196,10 @@ static __constructor(101) void xnd_setup(void)
 static __destructor() void xnd_cleanup(void)
 {
         set_xnd_state(XND_EXITING);
+        
         fd_table_destroy();
         thread_list_destroy();
-        pid_table_destroy();
+        
         xnd_log_cleanup();
-
-        send_exit_to_coord();
         disconnect_from_coord();
 }

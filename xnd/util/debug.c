@@ -2,6 +2,7 @@
 #include "xnd/xnd.h"
 #include "xnd/xnd_lib.h"
 #include "xnd/platform/exe.h"
+#include "xnd/util/env.h"
 #include <stdlib.h>
 #include <stdio.h>
 #include <unistd.h>
@@ -15,7 +16,7 @@ static __always_inline s32 main_image_index(void)
 {
         char *program;
 
-        if ((program = xnd_program()) == NULL) {
+        if ((program = env_get_program_name()) == NULL) {
                 xnd_trace("getenv: %s\n", strerror(errno));
                 return -1;
         }

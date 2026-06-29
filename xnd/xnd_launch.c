@@ -1,10 +1,11 @@
 /* xnd_launch.c */
 #include "xnd/xnd.h"
-#include "xnd/ckptfile.h"
-#include "xnd/util/path.h"
-#include "xnd/util/log.h"
-#include "xnd/platform/exe.h"
-#include "xnd/coordinator/xnd_coord_api.h"
+#include "ckptfile.h"
+#include "util/path.h"
+#include "util/log.h"
+#include "util/env.h"
+#include "platform/exe.h"
+#include "coordinator/xnd_coord_api.h"
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -41,17 +42,13 @@ static __noreturn void launch(char **argv)
          * XND_PROGRAM=<binary>
          * <binary> <args> ...
          */
-        char    libxnd_path[PATH_MAX], xnd_program[PATH_MAX], pid_str[11];
+        char    libxnd_path[PATH_MAX], xnd_program[PATH_MAX];
         int     err;
-        pid_t   pid, coord_pid;
+        pid_t   coord_pid;
 
-        if ((coord_pid = launch_coordinator()) == -1) {
+        if ((coord_pid = launch_coordinator(false)) == -1) {
                 xnd_error("Failed to launch coordinator\n");
                 xnd_exit(XND_EXIT_FAILURE);
-        } else {
-                snprintf(pid_str, sizeof(pid_str), "%d", coord_pid);
-                xnd_assert(setenv("XND_COORD_PID", pid_str, 1) == 0);
-                bzero(pid_str, sizeof(pid_str));
         }
 
         err = xnd_exe_path_of("libxnd.dylib", libxnd_path, PATH_MAX);
@@ -73,14 +70,8 @@ static __noreturn void launch(char **argv)
                         xnd_exit(XND_EXIT_FAILURE);
                 }
         }
-
-        err = setenv("XND_PROGRAM", xnd_program, 1);
-        if (err != 0) {
-                xnd_error("setenv(\"XND_PROGRAM\", %s, 1): %s\n",
-                          xnd_program, strerror(errno));
-                xnd_exit(XND_EXIT_FAILURE);
-        }
-
+        
+        env_set_program_name(xnd_program);
         err = setenv("DYLD_INSERT_LIBRARIES", libxnd_path, 1);
         if (err != 0) {
                 xnd_error("setenv(\"DYLD_INSERT_LIBRARIES\", %s, 1): %s\n",
@@ -99,28 +90,14 @@ static __noreturn void launch(char **argv)
                   "DYLD_INSERT_LIBRARIES=%s\n"
                   "DYLD_SHARED_REGION=private\n",
                   xnd_program, libxnd_path);
-        
-        pid = fork();
-        if (pid == -1) {
-                xnd_error("fork: %s\n", strerror(errno));
+
+        xnd_printf("Executing %s (pid=%d)\n", xnd_program, getpid());
+        err = execvp(argv[0], argv);
+        if (err != 0) {
+                xnd_error("execvp: %s\n", strerror(errno));
                 xnd_exit(XND_EXIT_FAILURE);
-        } else if (pid == 0) {
-                snprintf(pid_str, sizeof(pid_str), "%d", getpid());
-                xnd_printf("Executing %s (pid=%s)\n", xnd_program, pid_str);
-
-                err = execvp(argv[0], argv);
-                if (err != 0) {
-                        xnd_error("execvp: %s\n", strerror(errno));
-                        xnd_exit(XND_EXIT_FAILURE);
-                }
-        } else {
-                err = waitpid(pid, NULL, 0);
-                if (err < 0) {
-                        xnd_error("waitpid: %s\n", strerror(errno));
-                        xnd_exit(XND_EXIT_FAILURE);
-                }
-                xnd_exit(XND_EXIT_SUCCESS);
         }
-
+        
+        xnd_exit(XND_EXIT_SUCCESS);
         unreachable();
 }
