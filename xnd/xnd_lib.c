@@ -166,6 +166,8 @@ static __constructor(101) void xnd_setup(void)
         sigset_t                set;
         int                     err, sig;
 
+        connect_to_coord_on_launch();
+
         sigfillset(&set);
         sa.sa_flags = SA_SIGINFO;
         sa.sa_sigaction = thread_sighandler;

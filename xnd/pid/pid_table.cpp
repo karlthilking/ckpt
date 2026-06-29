@@ -78,7 +78,6 @@ extern "C" void pid_table_atfork_child(void)
          * coord_client_atfork_child -> send_recv_coord_handshake.
          */
         pid_table->update(_virt_pid, _real_pid);
-
         /**
          * virtual ppid -> real ppid should already exist in pid table
          * after fork

@@ -192,7 +192,7 @@ void coord_client_atfork_child(void)
                   "_virt_pid=%d, _virt_ppid=%d\n"
                   "_real_pid=%d, _real_ppid=%d\n"
                   "xnd_pid=%u, xnd_ppid=%u, xnd_pgid=%u\n",
-                  _virt_pid, _virt_ppid, _real_pid, _real_ppid,
+                  _virt_pid, _virt_ppid, _real_getpid(), _real_getppid(),
                   xnd_pid, xnd_ppid, xnd_pgid);
 }
 
@@ -311,6 +311,10 @@ pid_t virt_to_real_pid_from_coord(pid_t virt)
                 xnd_error("Unexpected coordinator response: %s\n",
                           xnd_msghdr_string(msg.hdr));
                 return -1;
+        } else if (msg.ret != XND_SUCCESS) {
+                xnd_error("Coordinator could not find virtual -> real "
+                          "mapping for virtual pid %d\n", virt);
+                return -1;
         }
 
         return msg.real_pid;
@@ -341,6 +345,10 @@ pid_t real_to_virt_pid_from_coord(pid_t real)
         if (msg.hdr != XND_COORD_ACK) {
                 xnd_error("Unexpected coordinator response: %s\n",
                           xnd_msghdr_string(msg.hdr));
+                return -1;
+        } else if (msg.ret != XND_SUCCESS) {
+                xnd_error("Coordinator could not find real -> virtual "
+                          "mapping for real pid %d\n", real);
                 return -1;
         }
 

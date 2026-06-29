@@ -441,7 +441,6 @@ void *ckpt_thread_work(void *ready)
         tlv_init();
         myself = &ckpt_thread;
         myself->self = pthread_self();
-        connect_to_coord_on_launch();
         
         /**
          * Signal to main thread that the checkpoint thread has
@@ -528,13 +527,14 @@ void ckpt_thread_reap(void)
         uintptr_t       tls;
         mach_port_t     port;
         kern_return_t   kr;
+
+        xnd_assert(myself != &ckpt_thread);
         
         tls = (uintptr_t)ckpt_thread.self + PTHREAD_T_TLS_OFFSET;
         port = (mach_port_t)(uintptr_t)((void **)tls)[__TSD_MACH_THREAD_SELF];
-
-        kr = thread_terminate(port);
-        if (kr != KERN_SUCCESS) {
-                xnd_error("thread_terminate: %s\n", mach_error_string(kr));
+        
+        if ((kr = thread_terminate(port)) != KERN_SUCCESS) {
+                xnd_warn("thread_terminate: %s\n", mach_error_string(kr));
         }
 
         pthread_mutex_destroy(&ckpt_thread.lock);

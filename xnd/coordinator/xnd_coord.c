@@ -839,7 +839,7 @@ bool coord_is_restart(int argc, char **argv)
 void coord_atfork(int fd, struct xnd_msg *parent_msg)
 {
         struct xnd_msg  resp, child_msg;
-        struct proc     *child;
+        struct proc     *child, *parent;
         int             err;
         
         child = malloc(sizeof(struct proc));
@@ -873,6 +873,12 @@ void coord_atfork(int fd, struct xnd_msg *parent_msg)
         child->virt_ppid = parent_msg->virt_ppid;
         child->xnd_ppid = parent_msg->xnd_ppid;
         child->xnd_pgid = parent_msg->xnd_pgid;
+
+        parent = proc_list_find_by_virt_pid(proc_list, child->virt_ppid);
+        if (!parent) {
+                xnd_error("Parent not in process list!\n");
+                coord_exit(COORD_EXIT_FAILURE);
+        }
         
         /* Wait for child to connect (and do handshake) */ 
         err = coord_recv_msg(fd, &child_msg);
@@ -880,9 +886,12 @@ void coord_atfork(int fd, struct xnd_msg *parent_msg)
                 xnd_error("Failed to receive child's message\n");
                 coord_exit(COORD_EXIT_FAILURE);
         }
-
+        
+        xnd_assert(child_msg.hdr == XND_ATFORK_CHILD);
         child->real_pid = child_msg.real_pid;
         child->real_ppid = child_msg.real_ppid;
+        xnd_assert(child->real_ppid = parent->real_pid);
+
         coord_send_handshake(child);
 
         child->state = PROC_RUNNING;

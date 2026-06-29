@@ -31,6 +31,10 @@ static pid_t virtual_to_real_pid(pid_t virt)
         }
 
         real = virt_to_real_pid_from_coord(virt);
+        if (real == -1) {
+                xnd_trace("Failed to get virtual -> real translation "
+                          "(virtual pid: %d)\n", virt);
+        }
 out:
         pid_table_release();
         return real;
@@ -46,6 +50,10 @@ static pid_t real_to_virtual_pid(pid_t real)
         }
 
         virt = real_to_virt_pid_from_coord(real);
+        if (virt == -1) {
+                xnd_trace("Failed to get real -> virtual translation "
+                          "(real pid: %d)\n", real);
+        }
 out:
         pid_table_release();
         return virt;
@@ -185,11 +193,8 @@ pid_t __wait4_hook(pid_t pid, int *status, int options, struct rusage *ru)
                 switch (pid) {
                 case INT32_MIN ... -2:
                         real_pid = virtual_to_real_pid(-pid);
-                        if (real_pid == -1) {
-                                goto fail;
-                        } else {
-                                real_pid = -real_pid;
-                        }
+                        xnd_assert(real_pid != -1);
+                        real_pid = -real_pid;
                         break;
                 case 0:
                 case -1:
@@ -197,9 +202,7 @@ pid_t __wait4_hook(pid_t pid, int *status, int options, struct rusage *ru)
                         break;
                 default:
                         real_pid = virtual_to_real_pid(pid);
-                        if (real_pid == -1) {
-                                goto fail;
-                        }
+                        xnd_assert(real_pid != -1);
                         break;
                 }
                 
@@ -212,7 +215,7 @@ pid_t __wait4_hook(pid_t pid, int *status, int options, struct rusage *ru)
                         virt_ret = 0;
                         break;
                 default:
-                        virt_ret = virtual_to_real_pid(real_ret);
+                        virt_ret = real_to_virtual_pid(real_ret);
                         if (WIFEXITED(*status) || WIFSIGNALED(*status)) {
                                 pid_table_acquire();
                                 pid_table_erase(virt_ret);
