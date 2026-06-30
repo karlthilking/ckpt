@@ -1,5 +1,4 @@
 /* xnd_restart_internal.c */
-#define _XOPEN_SOURCE
 #include "xnd/xnd.h"
 #include "xnd/readckpt.h"
 #include "xnd/pac.h"
@@ -7,6 +6,8 @@
 #include "xnd/shared_cache.h"
 #include "xnd/util/io.h"
 #include "xnd/util/log.h"
+
+#define _XOPEN_SOURCE
 #include <ucontext.h>
 #include <stdlib.h>
 #include <stdio.h>

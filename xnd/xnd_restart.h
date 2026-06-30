@@ -13,15 +13,14 @@
 #include <stdio.h>
 #include <string.h>
 #include <limits.h>
+#include <vector>
+#include <unordered_map>
 
 #define XND_RESTART_BINARY "xnd_restart_internal"
 
 #ifndef POSIX_SPAWN_DISABLE_ASLR
 # define POSIX_SPAWN_DISABLE_ASLR 0x0100
 #endif
-
-#include <vector>
-#include <unordered_map>
 
 namespace xnd {
 struct xnd_restart_info {
