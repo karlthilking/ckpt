@@ -206,8 +206,19 @@ void coord_client_atfork_child(void)
                   "xnd_pid=%u, xnd_ppid=%u, xnd_pgid=%u\n",
                   _virt_pid, _virt_ppid, _real_getpid(), _real_getppid(),
                   xnd_pid, xnd_ppid, xnd_pgid);
-
-        request_fd = -1;
+        
+        /**
+         * If request_fd is inherited from parent, close and set to -1
+         * so it will be reinitialized properly. request_fd can not be
+         * used by the child process until the coordinator is notified
+         * about which process is sending the request; the coordinator
+         * needs to be able to associate the connection with one of
+         * the processes that it knows about.
+         */
+        if (request_fd != -1) {
+                close(request_fd);
+                request_fd = -1;
+        }
 }
 
 void coord_client_atfork_parent(void)
