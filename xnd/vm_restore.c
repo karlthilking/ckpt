@@ -6,8 +6,8 @@
 #include <dlfcn.h>
 #include <errno.h>
 
+extern mach_port_t mach_task_self_;
 extern mach_port_t task_self_trap(void);
-extern mach_port_t thread_self_trap(void);
 
 int ckpt_vm_mark_regions(void)
 {
@@ -99,6 +99,17 @@ int ckpt_vm_restore_region(int fd, const struct xnd_vm_region *region)
         bytes = readall(fd, (void *)addr, region->size);
         if (bytes != region->size) {
                 return -1;
+        }
+        
+        /**
+         * If cached mach task port (mask_task_self_) is overwritten by
+         * restored memory, mach_task_self() will fail on next use.
+         * Refresh mach_task_self_ directly with task_self_trap (direct
+         * mach trap) so mach_task_self() can continue to work.
+         */
+        if (IN_VM_RANGE(&mach_task_self_, region->start, region->end)) {
+                mach_task_self_ = task_self_trap();
+                xnd_assert(mach_task_self() == task_self_trap());
         }
 
         if (region->prot != VM_PROT_DEFAULT) {

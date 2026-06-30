@@ -88,6 +88,10 @@ struct xnd_vm_region {
          ((__info)->behavior == RESTART_REGION_BEHAVIOR_FLAG)) ||       \
          ((__info)->user_tag == VM_MEMORY_RESTART_STACK))
 
+#define IN_VM_RANGE(ptr, start, end) \
+        ((uintptr_t)(ptr) >= (uintptr_t)(start) && \
+         (uintptr_t)(ptr) < (uintptr_t)(end))
+
 #ifdef __cplusplus
 extern "C" {
 #endif /* __cplusplus */
