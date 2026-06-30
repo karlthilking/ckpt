@@ -87,6 +87,7 @@ XND_RESTART_OBJECTS := \
         $(BUILD)/exe.o \
         $(BUILD)/path.o \
         $(BUILD)/io.o \
+        $(BUILD)/env.o \
         $(BUILD)/xnd_coord_api.o \
         $(BUILD)/shared_cache.o \
         $(BUILD)/log.o \
@@ -141,10 +142,10 @@ $(BUILD)/libxnd.dylib: $(LIBXND_OBJECTS) | $(BUILD)
 	dsymutil $@
 
 __TEXT          := 0x500000000000
-__DATA          := 0x500000008000
-__DATA_CONST    := 0x50000000c000
-__LINKEDIT      := 0x500000010000
-STACKADDR       := 0x500000110000
+__DATA          := 0x500000018000
+__DATA_CONST    := 0x500000020000
+__LINKEDIT      := 0x500000028000
+STACKADDR       := 0x500000128000
 $(BUILD)/xnd_restart_internal: $(XND_RESTART_INTERNAL_SOURCES) | $(BUILD)
 	$(CC) $(CFLAGS) \
         -DXND_RESTART_STACKADDR=$(STACKADDR) \

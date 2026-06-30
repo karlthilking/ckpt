@@ -112,6 +112,10 @@ void xnd_atfork_prepare(void)
         coord_client_atfork_prepare();
         pid_table_atfork_prepare();
         thread_list_atfork_prepare();
+
+        if (env_get_dyld_shared_region()) {
+                env_unset_dyld_shared_region();
+        }
 }
 
 void xnd_atfork_child(void)
@@ -123,6 +127,9 @@ void xnd_atfork_child(void)
         thread_list_atfork_child();
 
         xnd_trace("Returning from %s\n", __func__);
+#if DEVELOPMENT || DEBUG
+        xnd_log_shared_cache_info();
+#endif
 }
 
 void xnd_atfork_parent(void)

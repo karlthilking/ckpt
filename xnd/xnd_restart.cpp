@@ -1,10 +1,11 @@
 /* xnd_restart.cpp */
-#include "xnd/xnd.h"
-#include "xnd/xnd_restart.h"
-#include "xnd/ckptfile.h"
-#include "xnd/util/path.h"
-#include "xnd/platform/exe.h"
-#include "xnd/coordinator/xnd_coord_api.h"
+#include "xnd.h"
+#include "xnd_restart.h"
+#include "ckptfile.h"
+#include "util/env.h"
+#include "util/path.h"
+#include "platform/exe.h"
+#include "coordinator/xnd_coord_api.h"
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -35,7 +36,9 @@ static xnd_restart_dag  *dag    = nullptr;
         posix_spawnattr_t       attr;
 
         posix_spawnattr_init(&attr);
-        xnd_assert(setenv("DYLD_SHARED_REGION", "private", 1) == 0);
+        if (env_dyld_shared_region_is_private() == false) {
+                env_set_dyld_shared_region_private();
+        }
 
         flags = POSIX_SPAWN_SETEXEC | POSIX_SPAWN_DISABLE_ASLR;
         if ((err = posix_spawnattr_setflags(&attr, flags)) != 0) {
@@ -199,15 +202,14 @@ int main(int argc, char *argv[])
                 xnd_error("Usage: ./xnd_restart <ckpt-dir>\n");
                 goto fail;
         }
-        
+
         if ((coord_pid = launch_coordinator(true)) == -1) {
                 xnd_error("launch_coordinator() failed\n");
                 goto fail;
         }
-        
+
         info = new xnd_restart_info(argv[1]);
-        child = fork();
-        switch (child) {
+        switch ((child = fork())) {
         case -1:
                 xnd_error("fork: %s\n", strerror(errno));
                 goto fail;

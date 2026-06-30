@@ -2,6 +2,7 @@
 #include "xnd/xnd.h"
 #include "env.h"
 #include <stdlib.h>
+#include <string.h>
 #include <sys/types.h>
 
 static __always_inline void env_set_pid(const char *var, pid_t pid)
@@ -103,4 +104,31 @@ int env_get_ckpt_signal(void)
         }
 
         return sig;
+}
+
+void env_set_dyld_shared_region_private(void)
+{
+        xnd_assert(setenv("DYLD_SHARED_REGION", "private", 1) == 0);
+}
+
+void env_unset_dyld_shared_region(void)
+{
+        xnd_assert(unsetenv("DYLD_SHARED_REGION") == 0);
+}
+
+char *env_get_dyld_shared_region(void)
+{
+        return getenv("DYLD_SHARED_REGION");
+}
+
+bool env_dyld_shared_region_is_private(void)
+{
+        char *value;
+        
+        value = getenv("DYLD_SHARED_REGION");
+        if (value == NULL || strcmp(value, "private")) {
+                return false;
+        }
+
+        return true;
 }

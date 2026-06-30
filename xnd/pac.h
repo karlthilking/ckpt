@@ -282,9 +282,16 @@ enum {
         for (__fp = first_signed_frame(__fp); __fp != NULL; \
              __fp = next_signed_frame(__fp))
 
+#ifdef __cplusplus
+extern "C" {
+#endif /* __cplusplus */
+
 void pac_strip_uctx(ucontext_t *);
 void pac_patch_siguctx(ucontext_t *);
 void pac_patch_context(ucontext_t *);
 void pac_resign_frames(u64 *);
 
-#endif // __CKPT_PAC_H__
+#ifdef __cplusplus
+}
+#endif /* __cplusplus */
+#endif /* XND_PAC_H */

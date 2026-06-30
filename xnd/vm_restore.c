@@ -4,6 +4,7 @@
 #include "xnd/readckpt.h"
 #include "xnd/util/io.h"
 #include <dlfcn.h>
+#include <errno.h>
 
 int ckpt_vm_mark_regions(void)
 {
@@ -66,7 +67,7 @@ int ckpt_vm_restore_region(int fd, const struct xnd_vm_region *region)
         kern_return_t           ret;
         mach_vm_address_t       addr;
         ssize_t                 bytes;
-        
+
         xnd_assert(region->start != NULL && region->end != NULL);
         addr = (mach_vm_address_t)region->start;
         
@@ -78,7 +79,13 @@ int ckpt_vm_restore_region(int fd, const struct xnd_vm_region *region)
                           VM_PROT_ALL, region->inherit);
         
         if (ret != KERN_SUCCESS) {
-                xnd_error("mach_vm_map: %s\n", mach_error_string(ret));
+                xnd_error("mach_vm_map: %s\n"
+                          "(%p-%p %zu %s/%s %s)\n",
+                          mach_error_string(ret), region->start,
+                          region->end, region->size,
+                          VM_PROT_STRING(VM_PROT_DEFAULT),
+                          VM_PROT_STRING(VM_PROT_ALL),
+                          VM_INHERIT_STRING(region->inherit));
                 return -1;
         }
         

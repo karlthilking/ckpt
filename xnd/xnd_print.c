@@ -421,21 +421,26 @@ static void print_vm_regions(const struct xnd_vm_region *regions, u32 nr_rgns)
                         continue;
                 printf("\tMemory Region #%d:\n", (int)(rgn - regions));
                 if (vm_info_options[REGION_START])
-                        printf("\t   start=%p\n", rgn->start);
+                        printf("         start=%p\n", rgn->start);
                 if (vm_info_options[REGION_END])
-                        printf("\t     end=%p\n", rgn->end);
+                        printf("           end=%p\n", rgn->end);
                 if (vm_info_options[REGION_SIZE])
-                        printf("\t    size=%zu\n", rgn->size);
+                        printf("          size=%zu\n", rgn->size);
                 if (vm_info_options[REGION_PROTECTION])
-                        printf("\t    prot=%s/%s\n",
+                        printf("          prot=%s/%s\n",
                                VM_PROT_STRING(rgn->prot),
                                VM_PROT_STRING(rgn->max_prot));
                 if (vm_info_options[REGION_SHARE_MODE])
-                        printf("\t    mode=%s\n", vm_share_mode_string(rgn));
-                if (vm_info_options[REGION_USER_TAG])
-                        printf("\t     tag=%s\n", vm_user_tag_string(rgn));
-                if (vm_info_options[REGION_INHERITANCE])
-                        printf("\t inherit=%s\n", vm_inherit_string(rgn));
+                        printf("          mode=%s\n", 
+                               vm_share_mode_string(rgn));
+                if (vm_info_options[REGION_USER_TAG]) {
+                        printf("           tag=%s\n", 
+                               vm_user_tag_string(rgn));
+                }
+                if (vm_info_options[REGION_INHERITANCE]) {
+                        printf("       inherit=%s\n", vm_inherit_string(rgn));
+                }
+                printf(" pages_dirtied=%u\n", rgn->pages_dirtied);
                 printf("\n");
         }
         printf("*******************************************************\n");

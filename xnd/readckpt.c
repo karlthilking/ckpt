@@ -71,6 +71,7 @@ int read_ckpt(int fd, const struct xnd_ckpt_header *header,
                         xnd_error("Failed to read checkpoint data\n");
                         goto bad;
                 }
+
         }
 
         close(fd);
