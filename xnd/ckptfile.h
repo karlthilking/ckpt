@@ -4,6 +4,7 @@
 
 #include "xnd/xnd.h"
 #include "xnd/shared_cache.h"
+#include <mach/mach.h>
 #include <sys/types.h>
 #include <uuid/uuid.h>
 
@@ -41,6 +42,9 @@ struct xnd_ckpt_header {
         pid_t                           ppid;
         pid_t                           pgid;
         pid_t                           sid;
+
+        mach_port_t                     task_self;
+        mach_port_t                     host_self;
 
         u32                             num_peers;
         u32                             is_root_of_tree;

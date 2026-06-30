@@ -4,6 +4,8 @@
 #include "xnd/pid/pid.h"
 #include "xnd/util/io.h"
 #include "xnd/util/path.h"
+
+#include <mach/mach.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <unistd.h>
@@ -14,6 +16,9 @@
 #include <limits.h>
 #include <sys/stat.h>
 #include <uuid/uuid.h>
+
+extern mach_port_t task_self_trap(void);
+extern mach_port_t host_self_trap(void);
 
 void xnd_ckptdir_name(char *basedir, char *subdir, 
                       const uuid_t uuid, u64 epoch)
@@ -336,6 +341,9 @@ void xnd_ckptfile_write_header(struct xnd_ckpt_header *hdr,
         hdr->ppid = _real_getppid();
         hdr->sid = _real_getsid(0);
         hdr->pgid = _real_getpgid(0);
+
+        hdr->task_self = task_self_trap();
+        hdr->host_self = host_self_trap();
 
         hdr->num_peers = num_peers;
         hdr->is_root_of_tree = is_root_of_tree;

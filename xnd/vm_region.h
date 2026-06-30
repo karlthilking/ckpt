@@ -88,11 +88,6 @@ struct xnd_vm_region {
          ((__info)->behavior == RESTART_REGION_BEHAVIOR_FLAG)) ||       \
          ((__info)->user_tag == VM_MEMORY_RESTART_STACK))
 
-#define MACH_VM_ALLOCATE_TRAP   10
-#define MACH_VM_DEALLOCATE_TRAP 12
-#define MACH_VM_PROTECT_TRAP    14
-#define MACH_VM_MAP_TRAP        15
-
 #ifdef __cplusplus
 extern "C" {
 #endif /* __cplusplus */

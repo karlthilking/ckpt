@@ -6,6 +6,8 @@
 #include "util/path.h"
 #include "platform/exe.h"
 #include "coordinator/xnd_coord_api.h"
+
+#include <mach/mach.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -34,12 +36,10 @@ static xnd_restart_dag  *dag    = nullptr;
         short                   flags;
         pid_t                   pid;
         posix_spawnattr_t       attr;
+        
+        xnd_log_mach_port_info();
 
         posix_spawnattr_init(&attr);
-        if (env_dyld_shared_region_is_private() == false) {
-                env_set_dyld_shared_region_private();
-        }
-
         flags = POSIX_SPAWN_SETEXEC | POSIX_SPAWN_DISABLE_ASLR;
         if ((err = posix_spawnattr_setflags(&attr, flags)) != 0) {
                 xnd_error("posix_spawnattr_setflags: %s\n", strerror(err));
@@ -206,6 +206,11 @@ int main(int argc, char *argv[])
         if ((coord_pid = launch_coordinator(true)) == -1) {
                 xnd_error("launch_coordinator() failed\n");
                 goto fail;
+        }
+        
+        xnd_log_mach_port_info();
+        if (env_dyld_shared_region_is_private() == false) {
+                env_set_dyld_shared_region_private();
         }
 
         info = new xnd_restart_info(argv[1]);

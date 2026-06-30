@@ -115,8 +115,9 @@ __noreturn int main(int argc, char **argv)
                           "Usage: ./xnd_run -r <ckpt-file>\n");
                 exit(XND_EXIT_FAILURE);
         }
-
+        
 #if DEVELOPMENT || DEBUG
+        xnd_log_mach_port_info();
         xnd_log_shared_cache_info();
 #endif
         

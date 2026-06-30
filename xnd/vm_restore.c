@@ -6,6 +6,9 @@
 #include <dlfcn.h>
 #include <errno.h>
 
+extern mach_port_t task_self_trap(void);
+extern mach_port_t thread_self_trap(void);
+
 int ckpt_vm_mark_regions(void)
 {
         kern_return_t                   ret;
@@ -64,24 +67,27 @@ int ckpt_vm_mark_regions(void)
 
 int ckpt_vm_restore_region(int fd, const struct xnd_vm_region *region)
 {
-        kern_return_t           ret;
+        kern_return_t           kr;
         mach_vm_address_t       addr;
+        mach_vm_size_t          size;
         ssize_t                 bytes;
 
         xnd_assert(region->start != NULL && region->end != NULL);
+        xnd_assert(mach_task_self() == task_self_trap());
         addr = (mach_vm_address_t)region->start;
+        size = (mach_vm_size_t)region->size;
         
         /* Allocate checkpointed memory region */
-        ret = mach_vm_map(mach_task_self(), &addr, region->size, 0,
-                          VM_FLAGS_FIXED | VM_FLAGS_OVERWRITE |
-                          VM_MAKE_TAG(region->tag),
-                          MEMORY_OBJECT_NULL, 0, FALSE, VM_PROT_DEFAULT,
-                          VM_PROT_ALL, region->inherit);
+        kr = mach_vm_map(mach_task_self(), &addr, size, 0,
+                         VM_FLAGS_FIXED | VM_FLAGS_OVERWRITE |
+                         VM_MAKE_TAG(region->tag),
+                         MEMORY_OBJECT_NULL, 0, FALSE, VM_PROT_DEFAULT,
+                         VM_PROT_ALL, region->inherit);
         
-        if (ret != KERN_SUCCESS) {
+        if (kr != KERN_SUCCESS) {
                 xnd_error("mach_vm_map: %s\n"
                           "(%p-%p %zu %s/%s %s)\n",
-                          mach_error_string(ret), region->start,
+                          mach_error_string(kr), region->start,
                           region->end, region->size,
                           VM_PROT_STRING(VM_PROT_DEFAULT),
                           VM_PROT_STRING(VM_PROT_ALL),
@@ -96,17 +102,24 @@ int ckpt_vm_restore_region(int fd, const struct xnd_vm_region *region)
         }
 
         if (region->prot != VM_PROT_DEFAULT) {
-                if (ckpt_vm_protect(region, false, region->prot) < 0) {
-                        return -1;
-                }
-        }
-        
-        xnd_assert(region->max_prot >= region->prot);
-        if (region->max_prot != VM_PROT_ALL) {
-                if (ckpt_vm_protect(region, true, region->max_prot) < 0) {
+                kr = mach_vm_protect(mach_task_self(), addr, size,
+                                     FALSE, region->prot);
+                if (kr != KERN_SUCCESS) {
+                        xnd_error("mach_vm_protect: %s\n",
+                                mach_error_string(kr));
                         return -1;
                 }
         }
 
+        if (region->max_prot != VM_PROT_ALL) {
+                kr = mach_vm_protect(mach_task_self(), addr, size,
+                                     TRUE, region->max_prot);
+                if (kr != KERN_SUCCESS) {
+                        xnd_error("mach_vm_protect: %s\n",
+                                  mach_error_string(kr));
+                        return -1;
+                }
+        }
+        
         return 0;
 }

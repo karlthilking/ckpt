@@ -387,6 +387,8 @@ static void print_ckpt_header(struct xnd_ckpt_header *hdr)
                "                    ppid: %d\n"
                "                    pgid: %d\n"
                "                     sid: %d\n"
+               "          mach_task_self: %u\n"
+               "          mach_host_self: %u\n"
                "              # of peers: %u\n"
                "   Root of process tree?: %s\n"
                "            # of entries: %u\n"
@@ -396,7 +398,8 @@ static void print_ckpt_header(struct xnd_ckpt_header *hdr)
                "  dyld shared cache size: %zu\n"
                "  dyld shared cache uuid: %s\n",
                hdr->magic, hdr->xnd_pid, hdr->xnd_ppid, hdr->xnd_pgid,
-               hdr->pid, hdr->ppid, hdr->pgid, hdr->sid, hdr->num_peers,
+               hdr->pid, hdr->ppid, hdr->pgid, hdr->sid, 
+               hdr->task_self, hdr->host_self, hdr->num_peers,
                (hdr->is_root_of_tree ? "TRUE" : "FALSE"), hdr->entry_count,
                hdr->region_count, dyld_cache_info->base,
                dyld_cache_info->base + dyld_cache_info->size,

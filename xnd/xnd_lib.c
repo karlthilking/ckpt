@@ -1,4 +1,5 @@
 /* libckpt.c */
+#define _XOPEN_SOURCE
 #include "xnd.h"
 #include "xnd_lib.h"
 #include "writeckpt.h"
@@ -18,7 +19,7 @@
 #include "coordinator/xnd_coord_api.h"
 #include "coordinator/xnd_coord_client.h"
 
-#define _XOPEN_SOURCE
+#include <mach/mach.h>
 #include <ucontext.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -26,6 +27,9 @@
 #include <errno.h>
 #include <unistd.h>
 #include <signal.h>
+
+extern mach_port_t mach_task_self_;
+extern mach_port_t task_self_trap(void);
 
 static _Atomic enum xnd_state   libxnd_state = XND_UNINITIALIZED;
 static bool                     xnd_atfork_registered = false;
@@ -107,8 +111,6 @@ void xnd_checkpoint(ucontext_t *uctx)
 
 void xnd_atfork_prepare(void)
 {
-        xnd_trace("Called %s\n", __func__);
-
         coord_client_atfork_prepare();
         pid_table_atfork_prepare();
         thread_list_atfork_prepare();
@@ -120,22 +122,25 @@ void xnd_atfork_prepare(void)
 
 void xnd_atfork_child(void)
 {
-        xnd_trace("Called %s\n", __func__);
-
         coord_client_atfork_child();
         pid_table_atfork_child();
         thread_list_atfork_child();
 
-        xnd_trace("Returning from %s\n", __func__);
+        if (mach_task_self_ != task_self_trap()) {
+                xnd_trace("task_self_trap(): %u\n"
+                          "mach_task_self_: %u\n",
+                          task_self_trap(), mach_task_self_);
+                mach_task_self_ = task_self_trap();
+        }
+
 #if DEVELOPMENT || DEBUG
+        xnd_log_mach_port_info();
         xnd_log_shared_cache_info();
 #endif
 }
 
 void xnd_atfork_parent(void)
 {
-        xnd_trace("Called %s\n", __func__);
-
         coord_client_atfork_parent();
         pid_table_atfork_parent();
         thread_list_atfork_parent();
@@ -202,6 +207,7 @@ static __constructor(101) void xnd_setup(void)
         set_xnd_state(XND_RUNNING);
 
 #if DEVELOPMENT || DEBUG
+        xnd_log_mach_port_info();
         xnd_log_shared_cache_info();
         xnd_log_main_thread_info();
         dump_debug_info();

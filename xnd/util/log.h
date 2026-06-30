@@ -99,6 +99,7 @@ void xnd_log_setup_direct(int);
 void xnd_log_shared_cache_info(void);
 void xnd_log_ckpt_thread_info(struct thread_info *);
 void xnd_log_main_thread_info(void);
+void xnd_log_mach_port_info(void);
 
 #ifdef __cplusplus
 }
