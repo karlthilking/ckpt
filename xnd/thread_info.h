@@ -56,6 +56,11 @@ void thread_list_release(void);
 void thread_list_add(void);
 void thread_list_remove(struct thread_info *);
 
+void thread_list_atfork_prepare(void);
+void thread_list_atfork_child(void);
+void thread_list_atfork_parent(void);
+void thread_list_atfork_failed(void);
+
 void zombie_list_init(void);
 void zombie_list_destroy(void);
 void zombie_list_acquire(void);
@@ -76,8 +81,6 @@ void ckpt_thread_exit(void);
 void ckpt_thread_wait(void);
 void *ckpt_thread_work(void *);
 void ckpt_thread_reap(void);
-void ckpt_thread_join(void);
-void ckpt_thread_terminate(void);
 
 void barrier_arrival_wait(void);
 void barrier_release(void);

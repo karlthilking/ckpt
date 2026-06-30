@@ -3,6 +3,7 @@
 #include "xnd/xnd.h"
 #include "xnd/pac.h"
 #include "xnd/xnd_lib.h"
+#include "xnd/util/env.h"
 #include "xnd/platform/signal.h"
 #include "xnd/platform/ucontext/ucontext.h"
 
@@ -71,8 +72,8 @@ sig_t __signal_hook(int sig, sig_t handler)
         if (err != 0) {
                 return SIG_ERR;
         }
-
-        if ((program = getenv("XND_PROGRAM")) != NULL) {
+        
+        if ((program = env_get_program_name()) != NULL) {
                 xnd_trace("%s installed handler for signal %d: %p\n",
                           program, sig, handler);
         }
@@ -110,7 +111,7 @@ int __sigaction_hook(int sig, const struct sigaction *act,
                 return err;
         }
         
-        if ((program = getenv("XND_PROGRAM")) != NULL) {
+        if ((program = env_get_program_name()) != NULL) {
                 xnd_trace("%s installed handler for signal %d: %p\n",
                           program, sig, act->sa_handler);
         }

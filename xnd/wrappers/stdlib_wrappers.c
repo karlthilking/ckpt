@@ -1,4 +1,4 @@
-/* exit_wrappers.c */
+/* stdlib_wrappers.c */
 #include "xnd/xnd.h"
 #include "xnd/xnd_lib.h"
 #include "xnd/pac.h"
@@ -12,10 +12,13 @@
 
 static __always_inline bool skip_interpose(void)
 {
-        if (unlikely(get_xnd_state() == XND_UNINITIALIZED))
+        if (unlikely(get_xnd_state() == XND_UNINITIALIZED)) {
                 return true;
-        else if (unlikely(tlv_ok() == false))
+        }
+
+        if (unlikely(tlv_ok() == false)) {
                 return true;
+        }
 
         return false;
 }
@@ -46,8 +49,9 @@ void *__calloc_hook(size_t count, size_t size)
 {
         void *retval;
         
-        if (skip_interpose())
+        if (skip_interpose()) {
                 return calloc(count, size);
+        }
 
         unsafe_enter();
         retval = calloc(count, size);
@@ -72,8 +76,9 @@ void *__malloc_hook(size_t size)
 {
         void *retval;
 
-        if (skip_interpose())
+        if (skip_interpose()) {
                 return malloc(size);
+        }
 
         unsafe_enter();
         retval = malloc(size);
@@ -86,8 +91,9 @@ void *__realloc_hook(void *ptr, size_t size)
 {
         void *retval;
 
-        if (skip_interpose())
+        if (skip_interpose()) {
                 return realloc(ptr, size);
+        }
         
         unsafe_enter();
         retval = realloc(ptr, size);
@@ -100,8 +106,9 @@ void *__reallocf_hook(void *ptr, size_t size)
 {
         void *retval;
 
-        if (skip_interpose())
+        if (skip_interpose()) {
                 return reallocf(ptr, size);
+        }
 
         unsafe_enter();
         retval = reallocf(ptr, size);
@@ -114,8 +121,9 @@ void *__valloc_hook(size_t size)
 {
         void *retval;
         
-        if (skip_interpose())
+        if (skip_interpose()) {
                 return valloc(size);
+        }
 
         unsafe_enter();
         retval = valloc(size);
@@ -128,8 +136,9 @@ void *__aligned_alloc_hook(size_t align, size_t size)
 {
         void *retval;
 
-        if (skip_interpose())
+        if (skip_interpose()) {
                 return aligned_alloc(align, size);
+        }
 
         unsafe_enter();
         retval = aligned_alloc(align, size);
@@ -148,8 +157,9 @@ u32 __arc4random_hook(void)
 {
         u32 retval;
         
-        if (skip_interpose())
+        if (skip_interpose()) {
                 return arc4random();
+        }
 
         unsafe_enter();
         retval = arc4random();
@@ -174,8 +184,9 @@ u32 __arc4random_uniform_hook(u32 upper)
 {
         u32 retval;
         
-        if (skip_interpose())
+        if (skip_interpose()) {
                 return arc4random_uniform(upper);
+        }
 
         unsafe_enter();
         retval = arc4random_uniform(upper);
@@ -183,3 +194,16 @@ u32 __arc4random_uniform_hook(u32 upper)
 
         return retval;
 }
+
+INTERPOSE(__exit_hook, exit);
+INTERPOSE(__abort_hook, abort);
+INTERPOSE(__calloc_hook, calloc);
+INTERPOSE(__free_hook, free);
+INTERPOSE(__malloc_hook, malloc);
+INTERPOSE(__realloc_hook, realloc);
+INTERPOSE(__reallocf_hook, reallocf);
+INTERPOSE(__valloc_hook, valloc);
+INTERPOSE(__aligned_alloc_hook, aligned_alloc);
+INTERPOSE(__arc4random_hook, arc4random);
+INTERPOSE(__arc4random_buf_hook, arc4random_buf);
+INTERPOSE(__arc4random_uniform_hook, arc4random_uniform);

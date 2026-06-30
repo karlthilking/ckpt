@@ -24,10 +24,11 @@ void xnd_log_setup(void)
         int     level;
         
         level_str = getenv("XND_LOG_LEVEL");
-        if (level_str)
+        if (level_str) {
                 level = min(atoi(level_str), XND_MAX_LOG_LEVEL);
-        else
+        } else {
                 level = XND_DEFAULT_LOG_LEVEL;
+        }
         
         xnd_log_setup_direct(level);
 }
@@ -46,22 +47,25 @@ void xnd_log_setup_direct(int level)
 {
         int     logfd;
         char    buf[PATH_MAX], path[PATH_MAX];
+        u32     size = sizeof(buf);
         
         log_level = level;
         for (int l = 0; l <= min(log_level, XND_DEBUGGING); l++)
                 dup2(STDERR_FILENO, level_to_fd[l]);
         
-        if (log_level < XND_TRACING)
+        if (log_level < XND_TRACING) {
                 return;
+        }
 
         logfd = open("xnd.log", O_WRONLY | O_CREAT | O_APPEND, 0666);
-        dup2(logfd, XND_TRACE_FD);
-        close(logfd);
+        if (logfd != -1) {
+                xnd_assert(dup2(logfd, XND_TRACE_FD) == XND_TRACE_FD);
+                close(logfd);
+        }
         
-        u32 size = sizeof(buf);
         _NSGetExecutablePath(buf, &size);
         xnd_path_basename(buf, path, sizeof(path));
-        dprintf(XND_TRACE_FD, "%s Log (%ld):\n", path, (long)time(NULL));
+        xnd_trace("%s Log (%ld):\n", path, (long)time(NULL));
 }
 
 void xnd_log_shared_cache_info(void)
@@ -76,6 +80,22 @@ void xnd_log_shared_cache_info(void)
         xnd_trace("DYLD_SHARED_REGION=%s\n"
                   "dyld shared cache range: %p-%p %zu\n",
                   dyld_env, base, base + size, size);
+}
+
+void xnd_log_ckpt_thread_info(struct thread_info *ckpt_thread)
+{
+        uintptr_t       tls, thread_self;
+        mach_port_t     port;
+        
+        thread_self = (uintptr_t)ckpt_thread->self;
+        tls = thread_self + PTHREAD_T_TLS_OFFSET;
+        port = (mach_port_t)(uintptr_t)((void **)tls)[__TSD_MACH_THREAD_SELF];
+
+        xnd_trace("Checkpoint thread info:\n"
+                  "     pthread_self(): 0x%lx\n"
+                  "        tpidrro_el0: 0x%lx\n"
+                  " mach_thread_self(): %u\n",
+                  thread_self, tls, (u32)port);
 }
 
 void xnd_log_main_thread_info(void)

@@ -149,7 +149,7 @@ void fd_table_init(void)
         fd_table[1].type = FD_STDOUT;
         fd_table[2].type = FD_STDERR;
 
-        for (int fd = 0; fd <= 2; fd++) {
+        for (int fd = 0; fd < 3; fd++) {
                 fd_table[fd].src = malloc(sizeof(struct fd_backing));
                 xnd_assert(fd_table[fd].src != NULL);
                 fd_table[fd].src->ref = 1;
@@ -165,10 +165,12 @@ void fd_table_destroy(void)
                         xnd_assert(fd_table[fd].src == NULL);
                         continue;
                 }
-                fd_table[fd].src->ref--;
-                if (fd_table[fd].src->ref == 0) {
-                        free(fd_table[fd].src);
-                        fd_table[fd].src = NULL;
+                if (fd_table[fd].src) {
+                        fd_table[fd].src->ref--;
+                        if (fd_table[fd].src->ref == 0) {
+                                free(fd_table[fd].src);
+                                fd_table[fd].src = NULL;
+                        }
                 }
         }
 }

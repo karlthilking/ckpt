@@ -40,6 +40,8 @@
                 __x > __y ? __x : __y;  \
         })
 
+#define array_len(a) (sizeof(a) / sizeof(a[0]))
+
 #define concat(a, b) a##b
 
 #ifndef likely
@@ -80,6 +82,10 @@
 
 #ifndef __aligned
 # define __aligned(x) __attribute__((aligned(x)))
+#endif
+
+#ifndef __hidden
+# define __hidden __attribute__((visibility("hidden")))
 #endif
 
 #endif /* XND_COMPILER_H */

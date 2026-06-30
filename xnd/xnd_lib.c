@@ -1,29 +1,44 @@
 /* libckpt.c */
-#include "xnd/xnd.h"
-#include "xnd/xnd_lib.h"
-#include "xnd/writeckpt.h"
-#include "xnd/vm_region.h"
-#include "xnd/pac.h"
-#include "xnd/tls.h"
-#include "xnd/thread_info.h"
-#include "xnd/shared_cache.h"
-#include "xnd/util/debug.h"
-#include "xnd/platform/signal.h"
-#include "xnd/wrappers/file_wrappers.h"
-#include "xnd/wrappers/signal_wrappers.h"
+#include "xnd.h"
+#include "xnd_lib.h"
+#include "writeckpt.h"
+#include "vm_region.h"
+#include "pac.h"
+#include "tls.h"
+#include "thread_info.h"
+#include "shared_cache.h"
+#include "pid/pid.h"
+#include "util/debug.h"
+#include "util/env.h"
+#include "platform/signal.h"
+#include "pid/pid_table.h"
+#include "pid/pid_table_common.h"
+#include "wrappers/file_wrappers.h"
+#include "wrappers/signal_wrappers.h"
+#include "coordinator/xnd_coord_api.h"
+#include "coordinator/xnd_coord_client.h"
 
 #define _XOPEN_SOURCE
 #include <ucontext.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
-#include <err.h>
-#include <assert.h>
+#include <errno.h>
 #include <unistd.h>
 #include <signal.h>
 
 static _Atomic enum xnd_state   libxnd_state = XND_UNINITIALIZED;
+static bool                     xnd_atfork_registered = false;
 static uintptr_t                _pthread_ptr_munge_token;
+
+__hidden uuid_t xnd_uuid;
+__hidden u32    xnd_pid;
+__hidden u32    xnd_ppid;
+__hidden u32    xnd_pgid;
+
+__hidden u64    epoch           = 0;
+__hidden u32    num_peers       = 0;
+__hidden bool   is_root_of_tree = false;
 
 enum xnd_state get_xnd_state(void)
 {
@@ -42,12 +57,21 @@ void xnd_precheckpoint(void)
         _pthread_ptr_munge_token = thread_munge_token();
 }
 
+/**
+ * xnd_postrestart:
+ *  Re-connect and register with coordinator, restore auxiliary state.
+ *  xnd_postrestart should only be called by the checkpoint thread.
+ */
 void xnd_postrestart(void)
 {
+        epoch++;
+        connect_to_coord_on_restart();
+        enter_coord_barrier(COORD_BARRIER_POSTRESTART);
+        
         thread_sig_fixup(_pthread_ptr_munge_token);
         ckpt_vm_deallocate_regions();
+        pid_table_postrestart();
         fd_table_restore_state();
-        xnd_log_setup();
 
 #if DEBUG || DEVELOPMENT
         xnd_log_shared_cache_info();
@@ -60,28 +84,88 @@ void xnd_checkpoint(ucontext_t *uctx)
         struct xnd_ckpt_header  header;
         struct xnd_vm_region    regions[XND_CKPT_VM_REGION_MAX];
         enum xnd_ckpt_entry     entries[XND_CKPT_ENTRY_MAX];
+        u32                     nr_regions, nr_entries;
 
-        bzero(&header, sizeof(header));
-        strcpy(header.magic, XND_HEADER_MAGIC);
-        if (shared_cache_get_info(&header.shared_cache_info) < 0) {
-                xnd_error("Failed to get dyld shared cache info\n");
+        nr_regions = ckpt_vm_save_regions(regions);
+        if (unlikely(nr_regions > XND_CKPT_VM_REGION_MAX)) {
+                xnd_error("Max memory regions exceeded\n");
                 return;
         }
 
-        header.region_count = ckpt_vm_save_regions(regions);
-        if (unlikely(header.region_count > XND_CKPT_VM_REGION_MAX)) {
-                xnd_error("Not enough space to save all memory regions\n");
+        for (u32 i = 0; i < nr_regions; i++) {
+                *(entries + i) = XND_VM_REGION_ENTRY;
+        }
+
+        *(entries + nr_regions) = XND_UCONTEXT_ENTRY;
+        nr_entries = nr_regions + 1;
+
+        xnd_ckptfile_write_header(&header, nr_regions, nr_entries,
+                                  xnd_uuid, xnd_pid, xnd_ppid, xnd_pgid,
+                                  num_peers, is_root_of_tree);
+        write_ckpt(&header, entries, regions, uctx);
+}
+
+void xnd_atfork_prepare(void)
+{
+        xnd_trace("Called %s\n", __func__);
+
+        coord_client_atfork_prepare();
+        pid_table_atfork_prepare();
+        thread_list_atfork_prepare();
+
+        if (env_get_dyld_shared_region()) {
+                env_unset_dyld_shared_region();
+        }
+}
+
+void xnd_atfork_child(void)
+{
+        xnd_trace("Called %s\n", __func__);
+
+        coord_client_atfork_child();
+        pid_table_atfork_child();
+        thread_list_atfork_child();
+
+        xnd_trace("Returning from %s\n", __func__);
+#if DEVELOPMENT || DEBUG
+        xnd_log_shared_cache_info();
+#endif
+}
+
+void xnd_atfork_parent(void)
+{
+        xnd_trace("Called %s\n", __func__);
+
+        coord_client_atfork_parent();
+        pid_table_atfork_parent();
+        thread_list_atfork_parent();
+}
+
+void xnd_atfork_failed(void)
+{
+        coord_client_atfork_failed();
+        pid_table_atfork_failed();
+        thread_list_atfork_failed();
+}
+
+void xnd_register_fork_handlers(void)
+{
+        void (*prepare)(void), (*parent)(void), (*child)(void);
+
+        if (xnd_atfork_registered) {
                 return;
         }
         
-        header.entry_count += header.region_count;
-        for (u32 i = 0; i < header.region_count; i++)
-                entries[i] = XND_VM_REGION_ENTRY;
+        child = xnd_atfork_child;
+        parent = xnd_atfork_parent;
+        prepare = xnd_atfork_prepare;
 
-        entries[header.entry_count] = XND_UCONTEXT_ENTRY;
-        header.entry_count += 1;
+        if (pthread_atfork(prepare, parent, child) != 0) {
+                xnd_error("pthread_atfork: %s\n", strerror(errno));
+                xnd_abort();
+        }
 
-        (void)write_ckpt(&header, entries, regions, uctx);
+        xnd_atfork_registered = true;
 }
 
 /**
@@ -90,33 +174,31 @@ void xnd_checkpoint(ucontext_t *uctx)
  *  checkpoint thread, then enable thread_handler to run
  *  on SIGUSR1 for user threads.
  */
-__constructor() void xnd_setup(void)
+static __constructor(101) void xnd_setup(void)
 {
         struct sigaction        sa;
         sigset_t                set;
-        int                     err;
-        
-        /* Every thread blocks SIGUSR2 except for checkpoint thread */
-        sigemptyset(&set);
-        sigaddset(&set, SIGUSR2);
-        err = pthread_sigmask(SIG_BLOCK, &set, NULL);
-        if (err != 0) {
-                xnd_error("pthread_sigmask: %s\n", strerror(err));
-                xnd_abort();
-        }
-        
-        sigfillset(&sa.sa_mask);
+        int                     err, sig;
+
+        connect_to_coord_on_launch();
+
+        sigfillset(&set);
         sa.sa_flags = SA_SIGINFO;
         sa.sa_sigaction = thread_sighandler;
-        err = __xnd_sigaction(SIGUSR1, &sa, NULL);
+        
+        sig = env_get_ckpt_signal();
+        err = __xnd_sigaction(sig, &sa, NULL);
         if (err != 0) {
                 xnd_error("__xnd_sigaction failed!\n");
                 xnd_abort();
         }
         
-        xnd_log_setup();
         fd_table_init();
         thread_list_init();
+
+        pid_table_init();
+        pid_table_init_pid_info();
+
         set_xnd_state(XND_RUNNING);
 
 #if DEVELOPMENT || DEBUG
@@ -126,10 +208,13 @@ __constructor() void xnd_setup(void)
 #endif
 }
 
-__destructor() void xnd_cleanup(void)
+static __destructor() void xnd_cleanup(void)
 {
         set_xnd_state(XND_EXITING);
+        
         fd_table_destroy();
         thread_list_destroy();
+        
         xnd_log_cleanup();
+        disconnect_from_coord();
 }

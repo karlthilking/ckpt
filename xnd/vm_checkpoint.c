@@ -12,9 +12,7 @@ int ckpt_vm_valid_region(const vm_region_submap_info_data_64_t *info,
                 /* Restart region, can be discared */
                 return 0;
         } else if (DYLD_SHARED_CACHE_REGION(addr, size)) {
-                if ((info->max_protection & VM_PROT_WRITE) &&
-                    VM_REGION_PRIVATE(info) && info->pages_dirtied) {
-                        assert(!VM_REGION_ALIASED(info));
+                if (info->pages_dirtied) {
                         return 1;
                 }
                 return 0;
@@ -103,6 +101,7 @@ u32 ckpt_vm_save_regions(struct xnd_vm_region *regions)
                 rgn->max_prot = info.max_protection;
                 rgn->mode = info.share_mode;
                 rgn->tag = info.user_tag;
+                rgn->pages_dirtied = info.pages_dirtied;
                 
                 region_count++;
                 addr += size;

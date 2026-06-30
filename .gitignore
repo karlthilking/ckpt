@@ -9,3 +9,7 @@ build/
 xnd_run
 xnd_restart
 xnd_print
+xnd_command
+xnd_coordinator
+xnd_coordinator_v0
+xnd.log

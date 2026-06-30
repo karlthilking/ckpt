@@ -4,8 +4,15 @@
 
 #include "xnd/xnd.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif /* __cplusplus */
+
 int xnd_exe_path(char *, size_t);
 int xnd_exe_dir(char *, size_t);
 int xnd_exe_path_of(const char *, char *, size_t);
 
+#ifdef __cplusplus
+}
+#endif /* __cplusplus */
 #endif /* XND_EXE_H */

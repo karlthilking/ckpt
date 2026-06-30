@@ -6,10 +6,19 @@
 #include "xnd/vm_region.h"
 #include "xnd/ckptfile.h"
 
-int readall(int, void *, size_t);
+#define _XOPEN_SOURCE
+#include <ucontext.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif /* __cplusplus */
+
 int read_vm_region(int, struct xnd_vm_region *);
 int read_context(int, ucontext_t *);
 int read_ckpt(int, const struct xnd_ckpt_header *, enum xnd_ckpt_entry *,
               struct xnd_vm_region *, ucontext_t *);
 
+#ifdef __cplusplus
+}
+#endif /* __cplusplus */
 #endif /* XND_READCKPT_H */

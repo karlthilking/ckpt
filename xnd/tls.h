@@ -27,26 +27,44 @@
 
 #define TSD_SLOTS 768
 
-#define force_tlv_init() \
-        (void)thread_self_or_null()
+#define force_tlv_init() do { (void)thread_self_or_null(); } while (0)
 
-#define get_thread_cleanup_stack(__tls) ({                      \
+#define get_thread_cleanup_stack(__tls)                         \
+({                                                              \
         *(struct __darwin_pthread_handler_rec **)               \
          ((uintptr_t)(__tls) + TLS_CLEANUP_HANDLER_OFFSET);     \
 })
 
-#define set_thread_cleanup_stack(__handler) ({                  \
+#define set_thread_cleanup_stack(__handler)                     \
+({                                                              \
         *(struct __darwin_pthread_handler_rec **)               \
          ((uintptr_t)pthread_self() +                           \
          PTHREAD_T_CLEANUP_HANDLER_OFFSET) =                    \
          (struct __darwin_pthread_handler_rec *)(__handler);    \
 })
 
-#define get_thread_mach_port(__tls)                     \
-        ({                                              \
-                (mach_port_t)(__tls + sizeof(void *) +  \
-                              __TSD_MACH_THREAD_SELF);  \
-        })
+#define get_pthread_tls(p)                      \
+({                                              \
+        (uintptr_t)(p) + PTHREAD_T_TLS_OFFSET;  \
+})
+
+#define get_thread_info_tls(th)                         \
+({                                                      \
+        ((uintptr_t)(th)->self) + PTHREAD_T_TLS_OFFSET; \
+})
+
+#define get_pthread_mach_port(p)                                        \
+({                                                                      \
+        uintptr_t __tls, __slot;                                        \
+        __tls = get_pthread_tls(p);                                     \
+        __slot = (uintptr_t)((void **)__tls)[__TSD_MACH_THREAD_SELF];   \
+        (mach_port_t)__slot;                                            \
+})
+
+#define get_thread_info_mach_port(th)           \
+({                                              \
+        get_pthread_mach_port((th)->self);      \
+})
 
 static __always_inline void set_tls_slot(uint __slot, uintptr_t __val)
 {
