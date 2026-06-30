@@ -85,13 +85,13 @@ XND_COORD_OBJECTS := \
 XND_RESTART_OBJECTS := \
         $(BUILD)/xnd_restart.o \
         $(BUILD)/exe.o \
+        $(BUILD)/env.o \
         $(BUILD)/path.o \
         $(BUILD)/io.o \
-        $(BUILD)/env.o \
         $(BUILD)/xnd_coord_api.o \
         $(BUILD)/shared_cache.o \
         $(BUILD)/log.o \
-        $(BUILD)/ckptfile.o
+        $(BUILD)/ckptfile.o 
 
 ALL := \
         $(BUILD)/xnd_launch \
