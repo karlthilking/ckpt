@@ -219,7 +219,13 @@ pid_t __wait4_hook(pid_t pid, int *status, int options, struct rusage *ru)
                         break;
                 default:
                         virt_ret = real_to_virtual_pid(real_ret);
-                        if (WIFEXITED(*status) || WIFSIGNALED(*status)) {
+                        if (WIFEXITED(*status)) {
+                                pid_table_acquire();
+                                pid_table_erase(virt_ret);
+                                pid_table_release();
+                        } else if (WIFSIGNALED(*status)) {
+                                real_pid = virtual_to_real_pid(virt_ret);
+                                notify_coord_of_exit(real_pid);
                                 pid_table_acquire();
                                 pid_table_erase(virt_ret);
                                 pid_table_release();

@@ -27,7 +27,7 @@ enum proc_state {
 
 struct proc {
         int             fd;
-        int             request_fd;
+        int             oob_fd;
         u32             xnd_pid;
         u32             xnd_ppid;
         u32             xnd_pgid;

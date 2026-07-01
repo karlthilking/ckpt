@@ -4,6 +4,7 @@
 
 #include "xnd/xnd.h"
 #include "xnd_coord_api.h"
+#include <sys/types.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -12,6 +13,8 @@ extern "C" {
 void send_recv_coord_handshake(enum xnd_msghdr);
 void connect_to_coord_on_launch(void);
 void connect_to_coord_on_restart(void);
+
+void notify_coord_of_exit(pid_t);
 void disconnect_from_coord(void);
 
 void coord_client_atfork_prepare(void);

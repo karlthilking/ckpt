@@ -27,8 +27,8 @@ extern bool     is_root_of_tree;
 
 static int              coord_fd        = -1;
 static int              child_coord_fd  = -1;
-static int              request_fd      = -1;
-static pthread_mutex_t  request_mutex   = PTHREAD_MUTEX_INITIALIZER;
+static int              oob_fd          = -1;
+static pthread_mutex_t  oob_mutex       = PTHREAD_MUTEX_INITIALIZER;
 
 void send_recv_coord_handshake(enum xnd_msghdr hdr)
 {
@@ -116,10 +116,30 @@ void connect_to_coord_on_restart(void)
                   xnd_pid, xnd_ppid, xnd_pgid);
         
         /**
-         * Set request_fd = -1 so the next thread to use this file
+         * Set oob_fd = -1 so the next thread to use this file
          * descriptor will know to reinitialize it.
          */
-        request_fd = -1;
+        oob_fd = -1;
+}
+
+void notify_coord_of_exit(pid_t pid)
+{
+        struct xnd_msg msg;
+
+        msg.hdr = XND_EXIT;
+        msg.real_pid = pid;
+        
+        /**
+         * Use out-of-band communication channel to send exit message to
+         * coordinator, as any user thread may need to notify the
+         * coordinator in the event of an exit (e.g., a user thread that
+         * was in __waitpid_hook).
+         */
+        pthread_mutex_lock(&oob_mutex);
+        if (send_msg_to_coord(oob_fd, &msg) != 0) {
+                xnd_warn("Failed to send XND_EXIT to coordinator\n");
+        }
+        pthread_mutex_unlock(&oob_mutex);
 }
 
 void disconnect_from_coord(void)
@@ -127,17 +147,18 @@ void disconnect_from_coord(void)
         struct xnd_msg msg;
 
         msg.hdr = XND_EXIT;
-        msg.xnd_pid = xnd_pid;
-
+        msg.real_pid = _real_pid;
+        xnd_assert(_real_pid == _real_getpid());
+        
         if (send_msg_to_coord(coord_fd, &msg) != 0) {
-                xnd_warn("Failed to set XND_EXIT to coordinator\n");
+                xnd_warn("Failed to send XND_EXIT to coordinator\n");
         }
 
         if (close(coord_fd) != 0) {
                 xnd_warn("close: %s\n", strerror(errno));
         }
-        
-        if ((request_fd != -1) && (close(request_fd) != 0)) {
+
+        if (oob_fd != -1 && close(oob_fd) != 0) {
                 xnd_warn("close: %s\n", strerror(errno));
         }
 }
@@ -147,8 +168,8 @@ void coord_client_atfork_prepare(void)
         int             err;
         struct xnd_msg  msg;
         
-        /* Acquire coordinator requests mutex */
-        if ((err = pthread_mutex_lock(&request_mutex)) != 0) {
+        /* Acquire coordinator out-of-band communication mutex */
+        if ((err = pthread_mutex_lock(&oob_mutex)) != 0) {
                 xnd_error("pthread_mutex_lock: %s\n", strerror(err));
                 xnd_abort();
         }
@@ -201,12 +222,12 @@ void coord_client_atfork_child(void)
 {
         int err;
 
-        if ((err = pthread_mutex_unlock(&request_mutex)) != 0) {
+        if ((err = pthread_mutex_unlock(&oob_mutex)) != 0) {
                 xnd_error("pthread_mutex_unlock: %s\n", strerror(err));
                 xnd_abort();
         }
 
-        if ((err = pthread_mutex_init(&request_mutex, NULL)) != 0) {
+        if ((err = pthread_mutex_init(&oob_mutex, NULL)) != 0) {
                 xnd_error("pthread_mutex_init: %s\n", strerror(err));
                 xnd_abort();
         }
@@ -227,16 +248,16 @@ void coord_client_atfork_child(void)
                   xnd_pid, xnd_ppid, xnd_pgid);
         
         /**
-         * If request_fd is inherited from parent, close and set to -1
-         * so it will be reinitialized properly. request_fd can not be
+         * If oob_fd is inherited from parent, close and set to -1
+         * so it will be reinitialized properly. oob_fd can not be
          * used by the child process until the coordinator is notified
          * about which process is sending the request; the coordinator
          * needs to be able to associate the connection with one of
          * the processes that it knows about.
          */
-        if (request_fd != -1) {
-                close(request_fd);
-                request_fd = -1;
+        if (oob_fd != -1) {
+                close(oob_fd);
+                oob_fd = -1;
         }
 }
 
@@ -244,7 +265,7 @@ void coord_client_atfork_parent(void)
 {
         int err;
 
-        if ((err = pthread_mutex_unlock(&request_mutex)) != 0) {
+        if ((err = pthread_mutex_unlock(&oob_mutex)) != 0) {
                 xnd_error("pthread_mutex_unlock: %s\n", strerror(err));
                 xnd_abort();
         }
@@ -258,7 +279,7 @@ void coord_client_atfork_failed(void)
 {
         int err;
         
-        if ((err = pthread_mutex_unlock(&request_mutex)) != 0) {
+        if ((err = pthread_mutex_unlock(&oob_mutex)) != 0) {
                 xnd_error("pthread_mutex_unlock: %s\n", strerror(err));
                 xnd_abort();
         }
@@ -354,18 +375,18 @@ pid_t virt_to_real_pid_from_coord(pid_t virt)
         msg.hdr = XND_VIRT_TO_REAL;
         msg.virt_pid = virt;
         
-        xnd_assert(pthread_mutex_lock(&request_mutex) == 0);
-        if (request_fd == -1) {
-                request_fd = connect_to_coord();
+        xnd_assert(pthread_mutex_lock(&oob_mutex) == 0);
+        if (oob_fd == -1) {
+                oob_fd = connect_to_coord();
                 msg.xnd_pid = xnd_pid;
         }
 
-        if (send_msg_to_coord(request_fd, &msg) != 0) {
+        if (send_msg_to_coord(oob_fd, &msg) != 0) {
                 xnd_error("XND_VIRT_TO_REAL request failed\n");
                 goto fail;
         }
 
-        if (recv_msg_from_coord(request_fd, &msg) != 0) {
+        if (recv_msg_from_coord(oob_fd, &msg) != 0) {
                 xnd_error("Failed to receive coordinator message\n");
                 goto fail;
         }
@@ -380,10 +401,10 @@ pid_t virt_to_real_pid_from_coord(pid_t virt)
                 goto fail;
         }
         
-        xnd_assert(pthread_mutex_unlock(&request_mutex) == 0);
+        xnd_assert(pthread_mutex_unlock(&oob_mutex) == 0);
         return msg.real_pid;
 fail:
-        xnd_assert(pthread_mutex_unlock(&request_mutex) == 0);
+        xnd_assert(pthread_mutex_unlock(&oob_mutex) == 0);
         return -1;
 }
 
@@ -394,18 +415,18 @@ pid_t real_to_virt_pid_from_coord(pid_t real)
         msg.hdr = XND_REAL_TO_VIRT;
         msg.real_pid = real;
         
-        xnd_assert(pthread_mutex_lock(&request_mutex) == 0);
-        if (request_fd == -1) {
-                request_fd = connect_to_coord();
+        xnd_assert(pthread_mutex_lock(&oob_mutex) == 0);
+        if (oob_fd == -1) {
+                oob_fd = connect_to_coord();
                 msg.xnd_pid = xnd_pid;
         }
         
-        if (send_msg_to_coord(request_fd, &msg) != 0) {
+        if (send_msg_to_coord(oob_fd, &msg) != 0) {
                 xnd_error("XND_REAL_TO_VIRT request failed\n");
                 goto fail;
         }
         
-        if (recv_msg_from_coord(request_fd, &msg) != 0) {
+        if (recv_msg_from_coord(oob_fd, &msg) != 0) {
                 xnd_error("Failed to receive coordinator message\n");
                 goto fail;
         }
@@ -420,9 +441,9 @@ pid_t real_to_virt_pid_from_coord(pid_t real)
                 goto fail;
         }
         
-        xnd_assert(pthread_mutex_unlock(&request_mutex) == 0);
+        xnd_assert(pthread_mutex_unlock(&oob_mutex) == 0);
         return msg.virt_pid;
 fail:
-        xnd_assert(pthread_mutex_unlock(&request_mutex) == 0);
+        xnd_assert(pthread_mutex_unlock(&oob_mutex) == 0);
         return -1;
 }

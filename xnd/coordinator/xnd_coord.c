@@ -34,8 +34,8 @@ void proc_exit_callback(struct proc *p)
                 close(p->fd);
         }
 
-        if (p->request_fd != -1) {
-                close(p->request_fd); 
+        if (p->oob_fd != -1) {
+                close(p->oob_fd); 
         }
 
         pid_table_erase(p->virt_pid);
@@ -219,8 +219,13 @@ void coord_handle_msg(int fd, struct xnd_msg *msg)
 
         switch (msg->hdr) {
         case XND_EXIT: {
-                p = proc_list_find_by_xnd_pid(proc_list, msg->xnd_pid);
-                proc_list_remove(proc_list, p);
+                p = proc_list_find_by_real_pid(proc_list, msg->real_pid);
+                if (p) {
+                        proc_list_remove(proc_list, p);
+                } else {
+                        xnd_error("Couldn't find exited process (pid: %d)",
+                                  msg->real_pid);
+                }
                 break;
         }
         case XND_VIRT_TO_REAL: {
@@ -366,9 +371,9 @@ void coord_wait_for_msg(void)
         proc_foreach(p, proc_list) {
                 nfds = max(nfds, p->fd + 1);
                 FD_SET(p->fd, &set);
-                if (p->request_fd != -1) {
-                        nfds = max(nfds, p->request_fd + 1);
-                        FD_SET(p->request_fd, &set);
+                if (p->oob_fd != -1) {
+                        nfds = max(nfds, p->oob_fd + 1);
+                        FD_SET(p->oob_fd, &set);
                 }
         }
 
@@ -386,10 +391,10 @@ void coord_wait_for_msg(void)
                                 coord_handle_msg(p->fd, &msg);
                         }
                 }
-                if (FD_ISSET(p->request_fd, &set)) {
-                        err = coord_recv_msg(p->request_fd, &msg);
+                if (FD_ISSET(p->oob_fd, &set)) {
+                        err = coord_recv_msg(p->oob_fd, &msg);
                         if (err == 0) {
-                                coord_handle_msg(p->request_fd, &msg);
+                                coord_handle_msg(p->oob_fd, &msg);
                         }
                 }
         }
@@ -437,14 +442,14 @@ void coord_wait_for_connection(void)
         case XND_REAL_TO_VIRT: {
                 p = proc_list_find_by_xnd_pid(proc_list, msg.xnd_pid);
                 xnd_assert(p != NULL);
-                p->request_fd = fd;
+                p->oob_fd = fd;
                 coord_send_real_to_virt(fd, &msg);
                 break;
         }
         case XND_VIRT_TO_REAL: {
                 p = proc_list_find_by_xnd_pid(proc_list, msg.xnd_pid);
                 xnd_assert(p != NULL);
-                p->request_fd = fd;
+                p->oob_fd = fd;
                 coord_send_virt_to_real(fd, &msg);
                 break;
         }
@@ -477,7 +482,7 @@ void coord_connect_with_process_on_launch(int fd, struct xnd_msg *msg)
         xnd_assert(p != NULL);
         
         p->fd = fd;
-        p->request_fd = -1;
+        p->oob_fd = -1;
         p->real_pid = msg->real_pid;
         p->real_ppid = msg->real_ppid;
         
@@ -516,7 +521,7 @@ void coord_connect_with_process_on_restart(int fd, struct xnd_msg *msg)
         p = malloc(sizeof(struct proc));
         xnd_assert(p != NULL);
         p->fd = fd;
-        p->request_fd = -1;
+        p->oob_fd = -1;
 
         p->real_pid = msg->real_pid;
         p->virt_pid = msg->virt_pid;
@@ -852,7 +857,7 @@ void coord_atfork(int fd, struct xnd_msg *parent_msg)
          * handshake/registration with the child process.
          */
         child->fd = fd;
-        child->request_fd = -1;
+        child->oob_fd = -1;
         child->virt_pid = coord_next_virt_pid();
         child->xnd_pid = coord_next_xnd_pid();
         
