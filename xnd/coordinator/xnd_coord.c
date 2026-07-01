@@ -876,14 +876,16 @@ void coord_atfork(int fd, struct xnd_msg *parent_msg)
 
         parent = proc_list_find_by_virt_pid(proc_list, child->virt_ppid);
         if (!parent) {
-                xnd_error("Parent not in process list!\n");
+                xnd_error("Parent not in process list (virtual pid: %d)\n",
+                          child->virt_ppid);
                 coord_exit(COORD_EXIT_FAILURE);
         }
         
         /* Wait for child to connect (and do handshake) */ 
         err = coord_recv_msg(fd, &child_msg);
         if (err != 0) {
-                xnd_error("Failed to receive child's message\n");
+                xnd_error("Failed to receive child's message "
+                          "(virtual pid: %d)\n", child->virt_pid);
                 coord_exit(COORD_EXIT_FAILURE);
         }
         

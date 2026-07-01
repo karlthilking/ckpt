@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <pthread.h>
+#include <errno.h>
 
 extern pid_t    _virt_pid;
 extern pid_t    _virt_ppid;
@@ -132,16 +133,25 @@ void disconnect_from_coord(void)
                 xnd_warn("Failed to set XND_EXIT to coordinator\n");
         }
 
-        close(coord_fd);
-        close(request_fd);
+        if (close(coord_fd) != 0) {
+                xnd_warn("close: %s\n", strerror(errno));
+        }
+        
+        if ((request_fd != -1) && (close(request_fd) != 0)) {
+                xnd_warn("close: %s\n", strerror(errno));
+        }
 }
 
 void coord_client_atfork_prepare(void)
 {
-        struct xnd_msg msg;
+        int             err;
+        struct xnd_msg  msg;
         
         /* Acquire coordinator requests mutex */
-        xnd_assert(pthread_mutex_lock(&request_mutex) == 0);
+        if ((err = pthread_mutex_lock(&request_mutex)) != 0) {
+                xnd_error("pthread_mutex_lock: %s\n", strerror(err));
+                xnd_abort();
+        }
 
         /**
          * Connect to coordinator for child before fork and send
@@ -189,8 +199,17 @@ void coord_client_atfork_prepare(void)
 
 void coord_client_atfork_child(void)
 {
-        xnd_assert(pthread_mutex_unlock(&request_mutex) == 0);
-        xnd_assert(pthread_mutex_init(&request_mutex, NULL) == 0);
+        int err;
+
+        if ((err = pthread_mutex_unlock(&request_mutex)) != 0) {
+                xnd_error("pthread_mutex_unlock: %s\n", strerror(err));
+                xnd_abort();
+        }
+
+        if ((err = pthread_mutex_init(&request_mutex, NULL)) != 0) {
+                xnd_error("pthread_mutex_init: %s\n", strerror(err));
+                xnd_abort();
+        }
 
         coord_fd = xnd_fd_change(child_coord_fd, XND_COORD_FD);
         xnd_assert(coord_fd == XND_COORD_FD);
@@ -223,14 +242,30 @@ void coord_client_atfork_child(void)
 
 void coord_client_atfork_parent(void)
 {
-        xnd_assert(pthread_mutex_unlock(&request_mutex) == 0);
-        close(child_coord_fd);
+        int err;
+
+        if ((err = pthread_mutex_unlock(&request_mutex)) != 0) {
+                xnd_error("pthread_mutex_unlock: %s\n", strerror(err));
+                xnd_abort();
+        }
+
+        if (close(child_coord_fd) != 0) {
+                xnd_warn("close: %s\n", strerror(errno));
+        }
 }
 
 void coord_client_atfork_failed(void)
 {
-        xnd_assert(pthread_mutex_unlock(&request_mutex) == 0);
-        close(child_coord_fd);
+        int err;
+        
+        if ((err = pthread_mutex_unlock(&request_mutex)) != 0) {
+                xnd_error("pthread_mutex_unlock: %s\n", strerror(err));
+                xnd_abort();
+        }
+
+        if (close(child_coord_fd) != 0) {
+                xnd_warn("close: %s\n", strerror(errno));
+        }
 }
 
 int wait_for_ckpt_request_from_coord(void)
