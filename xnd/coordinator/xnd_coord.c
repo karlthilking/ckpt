@@ -391,7 +391,7 @@ void coord_wait_for_msg(void)
                                 coord_handle_msg(p->fd, &msg);
                         }
                 }
-                if (FD_ISSET(p->oob_fd, &set)) {
+                if (p->oob_fd != -1 && FD_ISSET(p->oob_fd, &set)) {
                         err = coord_recv_msg(p->oob_fd, &msg);
                         if (err == 0) {
                                 coord_handle_msg(p->oob_fd, &msg);
@@ -750,24 +750,22 @@ out:
 void coord_send_virt_to_real(int fd, struct xnd_msg *msg)
 {
         pid_t           real, virt = msg->virt_pid;
-        struct xnd_msg  resp = { .hdr = XND_COORD_ACK };
+        struct xnd_msg  resp = { .hdr = XND_COORD_ACK, .ret = XND_SUCCESS };
 
-        real = pid_table_virtual_to_real(virt);
-        if (real != -1) {
+        if ((real = pid_table_virtual_to_real(virt)) != -1) {
                 goto found;
         }
-        
-        real = proc_list_virt_to_real(proc_list, virt);
-        if (real != -1) {
+
+        if ((real = proc_list_virt_to_real(proc_list, virt)) != -1) {
                 goto found;
         }
 
         resp.ret = XND_FAILURE;
         resp.real_pid = -1;
         xnd_assert(coord_send_msg(fd, &resp) == 0);
+        return;
 
 found:
-        resp.ret = XND_SUCCESS;
         resp.real_pid = real;
         xnd_assert(coord_send_msg(fd, &resp) == 0);
 }
@@ -775,22 +773,22 @@ found:
 void coord_send_real_to_virt(int fd, struct xnd_msg *msg)
 {
         pid_t           virt, real = msg->real_pid;
-        struct xnd_msg  resp = { .hdr = XND_COORD_ACK };
+        struct xnd_msg  resp = { .hdr = XND_COORD_ACK, .ret = XND_SUCCESS };
         
-        virt = pid_table_real_to_virtual(real);
-        if (virt != -1) {
+        if ((virt = pid_table_real_to_virtual(real)) != -1) {
                 goto found;
         }
-        
-        virt = proc_list_real_to_virt(proc_list, real);
-        if (virt != -1) {
+
+        if ((virt = proc_list_real_to_virt(proc_list, real)) != -1) {
                 goto found;
         }
 
         resp.ret = XND_FAILURE;
         resp.virt_pid = -1;
+        xnd_assert(coord_send_msg(fd, &resp) == 0);
+        return;
+
 found:
-        resp.ret = XND_SUCCESS;
         resp.virt_pid = virt;
         xnd_assert(coord_send_msg(fd, &resp) == 0);
 }
@@ -897,7 +895,7 @@ void coord_atfork(int fd, struct xnd_msg *parent_msg)
         xnd_assert(child_msg.hdr == XND_ATFORK_CHILD);
         child->real_pid = child_msg.real_pid;
         child->real_ppid = child_msg.real_ppid;
-        xnd_assert(child->real_ppid = parent->real_pid);
+        xnd_assert(child->real_ppid == parent->real_pid);
 
         coord_send_handshake(child);
 
