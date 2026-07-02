@@ -123,31 +123,3 @@ Examples of programs that XND cannot checkpoint include arm64e binaries, applica
 applications and programs which rely on resources that cannot yet be checkpointed by XND (e.g. IPC and shared memory). For the most 
 part, any application that does not strip `DYLD*` environment variables (loader environment variables), and is not compiled for the 
 `arm64e` architecture can, currently or possibly in the future, be checkpointed by XND.
-
-Architecture/Internals of XND
-=============================
-
-In order for XND to obtain checkpoint control, a loader environment variable, `DYLD_INSERT_LIBRARIES`, is set to `libxnd.dylib` before 
-a program is executed. This way, `libxnd.dylib` (XND's checkpoint library) is preloaded before all other libraries, allowing XND to 
-create a 'checkpoint thread' at initialization time. The checkpoint thread establishes connection to a global coordinator (who listens 
-on a UNIX socket) and sets up a signal handler for a given checkpoint signal (SIGUSR2 by default). As the name implies, the checkpoint 
-thread will become responsible for handling checkpointing its own process (once a checkpoint is requested).
-
-For the most part, a program injected with `libxnd.dylib` will mostly run as usual without any intervention by XND. An exception to this
-are stateful events such as thread creation, process creation, and opening of files, among other things. In order to be aware of such
-events, `libxnd.dylib` interposes relevant library functions and system calls which require additional bookkeeping or arbitration.
-
-When a checkpoint is requested (via `./xnd_command --checkpoint`), the coordinator will be the first entity to be notified of the 
-request. Then, the coordinator will broadcast the `XND_CKPT_REQUEST` message to the checkpoint thread for each process, who should
-be waiting for a coordinator message over their socket connection. Each checkpoint thread will acknowledge the request, enter a global
-barrier, and wait for the coordinator to release the barrier. Once this global barrier is released, each checkpoint thread will be
-responsible for managing the checkpoint of their process.
-
-In each process, the checkpoint thread must now suspend all user threads. Remember that, during initialization, the checkpoint thread
-established a signal handler to run for a given checkpoint signal. Thus, the checkpoint thread will signal each user thread in the
-process, causing them to jump to `libxnd.dylib:thread_sighandler`. In this signal handler, each thread will save their register context,
-signal state, and TLS (tpidrro_el0), and after, enter a process-local barrier. Now that each user thread is suspended in a barrier, the
-checkpoint thread is safe to serialize all of userspace memory, its own register context, and other metadata to a checkpoint file. 
-Thus, the checkpoint has completed. Everything needed by XND to recreate the state of one process is included in a checkpoint file, and
-thus, to recreate a computation of N processes, N new processes will created and will restore their state from their respective 
-checkpoint.
