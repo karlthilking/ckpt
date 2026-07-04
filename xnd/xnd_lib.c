@@ -61,6 +61,11 @@ void xnd_precheckpoint(void)
         _pthread_ptr_munge_token = thread_munge_token();
 }
 
+void xnd_postcheckpoint(void)
+{
+        epoch++;
+}
+
 /**
  * xnd_postrestart:
  *  Re-connect and register with coordinator, restore auxiliary state.

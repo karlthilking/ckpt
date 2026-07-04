@@ -9,11 +9,11 @@
 #define _XOPEN_SOURCE
 #include <ucontext.h>
 
-int write_vm_region(int, const struct xnd_vm_region *);
-int write_context(int, const ucontext_t *);
-int write_ckpt(const struct xnd_ckpt_header *,
-               const enum xnd_ckpt_entry *,
-               const struct xnd_vm_region *,
-               const ucontext_t *);
+int write_vm_page(int, struct xnd_vm_region *, struct xnd_vm_page *);
+int write_vm_region_pages(int, struct xnd_vm_region *);
+int write_vm_region(int, struct xnd_vm_region *);
+int write_context(int, ucontext_t *);
+int write_ckpt(struct xnd_ckpt_header *, enum xnd_ckpt_entry *,
+               struct xnd_vm_region *, ucontext_t *);
 
 #endif /* XND_WRITECKPT_H */

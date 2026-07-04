@@ -64,7 +64,8 @@ int read_ckpt(int fd, const struct xnd_ckpt_header *header,
                         retval = read_context(fd, uctx);
                         break;
                 default:
-                        xnd_abort();
+                        xnd_error("Unrecognized checkpoint entry\n");
+                        goto bad;
                 }
 
                 if (retval < 0) {
@@ -73,7 +74,9 @@ int read_ckpt(int fd, const struct xnd_ckpt_header *header,
                 }
 
         }
-
+        
+        xnd_trace("Finished reading checkpoint (entries: %u, regions: %u)\n",
+                  header->entry_count, header->region_count);
         close(fd);
         return 0;
 bad:

@@ -6,7 +6,7 @@ TESTS := \
         02_heat_diffusion \
         03_nbody \
         04_jacobi \
-        07_pid
+        06_tree
 
 all: $(TESTS)
 

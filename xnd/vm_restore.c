@@ -6,8 +6,9 @@
 #include <dlfcn.h>
 #include <errno.h>
 
-extern mach_port_t mach_task_self_;
-extern mach_port_t task_self_trap(void);
+extern mach_port_t      mach_task_self_;
+extern mach_port_t      task_self_trap(void);
+extern uintptr_t        __stack_chk_guard;
 
 int ckpt_vm_mark_regions(void)
 {
@@ -65,15 +66,87 @@ int ckpt_vm_mark_regions(void)
         return 0;
 }
 
-int ckpt_vm_restore_region(int fd, const struct xnd_vm_region *region)
+static int ckpt_vm_restore_dyld_region(int fd, struct xnd_vm_region *region)
+{
+        struct xnd_vm_page      pages[region->pages_dirtied];
+        ssize_t                 bytes;
+        void                    *addr, *end;
+        vm_prot_t               new_prot;
+        bool                    writable;
+        uintptr_t               saved_stack_chk_guard;
+        
+        saved_stack_chk_guard = __stack_chk_guard;
+
+        /**
+         * Get a private, writable copy of this region if it is not
+         * currently writable.
+         */
+        writable = (region->prot & VM_PROT_WRITE);
+        if (!writable) {
+                new_prot = VM_PROT_DEFAULT | VM_PROT_COPY;
+                if (ckpt_vm_protect(region, false, new_prot) != 0) {
+                        return -1;
+                }
+        }
+        
+        /**
+         * Rebase dirty pages that were serialized during checkpoint
+         * on top of this shared cache region.
+         */
+        for (uint idx = 0; idx < region->pages_dirtied; idx++) {
+                bytes = readall(fd, pages + idx, sizeof(pages[idx]));
+                if (bytes != sizeof(pages[idx])) {
+                        return -1;
+                }
+                addr = region->start + pages[idx].offset;
+                bytes = readall(fd, addr, VM_PAGE_SIZE);
+                if (bytes != VM_PAGE_SIZE) {
+                        return -1;
+                }
+        }
+        
+        /**
+         * If cached mach task port (mach_task_self_) was overwritten by
+         * restoring this region, restore the correct task port value via
+         * task_self_trap().
+         */
+        end = region->start + region->size;
+        if (IN_VM_RANGE(&mach_task_self_, region->start, end)) {
+                mach_task_self_ = task_self_trap();
+                xnd_assert(mach_task_self() == task_self_trap());
+        }
+
+        if (IN_VM_RANGE(&__stack_chk_guard, region->start, end)) {
+                __stack_chk_guard = saved_stack_chk_guard;
+        }
+
+        if (!writable) {
+                if (ckpt_vm_protect(region, false, region->prot) != 0) {
+                        return -1;
+                }
+        }
+
+        xnd_trace("Restored dyld shared cache region: %p-%p %zu %s/%s\n",
+                  region->start, end, region->size,
+                  VM_PROT_STRING(region->prot),
+                  VM_PROT_STRING(region->max_prot));
+
+        return 0;
+}
+
+int ckpt_vm_restore_region(int fd, struct xnd_vm_region *region)
 {
         kern_return_t           kr;
         mach_vm_address_t       addr;
         mach_vm_size_t          size;
         ssize_t                 bytes;
+        void                    *end;
 
-        xnd_assert(region->start != NULL && region->end != NULL);
-        xnd_assert(mach_task_self() == task_self_trap());
+        if (DYLD_SHARED_CACHE_REGION(region->start, region->size)) {
+                return ckpt_vm_restore_dyld_region(fd, region);
+        }
+
+        xnd_assert(region->start != NULL);
         addr = (mach_vm_address_t)region->start;
         size = (mach_vm_size_t)region->size;
         
@@ -88,7 +161,7 @@ int ckpt_vm_restore_region(int fd, const struct xnd_vm_region *region)
                 xnd_error("mach_vm_map: %s\n"
                           "(%p-%p %zu %s/%s %s)\n",
                           mach_error_string(kr), region->start,
-                          region->end, region->size,
+                          region->start + region->size, region->size,
                           VM_PROT_STRING(VM_PROT_DEFAULT),
                           VM_PROT_STRING(VM_PROT_ALL),
                           VM_INHERIT_STRING(region->inherit));
@@ -100,34 +173,25 @@ int ckpt_vm_restore_region(int fd, const struct xnd_vm_region *region)
         if (bytes != region->size) {
                 return -1;
         }
-        
+
         /**
-         * If cached mach task port (mask_task_self_) is overwritten by
-         * restored memory, mach_task_self() will fail on next use.
-         * Refresh mach_task_self_ directly with task_self_trap (direct
-         * mach trap) so mach_task_self() can continue to work.
+         * If restored region contains the cached mach port, restore the
+         * correct mach port for this process via task_self_trap().
          */
-        if (IN_VM_RANGE(&mach_task_self_, region->start, region->end)) {
+        end = region->start + region->size;
+        if (IN_VM_RANGE(&mach_task_self_, region->start, end)) {
                 mach_task_self_ = task_self_trap();
                 xnd_assert(mach_task_self() == task_self_trap());
         }
 
         if (region->prot != VM_PROT_DEFAULT) {
-                kr = mach_vm_protect(mach_task_self(), addr, size,
-                                     FALSE, region->prot);
-                if (kr != KERN_SUCCESS) {
-                        xnd_error("mach_vm_protect: %s\n",
-                                mach_error_string(kr));
+                if (ckpt_vm_protect(region, false, region->prot) != 0) {
                         return -1;
                 }
         }
-
+        
         if (region->max_prot != VM_PROT_ALL) {
-                kr = mach_vm_protect(mach_task_self(), addr, size,
-                                     TRUE, region->max_prot);
-                if (kr != KERN_SUCCESS) {
-                        xnd_error("mach_vm_protect: %s\n",
-                                  mach_error_string(kr));
+                if (ckpt_vm_protect(region, true, region->max_prot) != 0) {
                         return -1;
                 }
         }

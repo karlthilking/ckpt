@@ -90,7 +90,7 @@ static __noreturn void launch(char **argv)
                   "DYLD_INSERT_LIBRARIES=%s\n"
                   "DYLD_SHARED_REGION=private\n",
                   xnd_program, libxnd_path);
-
+        
         xnd_printf("Executing %s (pid=%d)\n", xnd_program, getpid());
         err = execvp(argv[0], argv);
         if (err != 0) {

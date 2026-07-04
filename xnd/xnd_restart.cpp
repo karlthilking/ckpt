@@ -195,7 +195,8 @@ void xnd_restart_target::create_process(bool create_roots) const noexcept
 
 int main(int argc, char *argv[])
 {
-        pid_t child, coord_pid = -1;
+        int     stat;
+        pid_t   child, coord_pid = -1;
         
         xnd_log_setup();
         if (argc != 2) {
@@ -225,7 +226,19 @@ int main(int argc, char *argv[])
                 break;
         }
 
-        xnd_assert(waitpid(child, nullptr, 0) == child);
+        switch (waitpid(child, &stat, 0)) {
+        case -1:
+                xnd_error("waitpid: %s\n", strerror(errno));
+                break;
+        default:
+                if (WIFEXITED(stat)) {
+                        xnd_trace("%d exited: %d\n", child, WEXITSTATUS(stat));
+                } else if (WIFSIGNALED(stat)) {
+                        xnd_trace("%d signaled: %d\n", child, WTERMSIG(stat));
+                }
+                break;
+        }
+
         delete info;
         for (auto t : targets) {
                 delete t;

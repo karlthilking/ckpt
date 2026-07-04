@@ -1,9 +1,8 @@
 /* vm_checkpoint.c */
-#include <assert.h>
 #include <stdio.h>
 #include "vm_region.h"
 
-int ckpt_vm_valid_region(const vm_region_submap_info_data_64_t *info,
+int ckpt_vm_valid_region(vm_region_submap_info_data_64_t *info,
                          mach_vm_address_t addr, mach_vm_size_t size)
 {
         if (PAGEZERO(addr, size) || info->max_protection == VM_PROT_NONE) {
@@ -34,8 +33,7 @@ int ckpt_vm_valid_region(const vm_region_submap_info_data_64_t *info,
         case VM_MEMORY_DYLD:
         case VM_MEMORY_DYLD_MALLOC:
                 if (info->pages_resident && info->pages_dirtied) {
-                        assert((info->max_protection & VM_PROT_WRITE) &&
-                               VM_REGION_PRIVATE(info));
+                        xnd_assert(info->max_protection & VM_PROT_WRITE);
                         return 1;
                 }
                 return 0;
@@ -54,8 +52,9 @@ int ckpt_vm_valid_region(const vm_region_submap_info_data_64_t *info,
         case VM_MEMORY_LIBDISPATCH:
         case VM_MEMORY_ACCELERATE:
         case VM_MEMORY_SWIFT_RUNTIME:
-                if (info->protection & VM_PROT_WRITE)
+                if (info->protection & VM_PROT_WRITE) {
                         return info->pages_resident && info->pages_dirtied;
+                }
                 return 1;
         default:
                 break;
@@ -94,7 +93,6 @@ u32 ckpt_vm_save_regions(struct xnd_vm_region *regions)
 
                 rgn = regions + region_count;
                 rgn->start = (void *)addr;
-                rgn->end = (void *)(addr + size);
                 rgn->size = (size_t)size;
                 rgn->inherit = info.inheritance;
                 rgn->prot = info.protection;

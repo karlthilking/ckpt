@@ -15,8 +15,7 @@
 #include <mach/vm_param.h>
 
 struct xnd_vm_region {
-        const void      *start;
-        const void      *end;
+        void            *start;
         size_t          size;
         vm_inherit_t    inherit;
         int             prot;
@@ -26,9 +25,21 @@ struct xnd_vm_region {
         uint            pages_dirtied;
 };
 
+/**
+ * xnd_vm_page:
+ *  Should only be used for dyld shared cache regions as individual
+ *  pages can be read directly into memory (dyld shared cache regions will
+ *  already be present so no mmap or mach_vm_map is required).
+ */
+struct xnd_vm_page {
+        size_t          offset;
+};
+
 #define VM_PROT_STRING(__prot) \
         (((__prot) == (VM_PROT_NONE))                   ? "---" : \
          ((__prot) == (VM_PROT_READ))                   ? "r--" : \
+         ((__prot) == (VM_PROT_WRITE))                  ? "-w-" : \
+         ((__prot) == (VM_PROT_EXECUTE))                ? "--x" : \
          ((__prot) == (VM_PROT_DEFAULT))                ? "rw-" : \
          ((__prot) == (VM_PROT_READ | VM_PROT_EXECUTE)) ? "r-x" : \
          ((__prot) == (VM_PROT_ALL))                    ? "rwx" : "---")
@@ -92,19 +103,28 @@ struct xnd_vm_region {
         ((uintptr_t)(ptr) >= (uintptr_t)(start) && \
          (uintptr_t)(ptr) < (uintptr_t)(end))
 
+extern vm_size_t vm_page_size;
+
+#ifndef VM_PAGE_SIZE
+# define VM_PAGE_SIZE ((size_t)vm_page_size)
+#else
+# undef VM_PAGE_SIZE
+# define VM_PAGE_SIZE ((size_t)vm_page_size)
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif /* __cplusplus */
 
 int ckpt_vm_mark_regions(void);
-int ckpt_vm_restore_region(int, const struct xnd_vm_region *);
+int ckpt_vm_restore_region(int, struct xnd_vm_region *);
 
-int ckpt_vm_valid_region(const vm_region_submap_info_data_64_t *,
+int ckpt_vm_valid_region(vm_region_submap_info_data_64_t *,
                          mach_vm_address_t, mach_vm_size_t);
 u32 ckpt_vm_save_regions(struct xnd_vm_region *);
 void ckpt_vm_deallocate_regions(void);
 
-int ckpt_vm_protect(const struct xnd_vm_region *, bool, vm_prot_t);
+int ckpt_vm_protect(struct xnd_vm_region *, bool, vm_prot_t);
 
 #ifdef __cplusplus
 }

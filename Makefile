@@ -1,14 +1,19 @@
-ARCH    ?= arm64
-BUILD   ?= .
+ARCH            ?= arm64
+BUILD           ?= .
+DEVELOPMENT     ?= 1
 
-CC := clang
-CXX := clang++
-CFLAGS := -std=c17 -Wall -Wno-deprecated-declarations \
-	  -DDEVELOPMENT=1 -g3 -O0 -arch $(ARCH) \
-	  -iquote . -iquote ./include
-CXXFLAGS := -std=c++20 -Wall -Wno-deprecated-declarations \
-	    -DDEVELOPMENT=1 -g3 -O0 -arch $(ARCH) \
-	    -iquote . -iquote ./include
+CC      := clang
+CXX     := clang++
+
+CFLAGS := \
+        -std=c17 -Wall -Wno-deprecated-declarations \
+	-DDEVELOPMENT=$(DEVELOPMENT) -g3 -O0 -arch $(ARCH) \
+	-iquote . -iquote ./include
+
+CXXFLAGS := \
+        -std=c++20 -Wall -Wno-deprecated-declarations \
+	-DDEVELOPMENT=$(DEVELOPMENT) -g3 -O0 -arch $(ARCH) \
+	-iquote . -iquote ./include
 
 LIBXND_OBJECTS := \
         $(BUILD)/xnd_lib.o \
@@ -179,7 +184,7 @@ test:
 clean:
 	rm -rf *.dSYM *-checkpoints
 	rm -f $(ALL) *.dylib *.o *.ckpt *.dat *.xnd
-	rm -f xnd.log xnd-debug.sh
+	rm -f xnd.log xnd-debug.sh xnd_coordinator_v0
 
 .PHONY: all clean test
 .INTERMEDIATE: \

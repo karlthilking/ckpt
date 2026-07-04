@@ -734,7 +734,8 @@ void coord_do_checkpoint(void)
          */
         coord_wait_for_ckpt_completions();
         coord_write_ckpt_manifest();
-
+        
+        coord_info.epoch++;
         /**
          * All checkpoints are complete (each process is currently blocked
          * in another coordinator barrier). 

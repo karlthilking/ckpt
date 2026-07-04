@@ -56,6 +56,7 @@ struct xnd_ckpt_header {
 
 enum xnd_ckpt_entry {
         XND_VM_REGION_ENTRY,
+        XND_VM_PAGE_ENTRY,
         XND_UCONTEXT_ENTRY
 };
 

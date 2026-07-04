@@ -546,7 +546,8 @@ void *ckpt_thread_work(void *wait)
                  */
                 enter_coord_barrier(COORD_BARRIER_POSTCKPT);
                 set_tls_slot(TLS_TLV_FLAG_SLOT, TLS_TLV_INIT_MAGIC);
-
+        
+                xnd_postcheckpoint();
                 /**
                  * Release user threads 
                  *  XND_CKPTINPROG -> XND_RUNNING
