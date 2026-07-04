@@ -88,4 +88,6 @@
 # define __hidden __attribute__((visibility("hidden")))
 #endif
 
+#define __no_stack_protector __attribute__((no_stack_protector))
+
 #endif /* XND_COMPILER_H */

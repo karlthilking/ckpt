@@ -284,10 +284,10 @@ static int read_ckpt(int fd, struct xnd_ckpt_header *header,
                 switch (entries[i]) {
                 case XND_VM_REGION_ENTRY: {
                         retval = readall(fd, r, sizeof(struct xnd_vm_region));
-                        if (DYLD_SHARED_CACHE_REGION(r->start, r->size)) {
-                                off = r->pages_dirtied *
-                                      (sizeof(struct xnd_vm_page) + 
-                                       VM_PAGE_SIZE);
+                        if (ONLY_RESTORE_DIRTY_PAGES(r)) {
+                                off = sizeof(struct xnd_vm_page);
+                                off += VM_PAGE_SIZE;
+                                off *= r->pages_dirtied;
                         } else {
                                 off = r->size;
                         }
@@ -425,7 +425,7 @@ static void print_vm_regions(struct xnd_vm_region *regions, u32 nr_rgns)
         
         nbyte = 0;
         for (rgn = regions; rgn < regions + nr_rgns; rgn++) {
-                if (DYLD_SHARED_CACHE_REGION(rgn->start, rgn->size)) {
+                if (ONLY_RESTORE_DIRTY_PAGES(rgn)) {
                         bytes = sizeof(struct xnd_vm_page) + VM_PAGE_SIZE;
                         bytes *= rgn->pages_dirtied;
                 } else {

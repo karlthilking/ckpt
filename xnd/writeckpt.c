@@ -103,16 +103,7 @@ int write_vm_region(int fd, struct xnd_vm_region *region)
 {
         ssize_t bytes;
 
-        if (DYLD_SHARED_CACHE_REGION(region->start, region->size)) {
-                /**
-                 * For dyld shared cache regions, it is safe to only save
-                 * individual dirty pages, as any page which has not been
-                 * written to will loaded in the restart process by dyld.
-                 *
-                 * write_vm_region_pages will dynamically check which pages
-                 * are dirty are serialize their offsets into the region
-                 * along with the data contained in each dirty page.
-                 */
+        if (ONLY_SAVE_DIRTY_PAGES(region)) {
                 xnd_assert(region->prot & VM_PROT_READ);
                 xnd_assert(region->prot != (VM_PROT_READ | VM_PROT_EXECUTE));
                 return write_vm_region_pages(fd, region);

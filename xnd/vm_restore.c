@@ -66,33 +66,13 @@ int ckpt_vm_mark_regions(void)
         return 0;
 }
 
-static int ckpt_vm_restore_dyld_region(int fd, struct xnd_vm_region *region)
+static __no_stack_protector __always_inline
+int ckpt_vm_restore_pages(int fd, struct xnd_vm_region *region)
 {
-        struct xnd_vm_page      pages[region->pages_dirtied];
+        void                    *addr;
         ssize_t                 bytes;
-        void                    *addr, *end;
-        vm_prot_t               new_prot;
-        bool                    writable;
-        uintptr_t               saved_stack_chk_guard;
-        
-        saved_stack_chk_guard = __stack_chk_guard;
+        struct xnd_vm_page      pages[region->pages_dirtied];
 
-        /**
-         * Get a private, writable copy of this region if it is not
-         * currently writable.
-         */
-        writable = (region->prot & VM_PROT_WRITE);
-        if (!writable) {
-                new_prot = VM_PROT_DEFAULT | VM_PROT_COPY;
-                if (ckpt_vm_protect(region, false, new_prot) != 0) {
-                        return -1;
-                }
-        }
-        
-        /**
-         * Rebase dirty pages that were serialized during checkpoint
-         * on top of this shared cache region.
-         */
         for (uint idx = 0; idx < region->pages_dirtied; idx++) {
                 bytes = readall(fd, pages + idx, sizeof(pages[idx]));
                 if (bytes != sizeof(pages[idx])) {
@@ -104,18 +84,51 @@ static int ckpt_vm_restore_dyld_region(int fd, struct xnd_vm_region *region)
                         return -1;
                 }
         }
+
+        return 0;
+}
+
+static int ckpt_vm_restore_region_pages(int fd, struct xnd_vm_region *region)
+{
+        void            *end;
+        vm_prot_t       prot;
+        bool            writable;
+        uintptr_t       saved_stack_chk_guard;
+
+        saved_stack_chk_guard = __stack_chk_guard;
+
+        /**
+         * If this region is not current writable, get a private, writable
+         * copy via mach_vm_protect with VM_PROT_READ | VM_PROT_WRITE |
+         * VM_PROT_COPY.
+         */
+        writable = (region->prot & VM_PROT_WRITE);
+        if (!writable) {
+                prot = VM_PROT_DEFAULT | VM_PROT_COPY;
+                if (ckpt_vm_protect(region, false, prot) != 0) {
+                        return -1;
+                }
+        }
+
+        if (ckpt_vm_restore_pages(fd, region) != 0) {
+                return -1;
+        }
         
+        end = region->start + region->size;
         /**
          * If cached mach task port (mach_task_self_) was overwritten by
-         * restoring this region, restore the correct task port value via
-         * task_self_trap().
+         * restoring this region, restore the correct task port using
+         * task_self_trap() to get the true task port value.
          */
-        end = region->start + region->size;
         if (IN_VM_RANGE(&mach_task_self_, region->start, end)) {
                 mach_task_self_ = task_self_trap();
                 xnd_assert(mach_task_self() == task_self_trap());
         }
-
+        
+        /**
+         * If __stack_chk_guard was overwritten by a restored page,
+         * refresh its value to prevent __stack_chk_fail.
+         */
         if (IN_VM_RANGE(&__stack_chk_guard, region->start, end)) {
                 __stack_chk_guard = saved_stack_chk_guard;
         }
@@ -125,11 +138,6 @@ static int ckpt_vm_restore_dyld_region(int fd, struct xnd_vm_region *region)
                         return -1;
                 }
         }
-
-        xnd_trace("Restored dyld shared cache region: %p-%p %zu %s/%s\n",
-                  region->start, end, region->size,
-                  VM_PROT_STRING(region->prot),
-                  VM_PROT_STRING(region->max_prot));
 
         return 0;
 }
@@ -142,8 +150,8 @@ int ckpt_vm_restore_region(int fd, struct xnd_vm_region *region)
         ssize_t                 bytes;
         void                    *end;
 
-        if (DYLD_SHARED_CACHE_REGION(region->start, region->size)) {
-                return ckpt_vm_restore_dyld_region(fd, region);
+        if (ONLY_RESTORE_DIRTY_PAGES(region)) {
+                return ckpt_vm_restore_region_pages(fd, region);
         }
 
         xnd_assert(region->start != NULL);
