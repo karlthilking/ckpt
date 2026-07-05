@@ -213,7 +213,7 @@ int main(int argc, char *argv[])
         if (env_dyld_shared_region_is_private() == false) {
                 env_set_dyld_shared_region_private();
         }
-
+        
         info = new xnd_restart_info(argv[1]);
         switch ((child = fork())) {
         case -1:

@@ -76,7 +76,7 @@ static bool vm_info_options[] = {
 
 static const char *help =
 "OVERVIEW: xnd_print\n\n"
-"DESCRIPTION: Print serialized checkpoint image files (.ckpt)\n\n"
+"DESCRIPTION: Print serialized checkpoint image files\n\n"
 "USAGE: ./xnd_print [options] file ...\n\n"
 "OPTIONS:\n\n"
 "  --all, -a\n"
@@ -442,7 +442,7 @@ static void print_vm_regions(struct xnd_vm_region *regions, u32 nr_rgns)
         for (rgn = regions; rgn < regions + nr_rgns; rgn++) {
                 if (skip_vm_region(rgn))
                         continue;
-                if (DYLD_SHARED_CACHE_REGION(rgn->start, rgn->size)) {
+                if (ONLY_RESTORE_DIRTY_PAGES(rgn)) {
                         bytes = sizeof(struct xnd_vm_page) + VM_PAGE_SIZE;
                         bytes *= rgn->pages_dirtied;
                         bytes += sizeof(struct xnd_vm_region);

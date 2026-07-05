@@ -2,11 +2,12 @@
 #ifndef XND_RESTART_INTERNAL
 #define XND_RESTART_INTERNAL
 
-#include "xnd/xnd.h"
-#include "xnd/ckptfile.h"
-#include "xnd/util/path.h"
-#include "xnd/util/io.h"
-#include "xnd/platform/exe.h"
+#include "xnd.h"
+#include "ckptfile.h"
+#include "util/path.h"
+#include "util/io.h"
+#include "util/compress.h"
+#include "platform/exe.h"
 #include <fcntl.h>
 #include <errno.h>
 #include <stdlib.h>
@@ -70,24 +71,44 @@ private:
 
 public:
         xnd_restart_target(void) = default;
-        
+
         xnd_restart_target(const char *dir, u32 id) noexcept
                 : xnd_pid_(id)
         {
-                int     fd;
+                int     err, fd, dirfd;
                 ssize_t bytes;
-        
+                char    ckptfile[XND_CKPTFILE_MAXLEN];
+
+                bzero(ckptpath, sizeof(ckptpath));
                 sprintf(ckptpath, "%s/ckpt-%u.xnd", dir, id);
-                fd = open(ckptpath, O_RDONLY);
-                if (fd < 0) {
-                        xnd_error("open: %s\n", strerror(errno));
+                snprintf(ckptfile, sizeof(ckptfile), "ckpt-%u.xnd", id);
+
+                dirfd = open(dir, O_DIRECTORY | O_RDONLY);
+                if (faccessat(dirfd, ckptfile, F_OK, 0) == 0) {
+                        if ((fd = openat(dirfd, ckptfile, O_RDONLY)) < 0) {
+                                xnd_error("openat: %s\n", strerror(errno));
+                                exit(XND_EXIT_FAILURE);
+                        }
+                } else {
+                        err = xnd_decompress_ckpt(dirfd, ckptfile);
+                        if (err != 0) {
+                                exit(XND_EXIT_FAILURE);
+                        }
+                        xnd_assert(faccessat(dirfd, ckptfile, F_OK, 0) == 0);
+                        if ((fd = openat(dirfd, ckptfile, O_RDONLY)) < 0) {
+                                xnd_error("openat: %s\n", strerror(errno));
+                                exit(XND_EXIT_FAILURE);
+                        }
+                }
+                
+                bytes = readall(fd, &header, sizeof(header));
+                if (bytes != sizeof(header)) {
                         exit(XND_EXIT_FAILURE);
                 }
 
-                bytes = readall(fd, &header, sizeof(header));
-                xnd_assert(bytes == sizeof(header));
                 xnd_assert(xnd_pid_ == header.xnd_pid);
                 close(fd);
+                close(dirfd);
         }
 
         [[noreturn]] void exec_restart(void) const noexcept;

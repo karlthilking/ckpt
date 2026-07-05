@@ -13,20 +13,76 @@
 #include <errno.h>
 #include <limits.h>
 
+#define ARG_IS_HELP(arg) \
+        (strncmp(arg, "--help", sizeof("--help")) == 0)
+#define ARG_IS_CKPT_INTERVAL(arg) \
+        (strncmp(arg, "-i", sizeof("-i")) == 0 || \
+         strncmp(arg, "--interval", sizeof("--interval")) == 0)
+#define ARG_IS_USE_ZLIB(arg) \
+        (strncmp(arg, "--use-zlib", sizeof("--use-zlib")) == 0)
+#define ARG_IS_NO_ZLIB(arg) \
+        (strncmp(arg, "--no-zlib", sizeof("no-zlib")) == 0)
+#define ARG_IS_CKPT_SIGNAL(arg) \
+        (strncmp(arg, "--ckpt-signal", sizeof("--ckpt-signal")) == 0)
+
+static void usage(void);
 static void xnd_exit(int);
 static void launch(char **);
+
+static const char *help =
+"OVERVIEW: xnd_launch\n\n"
+"DESCRIPTION: Launch computation under XND\n\n"
+"USAGE: ./xnd_launch [options] <binary> [args...]\n\n"
+"OPTIONS:\n\n"
+"  -i, --interval <seconds>\n"
+"       Set checkpoint frequency in seconds\n"
+"       Default: 0 (manual checkpoints only)\n\n"
+"  --use-zlib\n"
+"       Use zlib for checkpoint file compression\n\n"
+"  --no-zlib\n"
+"       Don't use zlib for checkpoint file compression\n\n"
+"  --ckpt-signal <signal>\n"
+"       Set the signal used for checkpoints\n"
+"       Default: SIGUSR2\n\n"
+"  --help\n"
+"       Display this help message\n";
 
 int main(int argc, char *argv[])
 {
         xnd_log_setup();
         if (argc < 2) {
-                xnd_error("Usage: ./xnd_launch <binary>...\n");
-                xnd_log_cleanup();
-                exit(0);
+                usage();
+                xnd_exit(XND_EXIT_FAILURE);
+        }
+
+        argv++;
+        for (;;) {
+                if (ARG_IS_HELP(argv[0])) {
+                        usage();
+                        xnd_exit(XND_EXIT_SUCCESS);
+                } else if (ARG_IS_CKPT_INTERVAL(argv[0])) {
+                        env_set_ckpt_interval(argv[1]);
+                        argv++; argv++;
+                } else if (ARG_IS_USE_ZLIB(argv[0])) {
+                        env_set_zlib_compression("1");
+                        argv++;
+                } else if (ARG_IS_NO_ZLIB(argv[0])) {
+                        env_set_zlib_compression("0");
+                        argv++;
+                } else if (ARG_IS_CKPT_SIGNAL(argv[0])) {
+                        env_set_ckpt_signal(argv[1]);
+                        argv++; argv++;
+                } else {
+                        break;
+                }
         }
         
-        launch(argv + 1);
-        exit(0);
+        launch(argv);
+}
+
+static void usage(void)
+{
+        xnd_printf("%s", help);
 }
 
 static __noreturn void xnd_exit(int status)

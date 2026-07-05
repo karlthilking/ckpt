@@ -4,6 +4,7 @@
 #include "xnd/pid/pid.h"
 #include "xnd/util/io.h"
 #include "xnd/util/path.h"
+#include "xnd/util/compress.h"
 
 #include <mach/mach.h>
 #include <stdlib.h>
@@ -19,6 +20,21 @@
 
 extern mach_port_t task_self_trap(void);
 extern mach_port_t host_self_trap(void);
+
+void xnd_ckptpath_name(char *buf, uuid_t uuid, u64 epoch, 
+                       u32 xnd_pid, bool use_zlib)
+{
+        char    uuid_str[37];
+        size_t  len = XND_CKPTPATH_MAXLEN;
+        
+        bzero(buf, len);
+        uuid_unparse(uuid, uuid_str);
+        snprintf(buf, len, XND_CKPTPATH_FMT, uuid_str, epoch, xnd_pid);
+        
+        if (use_zlib) {
+                strncat(buf, XND_COMPRESSED_SUFFIX, len - strlen(buf));
+        }
+}
 
 void xnd_ckptdir_name(char *basedir, char *subdir, 
                       const uuid_t uuid, u64 epoch)
@@ -112,16 +128,60 @@ int xnd_ckptfile_openat(int dirfd, u32 xnd_pid)
 
 bool xnd_ckptfile_exists(int dirfd, u32 xnd_pid)
 {
-        int     err;
-        char    buf[XND_CKPTFILE_MAXLEN];
-
+        char buf[XND_CKPTFILE_MAXLEN];
+        
         snprintf(buf, sizeof(buf), XND_CKPTFILE_FMT, xnd_pid);
-        err = faccessat(dirfd, buf, F_OK, 0);
-        if (err) {
-                return false;
+        if (faccessat(dirfd, buf, F_OK, 0) == 0) {
+                return true;
         }
 
-        return true;
+        return false;
+}
+
+bool xnd_compressed_ckpt_exists(int dirfd, u32 xnd_pid)
+{
+        char buf[XND_CKPTFILE_MAXLEN];
+
+        snprintf(buf, sizeof(buf), XND_COMPRESSED_CKPT_FMT, xnd_pid);
+        if (faccessat(dirfd, buf, F_OK, 0) == 0) {
+                return true;
+        }
+
+        return false;
+}
+
+int xnd_ckptfile_unlink(char *dir, u32 xnd_pid)
+{
+        int     dirfd, ret = 0;
+        char    buf[XND_CKPTFILE_MAXLEN];
+
+        dirfd = open(dir, O_DIRECTORY | O_RDONLY);
+        if (dirfd < 0) {
+                xnd_error("open(%s): %s\n", dir, strerror(errno));
+                return -1;
+        }
+        
+        snprintf(buf, sizeof(buf), XND_CKPTFILE_FMT, xnd_pid);
+        if (unlinkat(dirfd, buf, 0) != 0) {
+                xnd_warn("unlinkat: %s\n", strerror(errno));
+                ret = -1;
+        }
+        
+        close(dirfd);
+        return ret;
+}
+
+int xnd_ckptfile_unlinkat(int dirfd, u32 xnd_pid)
+{
+        char buf[XND_CKPTFILE_MAXLEN];
+
+        snprintf(buf, sizeof(buf), XND_CKPTFILE_FMT, xnd_pid);
+        if (unlinkat(dirfd, buf, 0) != 0) {
+                xnd_warn("unlinkat: %s\n", strerror(errno));
+                return -1;
+        }
+
+        return 0;
 }
 
 int xnd_ckptfile_create_manifest(int dirfd)
@@ -161,6 +221,8 @@ int xnd_ckptfile_write_manifest(u32 total, u32 min_xnd_pid, u32 max_xnd_pid,
         count = 0;
         for (id = min_xnd_pid; id <= max_xnd_pid; id++) {
                 if (xnd_ckptfile_exists(dirfd, id)) {
+                        manifest.xnd_pids[count++] = id;
+                } else if (xnd_compressed_ckpt_exists(dirfd, id)) {
                         manifest.xnd_pids[count++] = id;
                 }
         }

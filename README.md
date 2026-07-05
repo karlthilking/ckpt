@@ -3,8 +3,7 @@ XND: Transparent Checkpoint-Restart for macOS on Apple Silicon
 
 XND provides user-level and transparent checkpoint-restart capabilities for arm64 macOS. By executing a program with XND, the state of 
 all processes under XND's control can be checkpointed. A checkpoint serializes the live state of one or more processes to 'checkpoint 
-images' on-disk, allowing for each process to be restarted. For more details on using XND, see `XND Usage` below. For a high-level 
-description of how XND works, see `Architecture/Internals of XND`.
+images' on-disk, allowing for each process to be restarted. For more details on using XND, see `XND Usage` below.
 
 XND Source Tree
 ================
@@ -72,21 +71,6 @@ By default, XND will use a directory hierarchy to organize checkpoints. The top-
 for each time this computation has been checkpointed. For example, the first time of computation is checkpointed, a collection of 
 checkpoint files will be created in `epoch-0`, then `epoch-1`, then `epoch-2` and so on. This is an important detail because a path of 
 the form `<uuid>-checkpoints/epoch-<epoch>` is a required argument to `xnd_restart`. 
-
-Note that one is free to change the names of checkpoint directories for their own purposes. `xnd_restart` will function as expected given any directory which contains valid, untampered checkpoint files. 
-
-For example, the following usage does not create any issues:
-
-```sh
-./xnd_command --checkpoint
-[xnd]: Checkpoint complete: 25EA37D1-C418-44CA-91C3-1DAB4541218F-checkpoints/epoch-5/ckpt-1001.xnd
-[xnd]: Checkpoint complete: 25EA37D1-C418-44CA-91C3-1DAB4541218F-checkpoints/epoch-5/ckpt-1002.xnd
-...
-[xnd]: Checkpoint complete: 25EA37D1-C418-44CA-91C3-1DAB4541218F-checkpoints/epoch-5/ckpt-1008.xnd
-
-mv 25EA37D1-C418-44CA-91C3-1DAB4541218F-checkpoints/epoch-5/ these-are-my-checkpoints
-./xnd_restart these-are-my-checkpoints
-```
 
 XND General Information and Feature Support
 ===========================================

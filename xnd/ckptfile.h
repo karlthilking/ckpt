@@ -14,8 +14,13 @@
 #define XND_CKPTPATH_MAXLEN     (XND_CKPTDIR_MAXLEN + XND_CKPTFILE_MAXLEN)
 
 #define XND_CKPTFILE_FMT        "ckpt-%u.xnd"
-#define XND_CKPTFILE_MAXLEN     (sizeof("ckpt-") + 10 + sizeof(".xnd") + 1)
-#define XND_CKPTFILE_SUFFIX     "xnd"
+#define XND_COMPRESSED_CKPT_FMT "ckpt-%u.xnd.gz"
+
+#define XND_CKPTFILE_MAXLEN     (sizeof("ckpt-") + 10 + \
+                                 sizeof(XND_CKPTFILE_SUFFIX) + \
+                                 sizeof(XND_COMPRESSED_SUFFIX) + 1)
+#define XND_CKPTFILE_SUFFIX     ".xnd"
+#define XND_COMPRESSED_SUFFIX   ".gz"
 
 #define XND_CKPTDIR_MAXLEN      (XND_CKPTDIR_BASELEN + XND_CKPTDIR_SUBLEN)
 #define XND_CKPTDIR_BASELEN     (36 + sizeof("-checkpoints") + 1)
@@ -69,6 +74,7 @@ struct xnd_manifest {
 extern "C" {
 #endif /* __cplusplus */
 
+void xnd_ckptpath_name(char *, uuid_t, u64, u32, bool);
 void xnd_ckptdir_name(char *, char *, const uuid_t, u64);
 int xnd_ckptdir_create(uuid_t, u64);
 int xnd_ckptdir_open(const uuid_t, u64);
@@ -76,6 +82,9 @@ int xnd_ckptdir_open(const uuid_t, u64);
 int xnd_ckptfile_create(int, char *);
 int xnd_ckptfile_openat(int, u32);
 bool xnd_ckptfile_exists(int, u32);
+bool xnd_compressed_ckpt_exists(int, u32);
+int xnd_ckptfile_unlink(char *, u32);
+int xnd_ckptfile_unlinkat(int, u32);
 
 int xnd_ckptfile_create_manifest(int);
 int xnd_ckptfile_write_manifest(u32, u32, u32, const uuid_t, u64);

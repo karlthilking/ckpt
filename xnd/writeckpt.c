@@ -1,10 +1,12 @@
 /* writeckpt.c */
 #define _XOPEN_SOURCE
 #include "xnd/xnd.h"
-#include "xnd/writeckpt.h"
-#include "xnd/ckptfile.h"
-#include "xnd/vm_region.h"
-#include "xnd/util/io.h"
+#include "writeckpt.h"
+#include "ckptfile.h"
+#include "vm_region.h"
+#include "util/io.h"
+#include "util/env.h"
+#include "util/compress.h"
 
 #include <ucontext.h>
 #include <stdlib.h>
@@ -16,6 +18,22 @@
 
 extern u64 epoch;
 extern u32 xnd_pid;
+
+static __always_inline void report_ckpt_success(uuid_t uuid, bool use_zlib)
+{
+        char path[XND_CKPTPATH_MAXLEN];
+
+        xnd_ckptpath_name(path, uuid, epoch, xnd_pid, use_zlib);
+        xnd_printf("Checkpoint complete: %s\n", path);
+}
+
+static __always_inline void report_ckpt_failure(uuid_t uuid, bool use_zlib)
+{
+        char path[XND_CKPTPATH_MAXLEN];
+
+        xnd_ckptpath_name(path, uuid, epoch, xnd_pid, use_zlib);
+        xnd_error("Checkpoint failed: %s\n", path);
+}
 
 int write_vm_page(int fd, struct xnd_vm_region *region,
                   struct xnd_vm_page *page)
@@ -156,11 +174,11 @@ int write_ckpt(struct xnd_ckpt_header *header,
 {
         int                     err, fd = -1, dirfd = -1;
         char                    ckptfile[XND_CKPTFILE_MAXLEN];
-        char                    path[XND_CKPTPATH_MAXLEN];
-        char                    uuid_str[37];
         struct xnd_vm_region    *rgn = regions;
         ssize_t                 bytes;
+        bool                    use_zlib;
         
+        use_zlib = env_use_zlib_compression();
         xnd_ckptfile_name(ckptfile, sizeof(ckptfile), xnd_pid);
         dirfd = xnd_ckptdir_open(header->xnd_uuid, epoch);
         if (dirfd < 0) {
@@ -205,20 +223,18 @@ int write_ckpt(struct xnd_ckpt_header *header,
                 }
         }
         
-        uuid_unparse(header->xnd_uuid, uuid_str);
-        snprintf(path, sizeof(path), XND_CKPTPATH_FMT, 
-                 uuid_str, epoch, xnd_pid);
-
-        xnd_printf("Checkpoint complete: %s\n", path);
+        if (use_zlib) {
+                if (xnd_compress_ckpt(dirfd, ckptfile) != 0) {
+                        goto bad;
+                }
+        }
+        
+        report_ckpt_success(header->xnd_uuid, use_zlib);
         close(dirfd);
         close(fd);
         return 0;
 bad:
-        uuid_unparse(header->xnd_uuid, uuid_str);
-        snprintf(path, sizeof(path), XND_CKPTPATH_FMT,
-                 uuid_str, epoch, xnd_pid);
-        
-        xnd_error("Checkpoint failed: %s\n", path);
+        report_ckpt_failure(header->xnd_uuid, use_zlib);
         if (dirfd != -1) {
                 close(dirfd);
         }

@@ -43,7 +43,8 @@ LIBXND_OBJECTS := \
         $(BUILD)/file_wrappers.o \
         $(BUILD)/pid_wrappers.o \
         $(BUILD)/fd.o \
-        $(BUILD)/env.o
+        $(BUILD)/env.o \
+        $(BUILD)/compress.o
 
 XND_RESTART_INTERNAL_SOURCES := \
         xnd/xnd_restart_internal.c \
@@ -96,7 +97,8 @@ XND_RESTART_OBJECTS := \
         $(BUILD)/xnd_coord_api.o \
         $(BUILD)/shared_cache.o \
         $(BUILD)/log.o \
-        $(BUILD)/ckptfile.o
+        $(BUILD)/ckptfile.o \
+        $(BUILD)/compress.o
 
 ALL := \
         $(BUILD)/xnd_launch \
@@ -143,7 +145,7 @@ $(BUILD)/%.o: xnd/wrappers/%.c | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/libxnd.dylib: $(LIBXND_OBJECTS) | $(BUILD)
-	$(CXX) $(CXXFLAGS) -dynamiclib -fPIC -o $@ $^
+	$(CXX) $(CXXFLAGS) -dynamiclib -fPIC -lz -o $@ $^
 	dsymutil $@
 
 __TEXT          := 0x500000000000
@@ -162,7 +164,7 @@ $(BUILD)/xnd_restart_internal: $(XND_RESTART_INTERNAL_SOURCES) | $(BUILD)
         -o $@ $^
 
 $(BUILD)/xnd_restart: $(XND_RESTART_OBJECTS) | $(BUILD)
-	$(CXX) $(CXXFLAGS) -o $@ $^
+	$(CXX) $(CXXFLAGS) -lz -o $@ $^
 	dsymutil $@
 
 $(BUILD)/xnd_launch: $(XND_LAUNCH_SOURCES) | $(BUILD)

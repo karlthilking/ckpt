@@ -81,13 +81,10 @@ char *env_get_program_name(void)
         return value;
 }
 
-void env_set_ckpt_signal(int sig)
+void env_set_ckpt_signal(char *sig)
 {
-        char buf[11];
-
-        snprintf(buf, sizeof(buf), "%d", sig);
-        xnd_assert(setenv(XND_CKPT_SIGNAL_ENV, buf, 1) == 0);
-        xnd_trace("%s=%d\n", XND_CKPT_SIGNAL_ENV, sig);
+        xnd_assert(setenv(XND_CKPT_SIGNAL_ENV, sig, 1) == 0);
+        xnd_trace("%s=%s\n", XND_CKPT_SIGNAL_ENV, sig);
 }
 
 int env_get_ckpt_signal(void)
@@ -131,4 +128,37 @@ bool env_dyld_shared_region_is_private(void)
         }
 
         return true;
+}
+
+void env_set_zlib_compression(char *value)
+{
+        xnd_assert(setenv(XND_USE_ZLIB_ENV, value, 1) == 0);
+}
+
+bool env_use_zlib_compression(void)
+{
+        char *value;
+
+        value = getenv(XND_USE_ZLIB_ENV);
+        if (value && atoi(value) != 0) {
+                return true;
+        }
+
+        return false;
+}
+
+void env_set_ckpt_interval(char *interval)
+{
+        xnd_assert(setenv(XND_CKPT_INTERVAL_ENV, interval, 1) == 0);
+}
+
+int env_get_ckpt_interval(void)
+{
+        char *value;
+
+        if ((value = getenv(XND_CKPT_INTERVAL_ENV))) {
+                return atoi(value);
+        }
+
+        return 0;
 }

@@ -581,12 +581,8 @@ void coord_write_ckpt_manifest(void)
         int             err;
         
         proc_foreach(p, proc_list) {
-                if (p->xnd_pid > max_xnd_pid) {
-                        max_xnd_pid = p->xnd_pid;
-                }
-                if (p->xnd_pid < min_xnd_pid) {
-                        min_xnd_pid = p->xnd_pid;
-                }
+                max_xnd_pid = max(p->xnd_pid, max_xnd_pid);
+                min_xnd_pid = min(p->xnd_pid, min_xnd_pid);
         }
 
         err = xnd_ckptfile_write_manifest(coord_info.num_peers, 

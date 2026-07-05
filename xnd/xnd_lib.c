@@ -3,6 +3,7 @@
 #include "xnd.h"
 #include "xnd_lib.h"
 #include "writeckpt.h"
+#include "ckptfile.h"
 #include "vm_region.h"
 #include "pac.h"
 #include "tls.h"
@@ -73,6 +74,8 @@ void xnd_postcheckpoint(void)
  */
 void xnd_postrestart(void)
 {
+        int dirfd;
+
         epoch++;
         connect_to_coord_on_restart();
         enter_coord_barrier(COORD_BARRIER_POSTRESTART);
@@ -81,6 +84,13 @@ void xnd_postrestart(void)
         ckpt_vm_deallocate_regions();
         pid_table_postrestart();
         fd_table_restore_state();
+
+        if (env_use_zlib_compression()) {
+                dirfd = xnd_ckptdir_open(xnd_uuid, epoch - 1);
+                if (dirfd != -1) {
+                        xnd_ckptfile_unlinkat(dirfd, xnd_pid);
+                }
+        }
 
 #if DEBUG || DEVELOPMENT
         xnd_log_shared_cache_info();
