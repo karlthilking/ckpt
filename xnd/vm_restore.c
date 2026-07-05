@@ -6,6 +6,11 @@
 #include <dlfcn.h>
 #include <errno.h>
 
+static inline int ckpt_vm_map_region(struct xnd_vm_region *);
+static inline int ckpt_vm_refresh_protections(struct xnd_vm_region *);
+static inline int ckpt_vm_restore_pages(int, struct xnd_vm_region *);
+static int ckpt_vm_restore_region_pages(int, struct xnd_vm_region *);
+
 extern mach_port_t      mach_task_self_;
 extern mach_port_t      task_self_trap(void);
 extern uintptr_t        __stack_chk_guard;
@@ -93,13 +98,16 @@ static int ckpt_vm_restore_region_pages(int fd, struct xnd_vm_region *region)
         vm_prot_t       prot;
         bool            writable;
 
-        /**
-         * If this region is not current writable, get a private, writable
-         * copy via mach_vm_protect with VM_PROT_READ | VM_PROT_WRITE |
-         * VM_PROT_COPY.
-         */
-        writable = (region->prot & VM_PROT_WRITE);
-        if (!writable) {
+        if (NEEDS_REMAP_BEFORE_RESTORE(region)) {
+                if (ckpt_vm_map_region(region) != 0) {
+                        return -1;
+                }
+        } else if ((writable = (region->prot & VM_PROT_WRITE)) == false) {
+                /**
+                 * If this region is not current writable, get a private, 
+                 * writable copy via mach_vm_protect with 
+                 * VM_PROT_READ | VM_PROT_WRITE | VM_PROT_COPY.
+                 */
                 prot = VM_PROT_DEFAULT | VM_PROT_COPY;
                 if (ckpt_vm_protect(region, false, prot) != 0) {
                         return -1;
@@ -120,8 +128,24 @@ static int ckpt_vm_restore_region_pages(int fd, struct xnd_vm_region *region)
                 mach_task_self_ = task_self_trap();
                 xnd_assert(mach_task_self() == task_self_trap());
         }
-
-        if (!writable) {
+        
+        if (NEEDS_REMAP_BEFORE_RESTORE(region)) {
+                /**
+                 * If region had to be mapped in (not already in address space
+                 * by default), reset the region's protections to reflect
+                 * its original protections before checkpoint.
+                 * (by default, it would have been mapped in with rw-/rwx)
+                 */
+                if (ckpt_vm_refresh_protections(region) != 0) {
+                        return -1;
+                }
+        } else if (writable == false) {
+                /**
+                 * Otherwise, if the region was freshly mapped in, but
+                 * had to be made writable (to restore checkpoint data), 
+                 * reset its protections so that the region will no longer
+                 * be writable.
+                 */
                 if (ckpt_vm_protect(region, false, region->prot) != 0) {
                         return -1;
                 }
@@ -130,23 +154,14 @@ static int ckpt_vm_restore_region_pages(int fd, struct xnd_vm_region *region)
         return 0;
 }
 
-int ckpt_vm_restore_region(int fd, struct xnd_vm_region *region)
+static inline int ckpt_vm_map_region(struct xnd_vm_region *region)
 {
         kern_return_t           kr;
         mach_vm_address_t       addr;
         mach_vm_size_t          size;
-        ssize_t                 bytes;
-        void                    *end;
-
-        if (ONLY_RESTORE_DIRTY_PAGES(region)) {
-                return ckpt_vm_restore_region_pages(fd, region);
-        }
-
-        xnd_assert(region->start != NULL);
+        
         addr = (mach_vm_address_t)region->start;
         size = (mach_vm_size_t)region->size;
-        
-        /* Allocate checkpointed memory region */
         kr = mach_vm_map(mach_task_self(), &addr, size, 0,
                          VM_FLAGS_FIXED | VM_FLAGS_OVERWRITE |
                          VM_MAKE_TAG(region->tag),
@@ -164,8 +179,40 @@ int ckpt_vm_restore_region(int fd, struct xnd_vm_region *region)
                 return -1;
         }
         
-        xnd_assert((void *)addr == region->start);
-        bytes = readall(fd, (void *)addr, region->size);
+        return ((uintptr_t)addr == (uintptr_t)region->start ? 0 : -1);
+}
+
+static inline int ckpt_vm_refresh_protections(struct xnd_vm_region *region)
+{
+        if (region->prot != VM_PROT_DEFAULT) {
+                if (ckpt_vm_protect(region, false, region->prot) != 0) {
+                        return -1;
+                }
+        }
+
+        if (region->max_prot != VM_PROT_ALL) {
+                if (ckpt_vm_protect(region, true, region->max_prot) != 0) {
+                        return -1;
+                }
+        }
+
+        return 0;
+}
+
+int ckpt_vm_restore_region(int fd, struct xnd_vm_region *region)
+{
+        ssize_t bytes;
+        void    *end;
+
+        if (ONLY_RESTORE_DIRTY_PAGES(region)) {
+                return ckpt_vm_restore_region_pages(fd, region);
+        }
+
+        if (ckpt_vm_map_region(region) != 0) {
+                return -1;
+        }
+        
+        bytes = readall(fd, region->start, region->size);
         if (bytes != region->size) {
                 return -1;
         }
@@ -180,16 +227,8 @@ int ckpt_vm_restore_region(int fd, struct xnd_vm_region *region)
                 xnd_assert(mach_task_self() == task_self_trap());
         }
 
-        if (region->prot != VM_PROT_DEFAULT) {
-                if (ckpt_vm_protect(region, false, region->prot) != 0) {
-                        return -1;
-                }
-        }
-        
-        if (region->max_prot != VM_PROT_ALL) {
-                if (ckpt_vm_protect(region, true, region->max_prot) != 0) {
-                        return -1;
-                }
+        if (ckpt_vm_refresh_protections(region) != 0) {
+                return -1;
         }
         
         return 0;

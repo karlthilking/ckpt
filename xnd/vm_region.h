@@ -105,9 +105,16 @@ struct xnd_vm_page {
 
 extern vm_size_t vm_page_size;
 
+#define NEEDS_REMAP_BEFORE_RESTORE(region) \
+        (!(DYLD_SHARED_CACHE_REGION((region)->start, (region)->size) || \
+          ((region)->tag == VM_MEMORY_MALLOC_NANO)))
+
 #define ONLY_RESTORE_DIRTY_PAGES(region) \
         (DYLD_SHARED_CACHE_REGION((region)->start, (region)->size) || \
-         ((region)->tag == VM_MEMORY_MALLOC_NANO))
+         ((region)->tag == VM_MEMORY_MALLOC_NANO) || \
+         ((region)->tag == VM_MEMORY_MALLOC_TINY) || \
+         ((region)->tag == VM_MEMORY_MALLOC_SMALL) || \
+         ((region)->tag == VM_MEMORY_MALLOC_MEDIUM))
 
 #define ONLY_SAVE_DIRTY_PAGES(region) ONLY_RESTORE_DIRTY_PAGES(region)
 
