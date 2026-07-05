@@ -154,7 +154,7 @@ __DATA_CONST    := 0x500000020000
 __LINKEDIT      := 0x500000028000
 STACKADDR       := 0x500000128000
 $(BUILD)/xnd_restart_internal: $(XND_RESTART_INTERNAL_SOURCES) | $(BUILD)
-	$(CC) $(CFLAGS) \
+	$(CC) $(CFLAGS) -fno-stack-protector \
         -DXND_RESTART_STACKADDR=$(STACKADDR) \
         -Wl,-segaddr,__TEXT,$(__TEXT) \
         -Wl,-segaddr,__DATA,$(__DATA) \

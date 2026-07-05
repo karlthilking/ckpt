@@ -66,8 +66,7 @@ int ckpt_vm_mark_regions(void)
         return 0;
 }
 
-static __no_stack_protector __always_inline
-int ckpt_vm_restore_pages(int fd, struct xnd_vm_region *region)
+static inline int ckpt_vm_restore_pages(int fd, struct xnd_vm_region *region)
 {
         void                    *addr;
         ssize_t                 bytes;
@@ -93,9 +92,6 @@ static int ckpt_vm_restore_region_pages(int fd, struct xnd_vm_region *region)
         void            *end;
         vm_prot_t       prot;
         bool            writable;
-        uintptr_t       saved_stack_chk_guard;
-
-        saved_stack_chk_guard = __stack_chk_guard;
 
         /**
          * If this region is not current writable, get a private, writable
@@ -123,14 +119,6 @@ static int ckpt_vm_restore_region_pages(int fd, struct xnd_vm_region *region)
         if (IN_VM_RANGE(&mach_task_self_, region->start, end)) {
                 mach_task_self_ = task_self_trap();
                 xnd_assert(mach_task_self() == task_self_trap());
-        }
-        
-        /**
-         * If __stack_chk_guard was overwritten by a restored page,
-         * refresh its value to prevent __stack_chk_fail.
-         */
-        if (IN_VM_RANGE(&__stack_chk_guard, region->start, end)) {
-                __stack_chk_guard = saved_stack_chk_guard;
         }
 
         if (!writable) {
