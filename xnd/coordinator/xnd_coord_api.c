@@ -117,13 +117,21 @@ int send_command_to_coord(enum xnd_cmd cmd)
         msg.hdr = XND_COMMAND;
         msg.cmd = cmd;
         fd = connect_to_coord();
-
+        
         err = send_msg_to_coord(fd, &msg);
         if (err != 0) {
-                xnd_error("Failed to send command to coordinator: %s\n",
-                          xnd_cmd_string(cmd));
+                xnd_error("Failed to send command to coordinator\n");
+                goto out;
         }
 
+        err = recv_msg_from_coord(fd, &msg);
+        if (err != 0) {
+                xnd_error("Failed to receive ack from coordinator\n");
+                goto out;
+        }
+        
+        xnd_assert(msg.hdr == XND_COORD_ACK && msg.ret == XND_SUCCESS);
+out:
         close(fd);
         return err;
 }

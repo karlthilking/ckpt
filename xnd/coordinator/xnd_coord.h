@@ -49,7 +49,7 @@ void coord_exit(int);
 void coord_setup_handler(int);
 void coord_handler(int);
 void coord_broadcast_kill(void);
-void coord_handle_command(struct xnd_msg *);
+void coord_handle_command(int, struct xnd_msg *);
 void coord_handle_msg(int, struct xnd_msg *);
 
 int coord_send_msg(int, struct xnd_msg *);

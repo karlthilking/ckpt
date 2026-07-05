@@ -195,8 +195,10 @@ void coord_broadcast_kill(void)
         coord_exit(COORD_EXIT_SUCCESS);
 }
 
-void coord_handle_command(struct xnd_msg *msg)
+void coord_handle_command(int fd, struct xnd_msg *msg)
 {
+        struct xnd_msg resp;
+
         xnd_assert(msg->hdr == XND_COMMAND);
         xnd_trace("Received command: %s\n", xnd_cmd_string(msg->cmd));
 
@@ -211,6 +213,10 @@ void coord_handle_command(struct xnd_msg *msg)
                 xnd_error("Invalid command: %s\n", xnd_cmd_string(msg->cmd));
                 coord_exit(COORD_EXIT_FAILURE);
         }
+        
+        resp.hdr = XND_COORD_ACK;
+        resp.ret = XND_SUCCESS;
+        xnd_assert(coord_send_msg(fd, &resp) == 0);
 }
 
 void coord_handle_msg(int fd, struct xnd_msg *msg)
@@ -435,7 +441,7 @@ void coord_wait_for_connection(void)
                 break;
         }
         case XND_COMMAND: {
-                coord_handle_command(&msg);
+                coord_handle_command(fd, &msg);
                 close(fd);
                 break;
         }

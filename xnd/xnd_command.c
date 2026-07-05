@@ -3,15 +3,15 @@
 #include "xnd/util/io.h"
 #include "xnd/util/log.h"
 #include "xnd/coordinator/xnd_coord_api.h"
+#include "common/time_common.h"
 #include <stdlib.h>
 #include <stdio.h>
 #include <unistd.h>
 #include <string.h>
 #include <errno.h>
 #include <time.h>
-#include <sys/socket.h>
 #include <sys/types.h>
-#include <sys/un.h>
+#include <sys/time.h>
 
 static const char *help =
 "OVERVIEW: xnd_command\n\n"
@@ -44,11 +44,20 @@ int main(int argc, char *argv[])
                 usage();
                 goto out;
         }
-        
+
+#if TIMING
+        struct timeval start, end;
+        gettimeofday(&start, NULL);
+#endif
         if ((err = send_command_to_coord(cmd)) != 0) {
                 xnd_error("Command failed: %s\n", xnd_cmd_string(cmd));
                 goto out;
         }
+#if TIMING
+        gettimeofday(&end, NULL);
+        long elapsed = TIMEVAL_MSEC_DIFF(&end, &start);
+        xnd_printf("%s took %ldms\n", xnd_cmd_string(cmd), elapsed);
+#endif
 
 out:
         xnd_log_cleanup();

@@ -1,6 +1,7 @@
 ARCH            ?= arm64
 BUILD           ?= .
 DEVELOPMENT     ?= 1
+TIMING          ?= 0
 
 CC      := clang
 CXX     := clang++
@@ -174,7 +175,7 @@ $(BUILD)/xnd_print: xnd/xnd_print.c | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ $^
 
 $(BUILD)/xnd_command: $(XND_COMMAND_SOURCES) | $(BUILD)
-	$(CC) $(CFLAGS) -o $@ $^
+	$(CC) $(CFLAGS) -DTIMING=$(TIMING) -o $@ $^
 
 $(BUILD)/xnd_coordinator: $(XND_COORD_OBJECTS) | $(BUILD)
 	$(CXX) $(CXXFLAGS) -o $@ $^
