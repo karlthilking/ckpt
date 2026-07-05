@@ -141,13 +141,6 @@ void xnd_atfork_child(void)
         pid_table_atfork_child();
         thread_list_atfork_child();
 
-        if (mach_task_self_ != task_self_trap()) {
-                xnd_trace("task_self_trap(): %u\n"
-                          "mach_task_self_: %u\n",
-                          task_self_trap(), mach_task_self_);
-                mach_task_self_ = task_self_trap();
-        }
-
 #if DEVELOPMENT || DEBUG
         xnd_log_mach_port_info();
         xnd_log_shared_cache_info();

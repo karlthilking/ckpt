@@ -11,6 +11,7 @@ enum xnd_state {
         XND_CKPT_PENDING,
         XND_SUSPINPROG,
         XND_CKPTINPROG,
+        XND_ATFORK,
         XND_EXITING
 };
 

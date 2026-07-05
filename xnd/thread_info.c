@@ -50,10 +50,25 @@ void thread_list_init(void)
         thread_list.head = calloc(1, sizeof(struct thread_info));
         xnd_assert(thread_list.head != NULL);
 
-        myself = thread_list.head;
+        myself = _main_thread = thread_list.head;
         myself->self = pthread_self();
-        myself->state = ST_RUNNING;
-        _main_thread = myself;
+        
+        /**
+         * If thread_list_init() was called form thread_list_atfork_child,
+         * set the main thread's state to ST_UNSAFE and wrapper_depth to 1.
+         * __fork_hook will call unsafe_exit() before returning, as both
+         * the thread in the parent that calls fork() and the main thread
+         * in the child are in an "unsafe" state until __fork_hook returns.
+         * Thus, the main the in the child should have state=ST_UNSAFE and
+         * wrapper_depth=1, otherwise, unsafe_exit() would produce 
+         * unexpected results.
+         */
+        if (get_xnd_state() == XND_ATFORK) {
+                myself->state = ST_UNSAFE;
+                myself->wrapper_depth = 1;
+        } else {
+                myself->state = ST_RUNNING;
+        }
 
         if ((err = pthread_mutex_init(&myself->lock, NULL)) != 0) {
                 xnd_error("pthread_mutex_init: %s\n", strerror(err));
@@ -192,6 +207,7 @@ void thread_list_atfork_child(void)
         int                     err;
         struct thread_info      *th, *next;
         
+        set_xnd_state(XND_ATFORK);
         for (th = thread_list.head; th; th = next) {
                 next = th->next;
                 free(th);
@@ -227,6 +243,12 @@ void thread_list_atfork_child(void)
         
         xnd_assert(pthread_cond_init(&cond_arrived, NULL) == 0);
         xnd_assert(pthread_cond_init(&cond_released, NULL) == 0);
+        
+        /* Allow checkpoint thread to resume */
+        pthread_mutex_lock(&ckpt_thread.lock);
+        set_xnd_state(XND_RUNNING);
+        pthread_cond_signal(&ckpt_thread.cond);
+        pthread_mutex_unlock(&ckpt_thread.lock);
 }
 
 /**
@@ -483,6 +505,14 @@ void *ckpt_thread_work(void *wait)
         pthread_mutex_lock(&myself->lock);
         *(bool *)wait = false;
         pthread_cond_signal(&myself->cond);
+        
+        /**
+         * If the main thread is still handling atfork routines, wait until
+         * the main thread is ready to resume (get_xnd_state() == XND_RUNNING)
+         */
+        while (get_xnd_state() == XND_ATFORK) {
+                pthread_cond_wait(&myself->cond, &myself->lock);
+        }
         pthread_mutex_unlock(&myself->lock);
 
         restart = false;
