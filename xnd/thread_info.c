@@ -468,6 +468,7 @@ __noreturn void ckpt_thread_exit(void)
          * destroy all resources associated with the checkpoint thread
          * regardless, so just exit and do nothing else here.
          */
+        tlv_exit();
         pthread_exit(NULL);
         unreachable();
 }
