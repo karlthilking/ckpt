@@ -459,19 +459,15 @@ void ckpt_thread_init(void)
         pthread_mutex_unlock(&th->lock);
 }
 
-
 __noreturn void ckpt_thread_exit(void)
 {
-        xnd_assert(myself == &ckpt_thread);
-        xnd_assert(pthread_mutex_lock(&myself->lock) == 0);
-        
-        tlv_exit();
-        myself->exiting = 1;
-        myself->exit_value = NULL;
-        
-        pthread_cond_signal(&myself->cond);
-        xnd_assert(pthread_mutex_unlock(&myself->lock) == 0);
-        
+        /**
+         * If thread_terminate() in ckpt_thread_reap fails, the checkpoint
+         * thread will still be alive and will call ckpt_thread_exit instead
+         * of being forcefully terminated. However, ckpt_thread_reap() will
+         * destroy all resources associated with the checkpoint thread
+         * regardless, so just exit and do nothing else here.
+         */
         pthread_exit(NULL);
         unreachable();
 }
