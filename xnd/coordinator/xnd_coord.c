@@ -1,5 +1,6 @@
 /* xnd_coord.c */
 #include "xnd/xnd.h"
+#include "common/time_common.h"
 #include "xnd/ckptfile.h"
 #include "xnd/util/io.h"
 #include "xnd/pid/pid_table_common.h"
@@ -14,6 +15,7 @@
 #include <errno.h>
 #include <uuid/uuid.h>
 #include <signal.h>
+#include <sys/time.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <sys/un.h>
@@ -689,7 +691,8 @@ void coord_do_checkpoint(void)
 {
         int             err, total;
         sigset_t        set;
-
+        
+        TIMER_PUSH(Checkpoint);
         sigemptyset(&set);
         sigaddset(&set, SIGINT);
         sigaddset(&set, SIGQUIT);
@@ -746,6 +749,7 @@ void coord_do_checkpoint(void)
          * to continue.
          */
         xnd_assert(coord_release_barrier(COORD_BARRIER_POSTCKPT) == 0);
+        TIMER_POP();
 out:
         sigprocmask(SIG_UNBLOCK, &set, NULL);
 }
@@ -800,7 +804,8 @@ void coord_do_restart(void)
 {
         struct xnd_msg  msg;
         int             fd, ready;
-
+        
+        TIMER_PUSH(Restart);
         for (;;) {
                 fd = accept(coord_info.listen_fd, NULL, NULL);
                 if (fd < 0) {
@@ -827,6 +832,7 @@ void coord_do_restart(void)
         ready = coord_collective_prepare(COMM_BROADCAST);
         xnd_assert(ready == coord_info.num_peers);
         xnd_assert(coord_release_barrier(COORD_BARRIER_POSTRESTART) == 0);
+        TIMER_POP();
 }
 
 bool coord_is_restart(int argc, char **argv)

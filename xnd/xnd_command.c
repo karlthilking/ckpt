@@ -45,19 +45,10 @@ int main(int argc, char *argv[])
                 goto out;
         }
 
-#if TIMING
-        struct timeval start, end;
-        gettimeofday(&start, NULL);
-#endif
         if ((err = send_command_to_coord(cmd)) != 0) {
                 xnd_error("Command failed: %s\n", xnd_cmd_string(cmd));
                 goto out;
         }
-#if TIMING
-        gettimeofday(&end, NULL);
-        long elapsed = TIMEVAL_MSEC_DIFF(&end, &start);
-        xnd_printf("%s took %ldms\n", xnd_cmd_string(cmd), elapsed);
-#endif
 
 out:
         xnd_log_cleanup();

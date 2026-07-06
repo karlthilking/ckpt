@@ -1,20 +1,20 @@
 ARCH            ?= arm64
 BUILD           ?= .
-DEVELOPMENT     ?= 1
 TIMING          ?= 0
+DEVELOPMENT     ?= 1
 
 CC      := clang
 CXX     := clang++
 
 CFLAGS := \
-        -std=c17 -Wall -Wno-deprecated-declarations \
-	-DDEVELOPMENT=$(DEVELOPMENT) -g3 -O0 -arch $(ARCH) \
-	-iquote . -iquote ./include
+	-std=c17 -Wall -Wno-deprecated-declarations \
+	-DDEVELOPMENT=$(DEVELOPMENT) -DTIMING=$(TIMING) \
+	-g3 -O0 -arch $(ARCH) -iquote . -iquote ./include
 
 CXXFLAGS := \
-        -std=c++20 -Wall -Wno-deprecated-declarations \
-	-DDEVELOPMENT=$(DEVELOPMENT) -g3 -O0 -arch $(ARCH) \
-	-iquote . -iquote ./include
+	-std=c++20 -Wall -Wno-deprecated-declarations \
+	-DDEVELOPMENT=$(DEVELOPMENT) -DTIMING=$(TIMING) \
+        -g3 -O0 -arch $(ARCH) -iquote . -iquote ./include
 
 LIBXND_OBJECTS := \
         $(BUILD)/xnd_lib.o \
@@ -175,7 +175,7 @@ $(BUILD)/xnd_print: xnd/xnd_print.c | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ $^
 
 $(BUILD)/xnd_command: $(XND_COMMAND_SOURCES) | $(BUILD)
-	$(CC) $(CFLAGS) -DTIMING=$(TIMING) -o $@ $^
+	$(CC) $(CFLAGS) -o $@ $^
 
 $(BUILD)/xnd_coordinator: $(XND_COORD_OBJECTS) | $(BUILD)
 	$(CXX) $(CXXFLAGS) -o $@ $^
