@@ -83,21 +83,20 @@ void thread_list_init(void)
 void thread_list_destroy(void)
 {
         struct thread_info *th, *next;
-        
+
         xnd_assert(get_xnd_state() == XND_EXITING);
-        xnd_assert(myself != &ckpt_thread);
-        ckpt_thread_reap();
+        if (myself != &ckpt_thread)
+                ckpt_thread_reap();
 
         thread_list_acquire();
-        for (th = thread_list.head; th; th = next) {
-                next = th->next;
+        for_each_thread_safe(th, next, &thread_list) {
                 pthread_mutex_destroy(&th->lock);
                 pthread_cond_destroy(&th->cond);
                 free(th);
         }
         thread_list_release();
         pthread_mutex_destroy(&thread_list.lock);
-
+        
         zombie_list_destroy();
         tlv_exit();
 }
@@ -208,13 +207,11 @@ void thread_list_atfork_child(void)
         struct thread_info      *th, *next;
         
         set_xnd_state(XND_ATFORK);
-        for (th = thread_list.head; th; th = next) {
-                next = th->next;
+        for_each_thread_safe(th, next, &thread_list) {
                 free(th);
         }
 
-        for (th = zombie_list.head; th; th = next) {
-                next = th->next;
+        for_each_thread_safe(th, next, &thread_list) {
                 free(th);
         }
 
@@ -287,11 +284,11 @@ void zombie_list_destroy(void)
         struct thread_info *th, *next;
         
         zombie_list_acquire();
-        for (th = zombie_list.head; th; th = next) {
-                next = th->next;
+        for_each_thread_safe(th, next, &zombie_list) {
                 thread_reap(th);
         }
         zombie_list_release();
+        
         pthread_mutex_destroy(&zombie_list.lock);
 }
 
@@ -320,8 +317,7 @@ void zombie_list_filter(void)
         struct thread_info *th, *next;
         
         zombie_list_acquire();
-        for (th = zombie_list.head; th; th = next) {
-                next = th->next;
+        for_each_thread_safe(th, next, &zombie_list) {
                 if (th->joined)
                         zombie_list_remove(th);
         }
@@ -656,8 +652,7 @@ again:
 
         suspended = 0;
         rescan = false;
-        for (th = thread_list.head; th; th = next) {
-                next = th->next;
+        for_each_thread_safe(th, next, &thread_list) {
                 xnd_assert(th->state != ST_CKPT_THREAD);
                 if (th->exiting) {
                         continue;
@@ -719,7 +714,7 @@ void restore_threads(void)
         threads_arrived = 0;
         threads_expected = 0;
 
-        for (th = thread_list.head; th; th = th->next) {
+        for_each_thread(th, &thread_list) {
                 xnd_assert(!th->exiting);
                 err = pthread_create(&th->self, NULL, thread_restart, th);
                 if (unlikely(err != 0)) {
@@ -742,8 +737,7 @@ again:
         thread_list_acquire();
         killed = 0;
         exiting = 0;
-        for (th = thread_list.head; th; th = next) {
-                next = th->next;
+        for_each_thread_safe(th, next, &thread_list) {
                 if (th->joined) {
                         thread_list_remove(th);
                 } else if (th->exiting) {

@@ -12,8 +12,8 @@
 static inline bool fat_is_arm64e(void *);
 static inline bool macho_is_arm64e(void *);
 static inline bool binary_is_arm64e(void *);
-static inline void fat_arm64e_to_arm64(void *);
-static inline void macho_arm64e_to_arm64(void *);
+static inline void *fat_arm64e_to_arm64(void *);
+static inline void *macho_arm64e_to_arm64(void *);
 
 static inline bool fat_is_arm64e(void *addr)
 {
@@ -83,7 +83,7 @@ static inline bool binary_is_arm64e(void *addr)
         return false;
 }
 
-static void fat_arm64e_to_arm64(void *addr)
+static inline void *fat_arm64e_to_arm64(void *addr)
 {
         struct fat_header       *fh;
         struct fat_arch         *fa;
@@ -95,7 +95,7 @@ static void fat_arm64e_to_arm64(void *addr)
         fh = (struct fat_header *)addr;
         bswap = NEEDS_BSWAP(fh->magic);
         xnd_assert(!HEADER_IS_64BIT(fh->magic));
-
+        
         nfat_arch = fh->nfat_arch;
         subtype = CPU_SUBTYPE_ARM64_ALL;
         if (bswap) {
@@ -108,22 +108,18 @@ static void fat_arm64e_to_arm64(void *addr)
                 cputype = fa->cputype;
                 if (bswap)
                         cputype = __builtin_bswap32(cputype);
-                if (cputype != CPU_TYPE_ARM64) {
-                        continue;
-                } else {
-                        fa->cpusubtype = subtype;
+                if (cputype == CPU_TYPE_ARM64)
                         break;
-                }
         }
         
         offset = (bswap ? __builtin_bswap32(fa->offset) : fa->offset);
         mh = (struct mach_header_64 *)((uchar *)addr + offset);
         
         xnd_assert(HEADER_IS_MACHO(mh->magic));
-        macho_arm64e_to_arm64((void *)mh);
+        return macho_arm64e_to_arm64((void *)mh);
 }
 
-static void macho_arm64e_to_arm64(void *addr)
+static inline void *macho_arm64e_to_arm64(void *addr)
 {
         struct mach_header_64   *mh;
         s32                     cputype, subtype;
@@ -140,13 +136,15 @@ static void macho_arm64e_to_arm64(void *addr)
 
         xnd_assert(cputype == CPU_TYPE_ARM64);
         mh->cpusubtype = subtype;
+
+        return (void *)mh;
 }
 
 bool binary_arm64e_to_arm64(char *path, char *tmp)
 {
         int     srcfd = -1, dstfd = -1;
-        void    *addr = NULL;
-        size_t  size;
+        void    *start, *addr = NULL;
+        size_t  size, nbyte;
         off_t   off;
         u32     magic;
         bool    ret = false;
@@ -180,15 +178,16 @@ bool binary_arm64e_to_arm64(char *path, char *tmp)
         magic = *(u32 *)addr;
         if (HEADER_IS_MACHO(magic)) {
                 ret = true;
-                macho_arm64e_to_arm64(addr);
+                start = macho_arm64e_to_arm64(addr);
         } else if (HEADER_IS_FAT(magic)) {
                 ret = true;
-                fat_arm64e_to_arm64(addr);
+                start = fat_arm64e_to_arm64(addr);
         } else {
                 goto out;
         }
         
-        if (writeall(dstfd, addr, size) != size) {
+        nbyte = size - (start - addr);
+        if (writeall(dstfd, start, nbyte) != nbyte) {
                 xnd_error("Failed to make temporary arm64 binary: %s\n", tmp);
                 xnd_abort();
         }

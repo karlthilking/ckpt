@@ -11,6 +11,16 @@
 #include <pthread.h>
 #include <signal.h>
 
+#define for_each_thread(th, list) \
+        for ((th) = (list)->head; (th) != NULL; (th) = (th)->next)
+
+#define for_each_thread_safe(th, next, list)    \
+        for ((th) = (list)->head,               \
+             (next) = (th) ? (th)->next : NULL; \
+             (th) != NULL;                      \
+             (th) = next,                       \
+             (next) = (th) ? (th)->next : NULL) \
+
 enum thread_state {
         ST_EMBRYO,
         ST_RUNNING,
