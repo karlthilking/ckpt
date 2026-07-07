@@ -192,6 +192,7 @@ static __constructor(101) void xnd_setup(void)
         struct sigaction        sa;
         sigset_t                set;
         int                     err, sig;
+        char                    *tmp;
 
         connect_to_coord_on_launch();
 
@@ -211,6 +212,9 @@ static __constructor(101) void xnd_setup(void)
 
         pid_table_init();
         pid_table_init_pid_info();
+
+        if ((tmp = env_get_tmp_binary()) != NULL)
+                unlink(tmp);
 
         set_xnd_state(XND_RUNNING);
 

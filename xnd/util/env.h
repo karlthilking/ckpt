@@ -11,6 +11,7 @@
 #define XND_REAL_PPID_ENV       "XND_REAL_PPID"
 
 #define XND_PROGRAM_ENV         "XND_PROGRAM"
+#define XND_TMP_BINARY_ENV      "XND_TMP_BINARY"
 #define XND_CKPT_SIGNAL_ENV     "XND_CKPT_SIGNAL"
 #define XND_USE_ZLIB_ENV        "XND_USE_ZLIB"
 #define XND_CKPT_INTERVAL_ENV   "XND_CKPT_INTERVAL"
@@ -24,6 +25,9 @@ void env_get_pid_info(pid_t *, pid_t *, pid_t *, pid_t *);
 
 void env_set_program_name(char *);
 char *env_get_program_name(void);
+
+void env_set_tmp_binary(char *);
+char *env_get_tmp_binary(void);
 
 void env_set_ckpt_signal(char *);
 int env_get_ckpt_signal(void);

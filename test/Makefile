@@ -6,7 +6,8 @@ TESTS := \
         02_heat_diffusion \
         03_nbody \
         04_jacobi \
-        06_tree
+        06_tree \
+        08_pac
 
 all: $(TESTS)
 
@@ -17,6 +18,9 @@ OPENMP_FLAGS	:= -Xpreprocessor -fopenmp -lomp \
 
 02_heat_diffusion: 02_heat_diffusion.c
 	$(CC) -arch arm64 -g -O2 $(OPENMP_FLAGS) -o $@ $<
+
+08_pac: 08_pac.c
+	$(CC) -arch arm64e -g3 -O0 -o $@ $<
 
 %: %.c
 	$(CC) $(CFLAGS) -o $@ $<

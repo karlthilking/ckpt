@@ -63,6 +63,7 @@ XND_LAUNCH_SOURCES := \
         xnd/xnd_launch.c \
         xnd/ckptfile.c \
         xnd/platform/exe.c \
+        xnd/platform/macho.c \
         xnd/util/path.c \
         xnd/shared_cache.c \
         xnd/util/io.c \

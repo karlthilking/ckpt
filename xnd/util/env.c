@@ -81,6 +81,16 @@ char *env_get_program_name(void)
         return value;
 }
 
+void env_set_tmp_binary(char *value)
+{
+        xnd_assert(setenv(XND_TMP_BINARY_ENV, value, 1) == 0);
+}
+
+char *env_get_tmp_binary(void)
+{
+        return getenv(XND_TMP_BINARY_ENV);
+}
+
 void env_set_ckpt_signal(char *sig)
 {
         xnd_assert(setenv(XND_CKPT_SIGNAL_ENV, sig, 1) == 0);

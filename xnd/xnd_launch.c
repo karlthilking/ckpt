@@ -5,6 +5,7 @@
 #include "util/log.h"
 #include "util/env.h"
 #include "platform/exe.h"
+#include "platform/macho.h"
 #include "coordinator/xnd_coord_api.h"
 #include <stdlib.h>
 #include <stdio.h>
@@ -27,7 +28,8 @@
 
 static void usage(void);
 static void xnd_exit(int);
-static void launch(char **);
+static void prepare_args(int, char **, char **);
+static void launch(int, char **);
 
 static const char *help =
 "OVERVIEW: xnd_launch\n\n"
@@ -56,6 +58,7 @@ int main(int argc, char *argv[])
         }
 
         argv++;
+        argc--;
         for (;;) {
                 if (ARG_IS_HELP(argv[0])) {
                         usage();
@@ -63,21 +66,25 @@ int main(int argc, char *argv[])
                 } else if (ARG_IS_CKPT_INTERVAL(argv[0])) {
                         env_set_ckpt_interval(argv[1]);
                         argv++; argv++;
+                        argc--; argc--;
                 } else if (ARG_IS_USE_ZLIB(argv[0])) {
                         env_set_zlib_compression("1");
                         argv++;
+                        argc--;
                 } else if (ARG_IS_NO_ZLIB(argv[0])) {
                         env_set_zlib_compression("0");
                         argv++;
+                        argc--;
                 } else if (ARG_IS_CKPT_SIGNAL(argv[0])) {
                         env_set_ckpt_signal(argv[1]);
                         argv++; argv++;
+                        argc--; argc--;
                 } else {
                         break;
                 }
         }
-        
-        launch(argv);
+
+        launch(argc, argv);
 }
 
 static void usage(void)
@@ -91,7 +98,33 @@ static __noreturn void xnd_exit(int status)
         exit(status);
 }
 
-static __noreturn void launch(char **argv)
+static void prepare_args(int argc, char **argv, char **new_argv)
+{
+        int     err;
+        char    progname[PATH_MAX];
+        
+        bzero(progname, sizeof(progname));
+        for (int i = 1; i < argc; i++) {
+                new_argv[i] = strdup(argv[i]);
+        }
+        new_argv[argc] = NULL;
+
+        err = xnd_path_basename(argv[0], progname, PATH_MAX);
+        if (err < 0) {
+                xnd_error("xnd_path_basename failed: %s\n", argv[0]);
+                xnd_exit(XND_EXIT_FAILURE);
+        }
+
+        strcat(progname, "_tmp");
+        if (binary_arm64e_to_arm64(argv[0], progname)) {
+                new_argv[0] = strdup(progname);
+                env_set_tmp_binary(progname);
+        } else {
+                new_argv[0] = strdup(argv[0]);
+        }
+}
+
+static __noreturn void launch(int argc, char **argv)
 {
         /**
          * DLYD_INSERT_LIBRARIES=libxnd.dylib
@@ -99,9 +132,11 @@ static __noreturn void launch(char **argv)
          * <binary> <args> ...
          */
         char    libxnd_path[PATH_MAX], xnd_program[PATH_MAX];
+        char    *new_argv[argc + 1];
         int     err;
         pid_t   coord_pid;
-
+        
+        prepare_args(argc, argv, new_argv);
         if ((coord_pid = launch_coordinator(false)) == -1) {
                 xnd_error("Failed to launch coordinator\n");
                 xnd_exit(XND_EXIT_FAILURE);
@@ -112,19 +147,11 @@ static __noreturn void launch(char **argv)
                 xnd_error("Failed to get path of libxnd.dylib\n");
                 xnd_exit(XND_EXIT_FAILURE);
         }
-        
-        if (argv[1] && strstr(argv[0], "python")) {
-                err = xnd_path_basename(argv[1], xnd_program, PATH_MAX);
-                if (err < 0) {
-                        xnd_error("xnd_path_basename failed: %s\n", argv[1]);
-                        xnd_exit(XND_EXIT_FAILURE);
-                }
-        } else {
-                err = xnd_path_basename(argv[0], xnd_program, PATH_MAX);
-                if (err < 0) {
-                        xnd_error("xnd_path_basename failed: %s\n", argv[0]);
-                        xnd_exit(XND_EXIT_FAILURE);
-                }
+
+        err = xnd_path_basename(argv[0], xnd_program, PATH_MAX);
+        if (err < 0) {
+                xnd_error("xnd_path_basename failed: %s\n", argv[0]);
+                xnd_exit(XND_EXIT_FAILURE);
         }
         
         env_set_program_name(xnd_program);
@@ -135,22 +162,16 @@ static __noreturn void launch(char **argv)
                 xnd_exit(XND_EXIT_FAILURE);
         }
 
-        err = setenv("DYLD_SHARED_REGION", "private", 1);
-        if (err != 0) {
-                xnd_error("setenv(\"DYLD_SHARED_REGION\", %s, 1): %s\n",
-                          "private", strerror(errno));
-                xnd_exit(XND_EXIT_FAILURE);
-        }
-                           
+        env_set_dyld_shared_region_private();
         xnd_trace("XND_PROGRAM=%s\n"
                   "DYLD_INSERT_LIBRARIES=%s\n"
                   "DYLD_SHARED_REGION=private\n",
                   xnd_program, libxnd_path);
         
         xnd_printf("Executing %s (pid=%d)\n", xnd_program, getpid());
-        err = execvp(argv[0], argv);
+        err = execv(new_argv[0], new_argv);
         if (err != 0) {
-                xnd_error("execvp: %s\n", strerror(errno));
+                xnd_error("execvp(%s): %s\n", new_argv[0], strerror(errno));
                 xnd_exit(XND_EXIT_FAILURE);
         }
         
