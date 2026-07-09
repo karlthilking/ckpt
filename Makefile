@@ -102,6 +102,13 @@ XND_RESTART_OBJECTS := \
         $(BUILD)/ckptfile.o \
         $(BUILD)/compress.o
 
+XND_PRINT_OBJECTS := \
+        $(BUILD)/xnd_print.o \
+        $(BUILD)/compress.o \
+        $(BUILD)/log.o \
+        $(BUILD)/path.o \
+        $(BUILD)/io.o
+
 ALL := \
         $(BUILD)/xnd_launch \
         $(BUILD)/xnd_print \
@@ -172,8 +179,8 @@ $(BUILD)/xnd_restart: $(XND_RESTART_OBJECTS) | $(BUILD)
 $(BUILD)/xnd_launch: $(XND_LAUNCH_SOURCES) | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ $^
 
-$(BUILD)/xnd_print: xnd/xnd_print.c | $(BUILD)
-	$(CC) $(CFLAGS) -o $@ $^
+$(BUILD)/xnd_print: $(XND_PRINT_OBJECTS) | $(BUILD)
+	$(CC) $(CFLAGS) -lz -o $@ $^
 
 $(BUILD)/xnd_command: $(XND_COMMAND_SOURCES) | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ $^
@@ -194,4 +201,5 @@ clean:
 .INTERMEDIATE: \
         $(LIBXND_OBJECTS) \
         $(XND_RESTART_OBJECTS) \
-        $(XND_COORD_OBJECTS)
+        $(XND_COORD_OBJECTS) \
+        $(XND_PRINT_OBJECTS)

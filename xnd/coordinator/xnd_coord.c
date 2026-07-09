@@ -672,7 +672,12 @@ void coord_wait_for_ckpt_completions(void)
         struct xnd_msg  msg;
 
         total = coord_collective_prepare(COMM_REDUCE);
-        xnd_assert(total == coord_info.num_peers);
+        if (unlikely(total != coord_info.num_peers)) {
+                xnd_error("  Pending checkpoint done messages: %d\n"
+                          "  Expected checkpoint participants: %d\n",
+                          total, coord_info.num_peers);
+                coord_exit(COORD_EXIT_FAILURE);
+        }
         
         total = 0;
         proc_foreach(p, proc_list) {
@@ -683,8 +688,13 @@ void coord_wait_for_ckpt_completions(void)
                         total++;
                 }
         }
-        
-        xnd_assert(total == coord_info.num_peers);
+
+        if (unlikely(total != coord_info.num_peers)) {
+                xnd_error("     Total checkpoint completions: %d\n"
+                          "  Expected checkpoint completions: %d\n",
+                          total, coord_info.num_peers);
+                coord_exit(COORD_EXIT_FAILURE);
+        }
 }
 
 void coord_do_checkpoint(void)

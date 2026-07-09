@@ -3,14 +3,17 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <unistd.h>
-#include <err.h>
-#include <assert.h>
 #include <fcntl.h>
+#include <limits.h>
+#include <errno.h>
 #include <ucontext.h>
 #include "xnd/xnd.h"
 #include "xnd/ckptfile.h"
 #include "xnd/pac.h"
 #include "xnd/vm_region.h"
+#include "xnd/util/compress.h"
+#include "xnd/util/path.h"
+#include "xnd/util/io.h"
 
 #define KILOBYTES(__bytes) \
         (((float)(__bytes)) / 1024.0f)
@@ -18,6 +21,20 @@
         (KILOBYTES((__bytes)) / 1024.0f)
 #define GIGABYTES(__bytes) \
         (MEGABYTES((__bytes)) / 1024.0f)
+
+#define ARG_IS_CKPT(arg) \
+        (strstr(arg, XND_CKPTFILE_SUFFIX) != NULL)
+#define ARG_IS_COMPRESSED_CKPT(arg) \
+        (strstr(arg, XND_COMPRESSED_SUFFIX) != NULL)
+#define ARG_IS_ALL(arg) \
+        (strncmp(arg, "-a", sizeof("-a")) == 0 || \
+         strncmp(arg, "--all", sizeof("--all")) == 0)
+#define ARG_IS_REGIONS(arg) \
+        (strncmp(arg, "--regions", sizeof("--regions")) == 0)
+#define ARG_IS_REGION_INFO(arg) \
+        (strncmp(arg, "--region-info", sizeof("--region-info")) == 0)
+#define ARG_IS_PRINT_CONTEXT(arg) \
+        (strncmp(arg, "--print-context", sizeof("--print-context")) == 0)
 
 enum {
         PRINT_USER_CONTEXT,
@@ -99,7 +116,6 @@ static void usage(void);
 static const char *vm_inherit_string(struct xnd_vm_region *);
 static const char *vm_share_mode_string(struct xnd_vm_region *);
 static const char *vm_user_tag_string(struct xnd_vm_region *);
-static int readall(int, void *, size_t);
 static int read_ckpt(int, struct xnd_ckpt_header *,
                      enum xnd_ckpt_entry *,
                      struct xnd_vm_region *,
@@ -112,57 +128,81 @@ static void print_checkpoint(int);
 
 int main(int argc, char *argv[])
 {
-        int     fd;
+        int     dirfd = -1, fd = -1;
         size_t  len;
+        char    dir[PATH_MAX], ckpt[PATH_MAX], *str;
+        bool    compressed = false;
 
         if (argc < 2) {
                 usage();
                 exit(0);
         }
         
+        bzero(ckpt, sizeof(ckpt));
         argc--;
         do {
                 argc--; argv++;
-                if (strstr(argv[0], XND_CKPTFILE_SUFFIX))
+                if (ARG_IS_CKPT(argv[0])) {
+                        strncpy(ckpt, argv[0], strlen(argv[0]) + 1);
+                        if (ARG_IS_COMPRESSED_CKPT(ckpt)) {
+                                compressed = true;
+                                str = strstr(ckpt, XND_COMPRESSED_SUFFIX);
+                                *str = '\0';
+                        }
                         break;
-
-                if (!strcmp(argv[0], "-a") || !strcmp(argv[0], "--all")) {
+                } else if (ARG_IS_ALL(argv[0])) {
                         set_each_print_option(true);
                         set_each_vm_info_option(true);
-                        break;
-                }
-                
-                len = strlen("--regions");
-                if (!strncmp(argv[0], "--regions", len))
+                } else if (ARG_IS_REGIONS(argv[0])) {
+                        len = sizeof("--regions");
                         parse_region_options(argv[0] + len);
-                
-                len = strlen("--region-info");
-                if (!strncmp(argv[0], "--region-info", len))
+                } else if (ARG_IS_REGION_INFO(argv[0])) {
+                        len = sizeof("--region-info");
                         parse_region_info_options(argv[0] + len);
-                
-                len = strlen("--print-context");
-                if (!strncmp(argv[0], "--print-context", len)) {
+                } else if (ARG_IS_PRINT_CONTEXT(argv[0])) {
+                        len = sizeof("--print-context");
                         if (strstr(argv[0], "true"))
                                 print_options[PRINT_USER_CONTEXT] = true;
                         else
                                 print_options[PRINT_USER_CONTEXT] = false;
+                } else {
+                        xnd_error("Unrecognized argument: %s\n", argv[0]);
+                        usage();
+                        exit(XND_EXIT_SUCCESS);
                 }
         } while (argc);
 
-        fd = open(argv[0], O_RDONLY);
-        if (fd < 0) {
-                err(EXIT_FAILURE, "open(%s)", argv[0]);
+        if (compressed) {
+                xnd_path_dirname(ckpt, dir, sizeof(dir));
+                dirfd = open(dir, O_RDONLY | O_DIRECTORY);
+                if (dirfd < 0) {
+                        xnd_error("open(%s): %s\n", dir, strerror(errno));
+                        goto bad;
+                }
+                if (xnd_decompress_ckpt(dirfd, ckpt) != 0) {
+                        xnd_error("xnd_decompress_ckpt failed\n");
+                        goto bad;
+                }
+        }
+
+        xnd_assert(access(ckpt, F_OK) == 0);
+        if ((fd = open(ckpt, O_RDONLY)) < 0) {
+                xnd_error("open(%s): %s\n", ckpt, strerror(errno));
+                goto bad;
         }
                                 
         print_checkpoint(fd);
-        exit(0);
+        exit(XND_EXIT_SUCCESS);
+bad:
+        if (fd != -1)
+                close(fd);
+        if (dirfd != -1)
+                close(dirfd);
+        exit(XND_EXIT_FAILURE);
 }
 
 static const char *vm_inherit_string(struct xnd_vm_region *region)
 {
-        static_assert(VM_INHERIT_COPY == VM_INHERIT_DEFAULT &&
-                      VM_INHERIT_LAST_VALID == VM_INHERIT_NONE, "");
-
         switch (region->inherit) {
         case VM_INHERIT_SHARE:
                 return "VM_INHERIT_SHARE";
@@ -249,22 +289,6 @@ static const char *vm_user_tag_string(struct xnd_vm_region *region)
         }
 }
 
-static int readall(int fd, void *buf, size_t size)
-{
-        size_t  bytes;
-        ssize_t retval;
-
-        for (bytes = 0; bytes < size; bytes += retval) {
-                retval = read(fd, buf + bytes, size - bytes);
-                if (retval < 0) {
-                        perror("read");
-                        return -1;
-                }
-        }
-        
-        return 0;
-}
-
 static int read_ckpt(int fd, struct xnd_ckpt_header *header,
                      enum xnd_ckpt_entry *entries,
                      struct xnd_vm_region *regions,
@@ -291,7 +315,7 @@ static int read_ckpt(int fd, struct xnd_ckpt_header *header,
                         } else {
                                 off = r->size;
                         }
-                        assert(lseek(fd, off, SEEK_CUR) != -1);
+                        xnd_assert(lseek(fd, off, SEEK_CUR) != -1);
                         r++;
                         break;
                 }
@@ -522,7 +546,7 @@ static void print_checkpoint(int fd)
 
 static void usage(void)
 {
-        fprintf(stderr, "%s", help);
+        xnd_printf("%s", help);
 }
 
 static void parse_region_options(char *options)

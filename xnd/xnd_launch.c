@@ -108,8 +108,9 @@ static void prepare_args(int argc, char **argv, char **new_argv)
                 new_argv[i] = strdup(argv[i]);
         }
         new_argv[argc] = NULL;
-
-        err = xnd_path_basename(argv[0], progname, PATH_MAX);
+        
+        strncpy(progname, "./", 2);
+        err = xnd_path_basename(argv[0], progname + 2, PATH_MAX - 2);
         if (err < 0) {
                 xnd_error("xnd_path_basename failed: %s\n", argv[0]);
                 xnd_exit(XND_EXIT_FAILURE);
@@ -169,7 +170,7 @@ static __noreturn void launch(int argc, char **argv)
                   xnd_program, libxnd_path);
         
         xnd_printf("Executing %s (pid=%d)\n", xnd_program, getpid());
-        err = execv(new_argv[0], new_argv);
+        err = execvp(new_argv[0], new_argv);
         if (err != 0) {
                 xnd_error("execvp(%s): %s\n", new_argv[0], strerror(errno));
                 xnd_exit(XND_EXIT_FAILURE);
