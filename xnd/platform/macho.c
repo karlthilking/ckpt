@@ -9,11 +9,48 @@
 #include <mach-o/fat.h>
 #include <mach-o/loader.h>
 
+static inline bool macho_has_load_command(void *, u32);
 static inline bool fat_is_arm64e(void *);
 static inline bool macho_is_arm64e(void *);
 static inline bool binary_is_arm64e(void *);
 static inline void *fat_arm64e_to_arm64(void *);
 static inline void *macho_arm64e_to_arm64(void *);
+
+static inline bool macho_has_load_command(void *addr, u32 cmd)
+{
+        struct mach_header      *mh;
+        struct load_command     *lc;
+        void                    *lc_start;
+        u32                     ncmds, sizeofcmds, offset, align;
+
+        mh = (struct mach_header *)addr;
+        ncmds = mh->ncmds;
+        sizeofcmds = mh->sizeofcmds;
+        if (NEEDS_BSWAP(mh->magic)) {
+                ncmds = __builtin_bswap32(ncmds);
+                sizeofcmds = __builtin_bswap32(sizeofcmds);
+        }
+        
+        lc_start = addr;
+        if (HEADER_IS_64BIT(mh->magic)) {
+                align = 8u;
+                lc_start += sizeof(struct mach_header_64);
+        } else {
+                align = 4u;
+                lc_start += sizeof(struct mach_header);
+        }
+
+        offset = 0u;
+        for (size_t idx = 0u; idx < ncmds; idx++) {
+                lc = (struct load_command *)((uchar *)lc_start + offset);
+                xnd_assert((lc->cmdsize % align) == 0);
+                offset += lc->cmdsize;
+                if (lc->cmd == cmd)
+                        return true;
+        }
+
+        return false;
+}
 
 static inline bool fat_is_arm64e(void *addr)
 {
@@ -166,10 +203,10 @@ bool binary_arm64e_to_arm64(char *path, char *tmp)
                 xnd_error("mmap: %s\n", strerror(errno));
                 goto out;
         }
-
+        
         if (!binary_is_arm64e(addr))
                 goto out;
-
+        
         if ((dstfd = open(tmp, O_WRONLY | O_CREAT, 0755)) < 0) {
                 xnd_error("open: %s\n", strerror(errno));
                 goto out;
@@ -184,6 +221,24 @@ bool binary_arm64e_to_arm64(char *path, char *tmp)
                 start = fat_arm64e_to_arm64(addr);
         } else {
                 goto out;
+        }
+        
+        /**
+         * If binary is compiled for arm64e and uses LC_DYLD_INFO_ONLY
+         * for rebase and bind info (instead of LC_DYLD_CHAINED_FIXUPS),
+         * changing the cpusubtype from arm64e to arm64 will fail.
+         * Explain error and abort.
+         */
+        if (MACHO_HAS_LC_DYLD_INFO_ONLY(start)) {
+                xnd_error("Unsupported binary: %s\n"
+                          "(arch=arm64e, fixups=LC_DYLD_INFO_ONLY)\n"
+                          "Need either arm64, or arm64e with "
+                          "LC_DYLD_CHAINED_FIXUPS\n", path);
+                close(srcfd);
+                close(dstfd);
+                munmap(addr, size);
+                unlink(tmp);
+                xnd_abort();
         }
         
         nbyte = size - (start - addr);

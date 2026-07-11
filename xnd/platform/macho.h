@@ -25,6 +25,11 @@
 #define CPU_SUBTYPE_IS_ARM64E(subtype) \
         (((subtype) & ~CPU_SUBTYPE_MASK) == CPU_SUBTYPE_ARM64E)
 
+#define MACHO_HAS_LC_DYLD_INFO_ONLY(addr) \
+        (macho_has_load_command(addr, LC_DYLD_INFO_ONLY))
+#define MACHO_HAS_LC_DYLD_CHAINED_FIXUPS(addr) \
+        (macho_has_load_command(addr, LC_DYLD_CHAINED_FIXUPS))
+
 bool binary_arm64e_to_arm64(char *, char *);
 
 #endif /* XND_MACHO_H */
