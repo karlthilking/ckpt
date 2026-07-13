@@ -52,7 +52,8 @@ void send_recv_coord_handshake(enum xnd_msghdr hdr)
                 msg.xnd_ppid = xnd_ppid;
                 msg.xnd_pgid = xnd_pgid;
                 memcpy(msg.xnd_uuid, xnd_uuid, sizeof(uuid_t));
-
+        
+                msg.ckpt_interval = env_get_ckpt_interval();
                 msg.epoch = epoch;
                 msg.num_peers = num_peers;
         }

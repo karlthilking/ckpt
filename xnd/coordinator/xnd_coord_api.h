@@ -87,6 +87,7 @@ struct xnd_msg {
         u64                     epoch;
         u32                     num_peers;
         u32                     is_root_of_tree;
+        int                     ckpt_interval;
 
         pid_t                   real_pid;
         pid_t                   real_ppid;

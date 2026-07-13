@@ -78,6 +78,7 @@ void xnd_ckptpath_name(char *, uuid_t, u64, u32, bool);
 void xnd_ckptdir_name(char *, char *, const uuid_t, u64);
 int xnd_ckptdir_create(uuid_t, u64);
 int xnd_ckptdir_open(const uuid_t, u64);
+int xnd_ckptdir_unlink(const uuid_t, u64);
 
 int xnd_ckptfile_create(int, char *);
 int xnd_ckptfile_openat(int, u32);

@@ -85,6 +85,7 @@ XND_COORD_OBJECTS := \
         $(BUILD)/io.o \
         $(BUILD)/log.o \
         $(BUILD)/fd.o \
+        $(BUILD)/env.o \
         $(BUILD)/path.o \
         $(BUILD)/pid_table_common.o \
         $(BUILD)/proc_list.o \

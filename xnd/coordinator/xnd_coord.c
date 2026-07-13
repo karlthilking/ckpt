@@ -1,8 +1,9 @@
 /* xnd_coord.c */
 #include "xnd/xnd.h"
-#include "common/time_common.h"
+#include "common/time.h"
 #include "xnd/ckptfile.h"
 #include "xnd/util/io.h"
+#include "xnd/util/env.h"
 #include "xnd/pid/pid_table_common.h"
 #include "proc_list.h"
 #include "xnd_coord.h"
@@ -27,7 +28,8 @@ static struct coord_info coord_info = {
         .next_virt_pid  = INITIAL_VIRT_PID,
         .next_xnd_pid   = INITIAL_XND_PID,
         .listen_fd      = -1,
-        .num_peers      = 0
+        .num_peers      = 0,
+        .ckpt_interval  = 0
 };
 
 void proc_exit_callback(struct proc *p)
@@ -60,9 +62,11 @@ u32 coord_next_xnd_pid(void)
 
 void coord_work(void)
 {
-        int     err;
-        u64     iter = 0u;
-
+        struct timeval  tv_start, tv_end;
+        int             err, elapsed;
+        bool            refresh;
+        u64             iter = 0u;
+        
         while (proc_list->size == 0) {
                 err = kill(getppid(), 0);
                 if (err != 0 && errno == ESRCH) {
@@ -71,14 +75,30 @@ void coord_work(void)
                 coord_wait_for_connection();
         }
         
+        refresh = false;
+        gettimeofday(&tv_start, NULL);
         for (;;) {
+                if (coord_info.ckpt_interval && refresh) {
+                        gettimeofday(&tv_start, NULL);
+                        refresh = false;
+                }
+
                 coord_wait_for_connection();
                 coord_wait_for_msg();
-                if ((iter++ % (1 << 7)) == 0) {
-                        proc_list_filter(proc_list);
-                        if (proc_list->size == 0) {
-                                break;
+
+                if (coord_info.ckpt_interval) {
+                        gettimeofday(&tv_end, NULL);
+                        elapsed = tv_end.tv_sec - tv_start.tv_sec;
+                        if (elapsed >= coord_info.ckpt_interval) {
+                                coord_do_checkpoint();
+                                refresh = true;
                         }
+                }
+                
+                if (COORD_CHECK_HEARTBEAT(iter++)) {
+                        proc_list_filter(proc_list);
+                        if (proc_list->size == 0)
+                                break;
                 }
         }
 }
@@ -124,6 +144,8 @@ void coord_init(void)
         }
         
         coord_info.listen_fd = fd;
+        coord_info.ckpt_interval = env_get_ckpt_interval();
+
         proc_list = proc_list_init();
         pid_table_init();
 }
@@ -701,6 +723,7 @@ void coord_do_checkpoint(void)
 {
         int             err, total;
         sigset_t        set;
+        u64             cur_epoch = coord_info.epoch;
         
         TIMER_PUSH(Checkpoint);
         sigemptyset(&set);
@@ -718,7 +741,9 @@ void coord_do_checkpoint(void)
          * Now, each process will enter a barrier until the coordinator
          * allows them to complete their individual checkpoints (suspended)
          */
-        coord_collective_prepare(COMM_BROADCAST);
+        total = coord_collective_prepare(COMM_BROADCAST);
+        if (unlikely(total == 0))
+                return;
         coord_suspend_processes();
 
         /**
@@ -726,7 +751,7 @@ void coord_do_checkpoint(void)
          * directory, determine which processes are roots of their process
          * trees, and determine the number of total peers in the computation.
          */
-        err = xnd_ckptdir_create(coord_info.xnd_uuid, coord_info.epoch);
+        err = xnd_ckptdir_create(coord_info.xnd_uuid, cur_epoch);
         if (err != 0) {
                 xnd_error("Failed to create checkpoint directory\n");
                 goto out;
@@ -750,7 +775,6 @@ void coord_do_checkpoint(void)
         coord_wait_for_ckpt_completions();
         coord_write_ckpt_manifest();
         
-        coord_info.epoch++;
         /**
          * All checkpoints are complete (each process is currently blocked
          * in another coordinator barrier). 
@@ -759,6 +783,15 @@ void coord_do_checkpoint(void)
          * to continue.
          */
         xnd_assert(coord_release_barrier(COORD_BARRIER_POSTCKPT) == 0);
+
+        /**
+         * Remove previous checkpoint directory
+         *  (consider making this configurable)
+         */
+        if (cur_epoch > 0)
+                xnd_ckptdir_unlink(coord_info.xnd_uuid, cur_epoch - 1);
+
+        coord_info.epoch++;
         TIMER_POP();
 out:
         sigprocmask(SIG_UNBLOCK, &set, NULL);
@@ -827,6 +860,7 @@ void coord_do_restart(void)
                 xnd_assert(msg.hdr == XND_CONNECT_RESTART);
 
                 if (proc_list->size == 0) {
+                        coord_info.ckpt_interval = msg.ckpt_interval;
                         coord_info.epoch = msg.epoch;
                         coord_info.num_peers = msg.num_peers;
                         memcpy(coord_info.xnd_uuid, msg.xnd_uuid,

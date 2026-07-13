@@ -13,6 +13,7 @@
 #include <string.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <dirent.h>
 #include <time.h>
 #include <limits.h>
 #include <sys/stat.h>
@@ -96,6 +97,56 @@ int xnd_ckptdir_open(const uuid_t uuid, u64 epoch)
         }
 
         return fd;
+}
+
+int xnd_ckptdir_unlink(const uuid_t uuid, u64 epoch)
+{
+        int             err, dirfd;
+        DIR             *dirp;
+        struct dirent   *ent;
+        char            base[XND_CKPTDIR_BASELEN];
+        char            sub[XND_CKPTDIR_SUBLEN];
+        char            path[XND_CKPTDIR_MAXLEN];
+        char            buf[XND_CKPTDIR_MAXLEN + XND_CKPTFILE_MAXLEN];
+
+        xnd_ckptdir_name(base, sub, uuid, epoch);
+        err = xnd_path_join(path, sizeof(path), base, sub);
+        if (unlikely(err != 0)) {
+                xnd_error("xnd_path_join failed: %s/%s\n", base, sub);
+                return -1;
+        }
+
+        dirp = opendir(path);
+        if (unlikely(dirp == NULL)) {
+                xnd_error("opendir(%s): %s\n", path, strerror(errno));
+                return -1;
+        }
+
+        while ((ent = readdir(dirp))) {
+                if (unlikely(strcmp(ent->d_name, ".") == 0) ||
+                    unlikely(strcmp(ent->d_name, "..") == 0))
+                        continue;
+                snprintf(buf, sizeof(buf), "%s/%s", path, ent->d_name);
+                if (unlikely(unlink(buf) != 0)) {
+                        xnd_error("unlink(%s): %s\n", buf, strerror(errno));
+                        return -1;
+                }
+        }
+
+        closedir(dirp);
+        dirfd = open(base, O_DIRECTORY | O_RDONLY);
+        if (unlikely(dirfd < 0)) {
+                xnd_error("open(%s): %s\n", path, strerror(errno));
+                return -1;
+        }
+        
+        err = unlinkat(dirfd, sub, AT_REMOVEDIR);
+        if (unlikely(err != 0)) {
+                xnd_error("unlinkat(%s): %s\n", sub, strerror(errno));
+                return -1;
+        }
+
+        return 0;
 }
 
 int xnd_ckptfile_create(int dirfd, char *ckptfile)

@@ -23,6 +23,10 @@
 #define COORD_TIMEOUT_USEC      10000
 #define COORD_TIMEOUT_NSEC      COORD_TIMEOUT_USEC * NSEC_PER_USEC
 
+#define COORD_HEARTBEAT_INTERVAL (512)
+#define COORD_CHECK_HEARTBEAT(iteration) \
+        ((iteration) % COORD_HEARTBEAT_INTERVAL == 0)
+
 struct coord_info {
         uuid_t  xnd_uuid;
         u64     epoch;
@@ -30,6 +34,7 @@ struct coord_info {
         u32     next_xnd_pid;
         u32     num_peers;
         int     listen_fd;
+        int     ckpt_interval;
 };
 
 enum coord_comm_type {

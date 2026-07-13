@@ -3,7 +3,6 @@
 #include "xnd/util/io.h"
 #include "xnd/util/log.h"
 #include "xnd/coordinator/xnd_coord_api.h"
-#include "common/time_common.h"
 #include <stdlib.h>
 #include <stdio.h>
 #include <unistd.h>
