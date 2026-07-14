@@ -290,7 +290,4 @@ if __name__ == "__main__":
     if bench_runtime_overhead == True:
         bench_overhead()
     else:
-        CKPT_SIZES = [0] * ITERATIONS
-        CKPT_TIMES = [0] * ITERATIONS
-        RESTART_TIMES = [0] * ITERATIONS
         bench_ckpt_restart()
