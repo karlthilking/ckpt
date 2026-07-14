@@ -28,51 +28,28 @@ CKPT_ITERATIONS, RUNTIME_ITERATIONS, TIMEOUT = 10, 10, 10
 def find_xnd_executables():
     global XND_LAUNCH_PATH, XND_RESTART_PATH
     found_launch, found_restart = False, False
-    for s in [".", ".."]:
+    path_dirs = [".", ".."]
+    path_dirs.extend(os.getenv("PATH").split(":"))
+    for s in path_dirs:
         d = Path(s)
         try:
             for file in d.iterdir():
                 if not file.is_file():
                     continue
                 path = str(file)
-                if "xnd_launch" in path and ".c" not in path:
-                    XND_LAUNCH_PATH = s + "/" + path
-                    print(f"xnd_launch: {XND_LAUNCH_PATH}")
+                if "xnd_launch" in path and os.access(path, os.X_OK):
+                    XND_LAUNCH_PATH = "./" + path if s == "." else path
                     found_launch = True
-                elif "xnd_restart" in path and ".c" not in path:
+                elif "xnd_restart" in path and os.access(path, os.X_OK):
                     if "xnd_restart_internal" in path:
                         continue
-                    XND_RESTART_PATH = s + "/" + path
-                    print(f"xnd_restart: {XND_RESTART_PATH}")
+                    XND_RESTART_PATH = "./" + path if s == "." else path
                     found_restart = True
+                elif file.is_dir() and "xnd" in path:
+                    path_dirs.append(path)
         except:
             continue
-    if found_launch and found_restart:
-        return True
-
-    path_dirs = os.getenv("PATH").split(":")
-    for s in path_dirs:
-        d = Path(s)
-        if not d.is_dir():
-            continue
-        try:
-            for file in d.iterdir():
-                if file.is_file():
-                    path = str(file)
-                    if "xnd_launch" in path and ".c" not in path:
-                        XND_LAUNCH_PATH = path
-                        found_launch = True
-                    elif "xnd_restart" in path and ".c" not in path:
-                        XND_RESTART_PATH = path
-                        found_restart = True
-                elif file.is_dir() and "xnd" in str(file):
-                    path_dirs.append(str(file))
-        except:
-            continue
-    if found_launch and found_restart:
-        return True
-    else:
-        return False
+    return found_launch and found_restart
 
 def bench_overhead():
     progname = ""
@@ -351,13 +328,19 @@ if __name__ == "__main__":
     if not find_xnd_executables():
         print("Failed to find xnd_launch and xnd_restart paths")
         sys.exit(-1)
-    else:
-        assert(len(XND_LAUNCH_PATH) != 0)
-        assert(len(XND_RESTART_PATH) != 0)
 
-    if do_bench_ckpt == True:
+    print(f"Running benchmarks for {PROGRAM}\n"
+          f" BENCMARK DIRECTORY: {BENCHMARK_DIR}\n")
+
+    if do_bench_ckpt:
+          print(f" CHECKPOINT ITERATIONS: {CKPT_ITERATIONS}\n"
+                f"   CHECKPOINT INTERVAL: {TIMEOUT}\n")
+    if do_bench_runtime:
+          print(f"    RUNTIME ITERATIONS: {RUNTIME_ITERATIONS}\n")
+
+    if do_bench_ckpt:
         bench_ckpt_restart()
-    if do_bench_runtime == True:
+    if do_bench_runtime:
         bench_overhead()
 
     sys.exit(0)
