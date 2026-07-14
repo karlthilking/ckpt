@@ -1,35 +1,90 @@
 #!/usr/bin/env python3
 # bench.py
 import os, sys, pty, time, signal
+from pathlib import Path
 import subprocess
 
 USAGE = \
-    f"Usage: python3 {sys.argv[0]} [options] file ..."                  \
-     "Options:\n"                                                       \
-     "  --iterations NUMBER (default: 10)\n"                            \
-     "      Set number of checkpoint/restart cycles\n"                  \
-     "  --timeout SECONDS (default: 10)\n"                              \
-     "      Set checkpoint interval\n"                                  \
-     "  --checkpoint\n"                                                 \
-     "      Benchmark checkpoint/restart time and checkpoint size\n"    \
-     "      (This is the default mode)\n"                               \
-     "  --overhead\n"                                                   \
-     "      Benchmark runtime overhead of libxnd.dylib\n"
+    f"USAGE: python3 {sys.argv[0]} [options] program ...\n"             \
+     "OPTIONS:\n"                                                       \
+     "  -c, --bench-checkpoint NUMBER (default: 10)\n"                  \
+     "     Benchmark checkpoint/restart time and checkpoint file\n"     \
+     "     size for a total of NUMBER checkpoint/restart cycles\n"      \
+     "  -r, --bench-runtime NUMBER (default: 10)\n"                     \
+     "     Record native runtime of program as well as runtime with\n"  \
+     "     libxnd.dylib loaded, running the program in each context\n"  \
+     "     for NUMBER iterations\n"                                     \
+     "  -i, --ckpt-interval SECONDS (default: 10)\n"                    \
+     "     Specify the checkpoint interval when testing checkpoint\n"   \
+     "     time, restart time, and checkpoint file size\n"              \
+     "     (Only meaningful with --bench-checkpoint)\n"                 \
+     "  -o, --output-dir DIRECTORY (default: ./benchmarks)\n"           \
+     "     Directory to write benchmarks to\n"
 
-PROGRAM = ""
-ITERATIONS = 10
-TIMEOUT = 10
+PROGRAM, BENCHMARK_DIR = "", "./benchmarks"
+XND_LAUNCH_PATH, XND_RESTART_PATH = "", ""
+CKPT_ITERATIONS, RUNTIME_ITERATIONS, TIMEOUT = 10, 10, 10
+
+def find_xnd_executables():
+    global XND_LAUNCH_PATH, XND_RESTART_PATH
+    found_launch, found_restart = False, False
+    for s in [".", ".."]:
+        d = Path(s)
+        try:
+            for file in d.iterdir():
+                if not file.is_file():
+                    continue
+                path = str(file)
+                if "xnd_launch" in path and ".c" not in path:
+                    XND_LAUNCH_PATH = s + "/" + path
+                    print(f"xnd_launch: {XND_LAUNCH_PATH}")
+                    found_launch = True
+                elif "xnd_restart" in path and ".c" not in path:
+                    if "xnd_restart_internal" in path:
+                        continue
+                    XND_RESTART_PATH = s + "/" + path
+                    print(f"xnd_restart: {XND_RESTART_PATH}")
+                    found_restart = True
+        except:
+            continue
+    if found_launch and found_restart:
+        return True
+
+    path_dirs = os.getenv("PATH").split(":")
+    for s in path_dirs:
+        d = Path(s)
+        if not d.is_dir():
+            continue
+        try:
+            for file in d.iterdir():
+                if file.is_file():
+                    path = str(file)
+                    if "xnd_launch" in path and ".c" not in path:
+                        XND_LAUNCH_PATH = path
+                        found_launch = True
+                    elif "xnd_restart" in path and ".c" not in path:
+                        XND_RESTART_PATH = path
+                        found_restart = True
+                elif file.is_dir() and "xnd" in str(file):
+                    path_dirs.append(str(file))
+        except:
+            continue
+    if found_launch and found_restart:
+        return True
+    else:
+        return False
 
 def bench_overhead():
     progname = ""
+    iterations = RUNTIME_ITERATIONS
     if PROGRAM.rfind("/") != -1:
         progname = PROGRAM[PROGRAM.rfind("/") + 1:]
 
     TIME_MSG = "Time in seconds = "
 
-    NO_XND_TIMES, WITH_XND_TIMES = [0] * ITERATIONS, [0] * ITERATIONS
-    NO_XND_FILE = "benchmarks/" + progname + "_no_xnd.out"
-    WITH_XND_FILE = "benchmarks/" + progname + "_with_xnd.out"
+    NO_XND_TIMES, WITH_XND_TIMES = [0] * iterations, [0] * iterations
+    NO_XND_FILE = BENCHMARK_DIR + "/" + progname + "_no_xnd.out"
+    WITH_XND_FILE = BENCHMARK_DIR + "/" + progname + "_with_xnd.out"
 
     no_xnd_handle = open(NO_XND_FILE, "w")
     with_xnd_handle = open(WITH_XND_FILE, "w")
@@ -37,16 +92,16 @@ def bench_overhead():
     no_xnd_handle.write(
         f"{NO_XND_FILE}\n\n"
         f"Native runtimes for {progname} (without libxnd.dylib)\n"
-        f" ITERATIONS={ITERATIONS}\n\n"
+        f" ITERATIONS={iterations}\n\n"
     )
 
     with_xnd_handle.write(
         f"{WITH_XND_FILE}\n\n"
         f"Runtimes for {progname} with libxnd.dylib\n"
-        f" ITERATIONS={ITERATIONS}\n\n"
+        f" ITERATIONS={iterations}\n\n"
     )
 
-    for i in range(ITERATIONS):
+    for i in range(iterations):
         master_fd, slave_fd = pty.openpty()
         proc = subprocess.Popen(
             [PROGRAM],
@@ -69,7 +124,7 @@ def bench_overhead():
 
         master_fd, slave_fd = pty.openpty()
         proc = subprocess.Popen(
-            ["./xnd_launch", PROGRAM],
+            [XND_LAUNCH_PATH, PROGRAM],
             stdout=slave_fd, stderr=slave_fd,
             start_new_session=True, text=True, close_fds=True
         )
@@ -111,22 +166,23 @@ def bench_overhead():
 
 
 def bench_ckpt_restart():
+    iterations = CKPT_ITERATIONS
     CKPT_MSG = "Checkpoint complete: "
     CKPT_TIME_MSG = "Checkpoint took: "
     RESTART_TIME_MSG = "Restart took: "
     CKPT_DIR = ""
     CKPT_SIZES_FILE, CKPT_TIMES_FILE, RESTART_TIMES_FILE = "", "", ""
-    CKPT_SIZES = [0] * ITERATIONS
-    CKPT_TIMES = [0] * ITERATIONS
-    RESTART_TIMES = [0] * ITERATIONS
+    CKPT_SIZES = [0] * iterations
+    CKPT_TIMES = [0] * iterations
+    RESTART_TIMES = [0] * iterations
 
     progname = ""
     if PROGRAM.rfind("/") != -1:
         progname = PROGRAM[PROGRAM.rfind("/") + 1:]
 
-    CKPT_SIZES_FILE = "benchmarks/" + progname + "_ckpt_sizes.out"
-    CKPT_TIMES_FILE = "benchmarks/" + progname + "_ckpt_times.out"
-    RESTART_TIMES_FILE = "benchmarks/" + progname + "_restart_times.out"
+    CKPT_SIZES_FILE = BENCHMARK_DIR + "/" + progname + "_ckpt_sizes.out"
+    CKPT_TIMES_FILE = BENCHMARK_DIR + "/" + progname + "_ckpt_times.out"
+    RESTART_TIMES_FILE = BENCHMARK_DIR + "/" + progname + "_restart_times.out"
 
     ckpt_sizes_handle = open(CKPT_SIZES_FILE, "w")
     ckpt_times_handle = open(CKPT_TIMES_FILE, "w")
@@ -135,29 +191,29 @@ def bench_ckpt_restart():
     ckpt_sizes_handle.write(
         f"{CKPT_SIZES_FILE}\n\n"
         f"Checkpoint sizes for {progname}\n"
-        f" ITERATIONS={ITERATIONS}\n"
+        f" ITERATIONS={iterations}\n"
         f"   INTERVAL={TIMEOUT}\n\n"
     )
 
     ckpt_times_handle.write(
         f"{CKPT_TIMES_FILE}\n\n"
         f"Checkpoint times for {progname}\n"
-        f" ITERATIONS={ITERATIONS}\n"
+        f" ITERATIONS={iterations}\n"
         f"   INTERVAL={TIMEOUT}\n\n"
     )
 
     restart_times_handle.write(
         f"{RESTART_TIMES_FILE}\n\n"
         f"Restart times for {progname}\n"
-        f" ITERATIONS={ITERATIONS}\n"
+        f" ITERATIONS={iterations}\n"
         f"   INTERVAL={TIMEOUT}\n\n"
     )
 
     i = 0
-    while i < ITERATIONS:
+    while i < iterations:
         master_fd, slave_fd = pty.openpty()
         proc = subprocess.Popen(
-            ["./xnd_launch", "-i", str(TIMEOUT), PROGRAM],
+            [XND_LAUNCH_PATH, "-i", str(TIMEOUT), PROGRAM],
             stdout=slave_fd, stderr=slave_fd,
             start_new_session=True, text=True, close_fds=True
         )
@@ -171,10 +227,10 @@ def bench_ckpt_restart():
                     os.killpg(proc.pid, signal.SIGINT)
                     break
         running = True
-        while running and i < ITERATIONS:
+        while running and i < iterations:
             master_fd, slave_fd = pty.openpty()
             proc = subprocess.Popen(
-                ["./xnd_restart", CKPT_DIR],
+                [XND_RESTART_PATH, CKPT_DIR],
                 stdout=slave_fd, stderr=slave_fd,
                 start_new_session=True, text=True, close_fds=True
             )
@@ -225,9 +281,9 @@ def bench_ckpt_restart():
 
     top_level_dir = CKPT_DIR[:CKPT_DIR.find("/")]
     os.system(f"rm -rf {top_level_dir}")
-    assert(len(CKPT_SIZES) == ITERATIONS)
-    assert(len(CKPT_TIMES) == ITERATIONS)
-    assert(len(RESTART_TIMES) == ITERATIONS)
+    assert(len(CKPT_SIZES) == iterations)
+    assert(len(CKPT_TIMES) == iterations)
+    assert(len(RESTART_TIMES) == iterations)
 
     ckpt_size_avg = sum(CKPT_SIZES) / len(CKPT_SIZES)
     ckpt_time_avg = sum(CKPT_TIMES) / len(CKPT_TIMES)
@@ -263,22 +319,27 @@ def bench_ckpt_restart():
 
 if __name__ == "__main__":
     argc = len(sys.argv)
-    bench_runtime_overhead = False
     if argc < 2:
         print(USAGE)
         sys.exit(0)
 
     idx = 1
+    do_bench_ckpt, do_bench_runtime = False, False
     while idx < argc:
-        if "--iterations" in sys.argv[idx]:
-            ITERATIONS = int(sys.argv[idx + 1])
+        if "-c" in sys.argv[idx] or "--bench-checkpoint" in sys.argv[idx]:
+            CKPT_ITERATIONS = int(sys.argv[idx + 1])
+            do_bench_ckpt = True
             idx += 2
-        elif "--timeout" in sys.argv[idx]:
+        elif "-r" in sys.argv[idx] or "--bench-runtime" in sys.argv[idx]:
+            RUNTIME_ITERATIONS = int(sys.argv[idx + 1])
+            do_bench_runtime = True
+            idx += 2
+        elif "-i" in sys.argv[idx] or "--ckpt-interval" in sys.argv[idx]:
             TIMEOUT = int(sys.argv[idx + 1])
             idx += 2
-        elif "--overhead" in sys.argv[idx]:
-            bench_runtime_overhead = True
-            idx += 1
+        elif "-o" in sys.argv[idx] or "--output-dir" in sys.argv[idx]:
+            BENCHMARK_DIR = sys.argv[idx + 1]
+            idx += 2
         else:
             PROGRAM = sys.argv[idx]
             idx += 1
@@ -287,7 +348,16 @@ if __name__ == "__main__":
         print(USAGE)
         sys.exit(0)
 
-    if bench_runtime_overhead == True:
-        bench_overhead()
+    if not find_xnd_executables():
+        print("Failed to find xnd_launch and xnd_restart paths")
+        sys.exit(-1)
     else:
+        assert(len(XND_LAUNCH_PATH) != 0)
+        assert(len(XND_RESTART_PATH) != 0)
+
+    if do_bench_ckpt == True:
         bench_ckpt_restart()
+    if do_bench_runtime == True:
+        bench_overhead()
+
+    sys.exit(0)
