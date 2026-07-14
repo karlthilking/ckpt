@@ -9,12 +9,12 @@ CXX     := clang++
 CFLAGS := \
 	-std=c17 -Wall -Wno-deprecated-declarations \
 	-DDEVELOPMENT=$(DEVELOPMENT) -DTIMING=$(TIMING) \
-	-g3 -O0 -arch $(ARCH) -iquote . -iquote ./include
+	-g -O2 -arch $(ARCH) -iquote . -iquote ./include
 
 CXXFLAGS := \
 	-std=c++20 -Wall -Wno-deprecated-declarations \
 	-DDEVELOPMENT=$(DEVELOPMENT) -DTIMING=$(TIMING) \
-        -g3 -O0 -arch $(ARCH) -iquote . -iquote ./include
+	-g -O2 -arch $(ARCH) -iquote . -iquote ./include
 
 LIBXND_OBJECTS := \
         $(BUILD)/xnd_lib.o \
@@ -165,13 +165,13 @@ __LINKEDIT      := 0x500000028000
 STACKADDR       := 0x500000128000
 $(BUILD)/xnd_restart_internal: $(XND_RESTART_INTERNAL_SOURCES) | $(BUILD)
 	$(CC) $(CFLAGS) -fno-stack-protector \
-        -DXND_RESTART_STACKADDR=$(STACKADDR) \
-        -Wl,-segaddr,__TEXT,$(__TEXT) \
-        -Wl,-segaddr,__DATA,$(__DATA) \
-        -Wl,-segaddr,__DATA_CONST,$(__DATA_CONST) \
-        -Wl,-segaddr,__LINKEDIT,$(__LINKEDIT) \
-        -Wl,-ld_classic \
-        -o $@ $^
+	-DXND_RESTART_STACKADDR=$(STACKADDR) \
+	-Wl,-segaddr,__TEXT,$(__TEXT) \
+	-Wl,-segaddr,__DATA,$(__DATA) \
+	-Wl,-segaddr,__DATA_CONST,$(__DATA_CONST) \
+	-Wl,-segaddr,__LINKEDIT,$(__LINKEDIT) \
+	-Wl,-ld_classic \
+	-o $@ $^
 
 $(BUILD)/xnd_restart: $(XND_RESTART_OBJECTS) | $(BUILD)
 	$(CXX) $(CXXFLAGS) -lz -o $@ $^
@@ -200,7 +200,7 @@ clean:
 
 .PHONY: all clean test
 .INTERMEDIATE: \
-        $(LIBXND_OBJECTS) \
-        $(XND_RESTART_OBJECTS) \
-        $(XND_COORD_OBJECTS) \
-        $(XND_PRINT_OBJECTS)
+	$(LIBXND_OBJECTS) \
+	$(XND_RESTART_OBJECTS) \
+	$(XND_COORD_OBJECTS) \
+	$(XND_PRINT_OBJECTS)

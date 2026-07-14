@@ -42,15 +42,15 @@ struct xnd_restart_info {
                         xnd_error("xnd_exe_path_of failed\n");
                         exit(XND_EXIT_FAILURE);
                 }
-
-                err = xnd_path_join(path, sizeof(path), 
+                
+                err = xnd_path_join(path, sizeof(path),
                                     ckptdir, XND_MANIFEST_NAME);
                 if (err != 0) {
-                        xnd_error("xnd_path_join failed: %s + %s\n",
+                        xnd_error("xnd_path_join failed: %s/%s\n",
                                   ckptdir, XND_MANIFEST_NAME);
                         exit(XND_EXIT_FAILURE);
                 }
-
+                
                 err = xnd_ckptfile_extract_manifest(path, &manifest);
                 if (err != 0) {
                         xnd_error("xnd_ckptfile_extract_manifest failed\n");

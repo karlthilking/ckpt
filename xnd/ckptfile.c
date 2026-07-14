@@ -123,8 +123,8 @@ int xnd_ckptdir_unlink(const uuid_t uuid, u64 epoch)
         }
 
         while ((ent = readdir(dirp))) {
-                if (unlikely(strcmp(ent->d_name, ".") == 0) ||
-                    unlikely(strcmp(ent->d_name, "..") == 0))
+                if (strcmp(ent->d_name, ".") == 0 ||
+                    strcmp(ent->d_name, "..") == 0)
                         continue;
                 snprintf(buf, sizeof(buf), "%s/%s", path, ent->d_name);
                 if (unlikely(unlink(buf) != 0)) {
@@ -310,8 +310,8 @@ int xnd_ckptfile_extract_manifest(const char *path,
         int     fd = -1;
         
         fd = open(path, O_RDONLY);
-        if (fd < 0) {
-                xnd_error("open: %s\n", strerror(errno));
+        if (unlikely(fd < 0)) {
+                xnd_error("open(%s): %s\n", path, strerror(errno));
                 goto fail;
         }
 
