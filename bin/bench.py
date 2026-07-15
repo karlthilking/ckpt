@@ -2,15 +2,40 @@
 import os, sys, time, pty, signal
 import subprocess
 from pathlib import Path
-from typing import List
+from typing import List, Dict, Any
 
 USAGE = \
-f"Usage: {sys.argv[0]} [options] program ...\n"   \
- "Options:\n"                                       \
- "  -c, --ckpt-iterations NUMBER\n"                 \
- "  -i, --ckpt-interval SECONDS\n"                  \
- "  -r, --run-iterations NUMBER\n"                  \
- "  -o, --output PATH\n"
+f"Usage: {sys.argv[0]} [options] ...\n" \
+ "Options:\n"                           \
+ "  -c, --ckpt-iterations NUMBER\n"     \
+ "  -i, --ckpt-interval SECONDS\n"      \
+ "  -r, --run-iterations NUMBER\n"
+
+EXECUTABLE_PATH = sys.argv[0]
+EXECUTABLE_DIRECTORY = os.path.dirname(EXECUTABLE_PATH)
+
+TESTS = [
+    {
+        "name" : "NAS LU Class C",
+        "path" : f"{EXECUTABLE_DIRECTORY}/lu.C.x",
+        "output" : "benchmarks/NAS-LU-C-benchmarks"
+    },
+    {
+        "name" : "NAS BT Class C",
+        "path" : f"{EXECUTABLE_DIRECTORY}/bt.C.x",
+        "output" : "benchmarks/NAS-BT-C-benchmarks"
+    },
+    {
+        "name" : "NAS CG Class C",
+        "path" : f"{EXECUTABLE_DIRECTORY}/cg.C.x",
+        "output" : "benchmarks/NAS-CG-C-benchmarks"
+    },
+    {
+        "name" : "NAS EP Class C",
+        "path" : f"{EXECUTABLE_DIRECTORY}/ep.C.x",
+        "output" : "benchmarks/NAS-EP-C-benchmarks"
+    }
+]
 
 xnd_launch_path, xnd_restart_path = "", ""
 run_iterations, ckpt_iterations, ckpt_interval = 10, 25, 10
@@ -56,7 +81,7 @@ def bench_runtime(
         )
         end = time.time()
         no_xnd_runtimes[itr] = float(end - start)
-        print("{} runtime native #{}: {}".format(
+        print("{} runtime without libxnd #{}: {:.2f}s".format(
             program, itr, no_xnd_runtimes[itr]
         ))
 
@@ -68,7 +93,7 @@ def bench_runtime(
         )
         end = time.time()
         with_xnd_runtimes[itr] = float(end - start)
-        print("{} runtime with libxnd #{}: {}".format(
+        print("{} runtime with libxnd #{}: {:.2f}s\n".format(
             program, itr, with_xnd_runtimes[itr]
         ))
 
@@ -140,10 +165,10 @@ def bench_ckpt_restart(
                 break
 
             print(
-                f"Iteration #{itr}:\n"
-                f" checkpoint size: {ckpt_sizes[itr]}\n"
-                f" checkpoint time: {ckpt_times[itr]}\n"
-                f"    restart time: {restart_times[itr]}\n",
+                f"{program} iteration #{itr}:\n"
+                f" checkpoint size: {ckpt_sizes[itr]} bytes\n"
+                f" checkpoint time: {ckpt_times[itr]}ms\n"
+                f"    restart time: {restart_times[itr]}ms\n\n",
                 end="", flush=True
             )
             itr += 1
@@ -155,7 +180,9 @@ def bench_ckpt_restart(
         assert(ckpt_times[itr] != 0)
         assert(restart_times[itr] != 0)
 
-def bench(program: str, output_file: str):
+def bench(test: Dict[str, str]):
+    program, output_file = test["path"], test["output"]
+
     ckpt_sizes_compressed = [0] * ckpt_iterations
     ckpt_sizes_uncompressed = [0] * ckpt_iterations
 
@@ -285,7 +312,7 @@ def bench(program: str, output_file: str):
             f" MILLISECONDS: {runtime * 1000}\n"
         )
     output_file_handle.write('\n')
-    
+
     # Runtimes with libxnd.dylib loaded
     output_file_handle.write("Runtimes (with libxnd):\n")
     for itr in range(run_iterations):
@@ -303,7 +330,6 @@ def bench(program: str, output_file: str):
 
 if __name__ == "__main__":
     argc = len(sys.argv)
-    program, output_file = "", ""
     if argc < 2:
         print(USAGE)
         sys.exit(0)
@@ -323,22 +349,18 @@ if __name__ == "__main__":
         elif "-r" in sys.argv[idx] or "--run-iterations" in sys.argv[idx]:
             run_iterations = int(sys.argv[idx + 1])
             idx += 2
-        elif "-o" in sys.argv[idx] or "--output" in sys.argv[idx]:
-            output_file = sys.argv[idx + 1]
-            idx += 2
         elif "-i" in sys.argv[idx] or "--ckpt-interval" in sys.argv[idx]:
              ckpt_interval = int(sys.argv[idx + 1])
              idx += 2
         else:
-            program = sys.argv[idx]
-            break
+            print(f"Unrecognized argument: {sys.argv[idx]}")
+            sys.exit(-1)
 
-    if len(output_file) == 0:
-        print(USAGE)
-        sys.exit(-1)
-    elif len(program) == 0:
-        print(USAGE)
-        sys.exit(-1)
+    print(f"Running benchmarks for {len(TESTS)} programs:")
+    for i in range(len(TESTS)):
+        print(f"\tProgram #{i}: {TESTS[i]["name"]} ({TESTS[i]["path"]})")
 
-    bench(program, output_file)
+    for test in TESTS:
+        bench(test)
+
     sys.exit(0)
