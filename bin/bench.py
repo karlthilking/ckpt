@@ -1,33 +1,23 @@
 #!/usr/bin/env python3
-# bench.py
-import os, sys, pty, time, signal
-from pathlib import Path
+import os, sys, time, pty, signal
 import subprocess
+from pathlib import Path
+from typing import List
 
 USAGE = \
-    f"USAGE: python3 {sys.argv[0]} [options] program ...\n"             \
-     "OPTIONS:\n"                                                       \
-     "  -c, --bench-checkpoint NUMBER (default: 10)\n"                  \
-     "     Benchmark checkpoint/restart time and checkpoint file\n"     \
-     "     size for a total of NUMBER checkpoint/restart cycles\n"      \
-     "  -r, --bench-runtime NUMBER (default: 10)\n"                     \
-     "     Record native runtime of program as well as runtime with\n"  \
-     "     libxnd.dylib loaded, running the program in each context\n"  \
-     "     for NUMBER iterations\n"                                     \
-     "  -i, --ckpt-interval SECONDS (default: 10)\n"                    \
-     "     Specify the checkpoint interval when testing checkpoint\n"   \
-     "     time, restart time, and checkpoint file size\n"              \
-     "     (Only meaningful with --bench-checkpoint)\n"                 \
-     "  -o, --output-dir DIRECTORY (default: ./benchmarks)\n"           \
-     "     Directory to write benchmarks to\n"
+f"Usage: {sys.argv[0]} [options] program ...\n"   \
+ "Options:\n"                                       \
+ "  -c, --ckpt-iterations NUMBER\n"                 \
+ "  -i, --ckpt-interval SECONDS\n"                  \
+ "  -r, --run-iterations NUMBER\n"                  \
+ "  -o, --output PATH\n"
 
-PROGRAM, BENCHMARK_DIR = "", "./benchmarks"
-XND_LAUNCH_PATH, XND_RESTART_PATH = "", ""
-CKPT_ITERATIONS, RUNTIME_ITERATIONS, TIMEOUT = 10, 10, 10
+xnd_launch_path, xnd_restart_path = "", ""
+run_iterations, ckpt_iterations, ckpt_interval = 10, 25, 10
 
 def find_xnd_executables():
-    global XND_LAUNCH_PATH, XND_RESTART_PATH
-    found_launch, found_restart = False, False
+    global xnd_launch_path, xnd_restart_path
+    found_launch, found_restart = "", ""
     path_dirs = [".", ".."]
     path_dirs.extend(os.getenv("PATH").split(":"))
     for s in path_dirs:
@@ -38,12 +28,12 @@ def find_xnd_executables():
                     continue
                 path = str(file)
                 if "xnd_launch" in path and os.access(path, os.X_OK):
-                    XND_LAUNCH_PATH = "./" + path if s == "." else path
+                    xnd_launch_path = "./" + path if s == "." else path
                     found_launch = True
                 elif "xnd_restart" in path and os.access(path, os.X_OK):
-                    if "xnd_restart_internal" in path:
+                    if "xnd_restart_internal"  in path:
                         continue
-                    XND_RESTART_PATH = "./" + path if s == "." else path
+                    xnd_restart_path = "./" + path if s == "." else path
                     found_restart = True
                 elif file.is_dir() and "xnd" in path:
                     path_dirs.append(path)
@@ -51,296 +41,304 @@ def find_xnd_executables():
             continue
     return found_launch and found_restart
 
-def bench_overhead():
-    progname = ""
-    iterations = RUNTIME_ITERATIONS
-    if PROGRAM.rfind("/") != -1:
-        progname = PROGRAM[PROGRAM.rfind("/") + 1:]
+def bench_runtime(
+    program: str, no_xnd_runtimes: List[float], with_xnd_runtimes: List[float]
+):
+    assert(len(no_xnd_runtimes) == run_iterations)
+    assert(len(with_xnd_runtimes) == run_iterations)
 
-    TIME_MSG = "Time in seconds = "
+    for itr in range(run_iterations):
+        start = time.time()
+        proc = subprocess.run(
+            [program],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL
+        )
+        end = time.time()
+        no_xnd_runtimes[itr] = float(end - start)
+        print("{} runtime native #{}: {}".format(
+            program, itr, no_xnd_runtimes[itr]
+        ))
 
-    NO_XND_TIMES, WITH_XND_TIMES = [0] * iterations, [0] * iterations
-    NO_XND_FILE = BENCHMARK_DIR + "/" + progname + "_no_xnd.out"
-    WITH_XND_FILE = BENCHMARK_DIR + "/" + progname + "_with_xnd.out"
+        start = time.time()
+        proc = subprocess.run(
+            [xnd_launch_path, program],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL
+        )
+        end = time.time()
+        with_xnd_runtimes[itr] = float(end - start)
+        print("{} runtime with libxnd #{}: {}".format(
+            program, itr, with_xnd_runtimes[itr]
+        ))
 
-    no_xnd_handle = open(NO_XND_FILE, "w")
-    with_xnd_handle = open(WITH_XND_FILE, "w")
+def bench_ckpt_restart(
+    program: str, use_compression: bool,
+    ckpt_sizes: List[int], ckpt_times: List[int], restart_times: List[int]
+):
+    ckpt_msg = "Checkpoint complete: "
+    ckpt_time_msg = "Checkpoint took: "
+    restart_time_msg = "Restart took: "
+    ckpt_dir = ""
+    zlib_arg = "--use-zlib" if use_compression else "--no-zlib"
+    itr = 0
 
-    no_xnd_handle.write(
-        f"{NO_XND_FILE}\n\n"
-        f"Native runtimes for {progname} (without libxnd.dylib)\n"
-        f" ITERATIONS={iterations}\n\n"
-    )
+    assert(len(ckpt_sizes) == ckpt_iterations and \
+           len(ckpt_times) == ckpt_iterations and \
+           len(restart_times) == ckpt_iterations)
 
-    with_xnd_handle.write(
-        f"{WITH_XND_FILE}\n\n"
-        f"Runtimes for {progname} with libxnd.dylib\n"
-        f" ITERATIONS={iterations}\n\n"
-    )
-
-    for i in range(iterations):
+    while itr < ckpt_iterations:
         master_fd, slave_fd = pty.openpty()
         proc = subprocess.Popen(
-            [PROGRAM],
+            [xnd_launch_path, "-i", str(ckpt_interval), zlib_arg, program],
             stdout=slave_fd, stderr=slave_fd,
             start_new_session=True, text=True, close_fds=True
         )
         os.close(slave_fd)
         with os.fdopen(master_fd, "r", errors="ignore") as pipe:
             for line in pipe:
-                idx = line.find(TIME_MSG)
-                if idx != -1:
-                    l = idx + len(TIME_MSG)
-                    while line[l] == " ":
-                        l += 1
-                    NO_XND_TIMES[i] = float(line[l:line.rfind("\n")])
-                    no_xnd_handle.write(
-                        f"Runtime #{i}: {NO_XND_TIMES[i]}\n"
-                    )
-                    break
-
-        master_fd, slave_fd = pty.openpty()
-        proc = subprocess.Popen(
-            [XND_LAUNCH_PATH, PROGRAM],
-            stdout=slave_fd, stderr=slave_fd,
-            start_new_session=True, text=True, close_fds=True
-        )
-        os.close(slave_fd)
-        with os.fdopen(master_fd, "r", errors="ignore") as pipe:
-            for line in pipe:
-                idx = line.find(TIME_MSG)
-                if idx != -1:
-                    l = idx + len(TIME_MSG)
-                    while line[l] == " ":
-                        l += 1
-                    WITH_XND_TIMES[i] = float(line[l:line.rfind("\n")])
-                    with_xnd_handle.write(
-                        f"Runtime #{i}: {WITH_XND_TIMES[i]}\n"
-                    )
-                    break
-
-    no_xnd_runtime_avg = sum(NO_XND_TIMES) / len(NO_XND_TIMES)
-    with_xnd_runtime_avg = sum(WITH_XND_TIMES) / len(WITH_XND_TIMES)
-
-    no_xnd_handle.write(
-        "\n"
-        "Average runtime:\n"
-        f" MILLISECONDS: {no_xnd_runtime_avg * 1000}\n"
-        f"      SECONDS: {no_xnd_runtime_avg}\n"
-        f"      MINUTES: {no_xnd_runtime_avg / 60}\n"
-    )
-
-    with_xnd_handle.write(
-        "\n"
-        "Average runtime:\n"
-        f" MILLISECONDS: {with_xnd_runtime_avg * 1000}\n"
-        f"      SECONDS: {with_xnd_runtime_avg}\n"
-        f"      MINUTES: {with_xnd_runtime_avg / 60}\n"
-    )
-
-    no_xnd_handle.close()
-    with_xnd_handle.close()
-
-
-def bench_ckpt_restart():
-    iterations = CKPT_ITERATIONS
-    CKPT_MSG = "Checkpoint complete: "
-    CKPT_TIME_MSG = "Checkpoint took: "
-    RESTART_TIME_MSG = "Restart took: "
-    CKPT_DIR = ""
-    CKPT_SIZES_FILE, CKPT_TIMES_FILE, RESTART_TIMES_FILE = "", "", ""
-    CKPT_SIZES = [0] * iterations
-    CKPT_TIMES = [0] * iterations
-    RESTART_TIMES = [0] * iterations
-
-    progname = ""
-    if PROGRAM.rfind("/") != -1:
-        progname = PROGRAM[PROGRAM.rfind("/") + 1:]
-
-    CKPT_SIZES_FILE = BENCHMARK_DIR + "/" + progname + "_ckpt_sizes.out"
-    CKPT_TIMES_FILE = BENCHMARK_DIR + "/" + progname + "_ckpt_times.out"
-    RESTART_TIMES_FILE = BENCHMARK_DIR + "/" + progname + "_restart_times.out"
-
-    ckpt_sizes_handle = open(CKPT_SIZES_FILE, "w")
-    ckpt_times_handle = open(CKPT_TIMES_FILE, "w")
-    restart_times_handle = open(RESTART_TIMES_FILE, "w")
-
-    ckpt_sizes_handle.write(
-        f"{CKPT_SIZES_FILE}\n\n"
-        f"Checkpoint sizes for {progname}\n"
-        f" ITERATIONS={iterations}\n"
-        f"   INTERVAL={TIMEOUT}\n\n"
-    )
-
-    ckpt_times_handle.write(
-        f"{CKPT_TIMES_FILE}\n\n"
-        f"Checkpoint times for {progname}\n"
-        f" ITERATIONS={iterations}\n"
-        f"   INTERVAL={TIMEOUT}\n\n"
-    )
-
-    restart_times_handle.write(
-        f"{RESTART_TIMES_FILE}\n\n"
-        f"Restart times for {progname}\n"
-        f" ITERATIONS={iterations}\n"
-        f"   INTERVAL={TIMEOUT}\n\n"
-    )
-
-    i = 0
-    while i < iterations:
-        master_fd, slave_fd = pty.openpty()
-        proc = subprocess.Popen(
-            [XND_LAUNCH_PATH, "-i", str(TIMEOUT), PROGRAM],
-            stdout=slave_fd, stderr=slave_fd,
-            start_new_session=True, text=True, close_fds=True
-        )
-        os.close(slave_fd)
-        with os.fdopen(master_fd, "r", errors="ignore") as pipe:
-            for line in pipe:
-                if CKPT_MSG in line:
-                    l = line.find(CKPT_MSG) + len(CKPT_MSG)
-                    CKPT_DIR = line[l:line.rfind("/")]
-                elif CKPT_TIME_MSG in line:
+                if ckpt_msg in line:
+                    l = line.find(ckpt_msg) + len(ckpt_msg)
+                    ckpt_dir = line[l:line.rfind('/')]
+                elif ckpt_time_msg in line:
                     os.killpg(proc.pid, signal.SIGINT)
                     break
         running = True
-        while running and i < iterations:
-            master_fd, slave_fd = pty.openpty()
+        while running and itr < ckpt_iterations:
+            master_fd, salve_fd = pty.openpty()
             proc = subprocess.Popen(
-                [XND_RESTART_PATH, CKPT_DIR],
+                [xnd_restart_path, ckpt_dir],
                 stdout=slave_fd, stderr=slave_fd,
                 start_new_session=True, text=True, close_fds=True
             )
             os.close(slave_fd)
             with os.fdopen(master_fd, "r", errors="ignore") as pipe:
-                ckpt_msg_found = False
-                ckpt_time_found = False
+                found_ckpt_msg, found_ckpt_time = False, False
                 for line in pipe:
-                    if CKPT_MSG in line:
-                        ckpt_msg_found = True
-                        l = line.find(CKPT_MSG) + len(CKPT_MSG)
-                        ckpt_file = line[l:line.rfind("\n")]
-                        CKPT_DIR = line[l:line.rfind("/")]
+                    if ckpt_msg in line:
+                        found_ckpt_msg = True
+                        l = line.find(ckpt_msg) + len(ckpt_msg)
+                        ckpt_file = line[l:line.rfind('\n')]
+                        ckpt_dir = line[l:line.rfind('/')]
                         ckpt_size = os.path.getsize(ckpt_file)
-                        CKPT_SIZES[i] = ckpt_size
-                    elif RESTART_TIME_MSG in line:
-                        l = line.find(RESTART_TIME_MSG) + len(RESTART_TIME_MSG)
-                        RESTART_TIMES[i] = int(line[l:line.rfind("ms")])
-                    elif CKPT_TIME_MSG in line:
-                        ckpt_time_found = True
-                        l = line.find(CKPT_TIME_MSG) + len(CKPT_TIME_MSG)
-                        CKPT_TIMES[i] = int(line[l:line.rfind("ms")])
+                        ckpt_sizes[itr] = ckpt_size
+                    elif restart_time_msg in line:
+                        l = line.find(restart_time_msg) + len(restart_time_msg)
+                        restart_times[itr] = int(line[l:line.rfind('ms')])
+                    elif ckpt_time_msg in line:
+                        found_ckpt_time = True
+                        l = line.find(ckpt_time_msg) + len(ckpt_time_msg)
+                        ckpt_times[itr] = int(line[l:line.rfind('ms')])
                         os.killpg(proc.pid, signal.SIGINT)
                         break
-                if not ckpt_msg_found and not ckpt_time_found:
+                if not found_ckpt_msg or not found_ckpt_time:
                     running = False
 
             if not running:
-                top_level_dir = CKPT_DIR[:CKPT_DIR.find("/")]
+                top_level_dir = ckpt_dir[:ckpt_dir.find('/')]
                 os.system(f"rm -rf {top_level_dir}")
                 break
 
-            ckpt_size_out_msg = \
-                f"Checkpoint size #{i}: {CKPT_SIZES[i]} bytes\n"
-            print(ckpt_size_out_msg, end="", flush=True)
-            ckpt_sizes_handle.write(ckpt_size_out_msg)
+            print(
+                f"Iteration #{itr}:\n"
+                f" checkpoint size: {ckpt_sizes[itr]}\n"
+                f" checkpoint time: {ckpt_times[itr]}\n"
+                f"    restart time: {restart_times[itr]}\n",
+                end="", flush=True
+            )
+            itr += 1
 
-            ckpt_time_out_msg = \
-                f"Checkpoint time #{i}: {CKPT_TIMES[i]}ms\n"
-            print(ckpt_time_out_msg, end="", flush=True)
-            ckpt_times_handle.write(ckpt_time_out_msg)
-
-            restart_time_out_msg = \
-                f"Restart time #{i}: {RESTART_TIMES[i]}ms\n"
-            print(restart_time_out_msg, end="\n", flush=True)
-            restart_times_handle.write(restart_time_out_msg)
-            i += 1
-
-    top_level_dir = CKPT_DIR[:CKPT_DIR.find("/")]
+    top_level_dir = ckpt_dir[:ckpt_dir.rfind('/')]
     os.system(f"rm -rf {top_level_dir}")
-    assert(len(CKPT_SIZES) == iterations)
-    assert(len(CKPT_TIMES) == iterations)
-    assert(len(RESTART_TIMES) == iterations)
+    for itr in range(ckpt_iterations):
+        assert(ckpt_sizes[itr] != 0)
+        assert(ckpt_times[itr] != 0)
+        assert(restart_times[itr] != 0)
 
-    ckpt_size_avg = sum(CKPT_SIZES) / len(CKPT_SIZES)
-    ckpt_time_avg = sum(CKPT_TIMES) / len(CKPT_TIMES)
-    restart_time_avg = sum(RESTART_TIMES) / len(RESTART_TIMES)
+def bench(program: str, output_file: str):
+    ckpt_sizes_compressed = [0] * ckpt_iterations
+    ckpt_sizes_uncompressed = [0] * ckpt_iterations
 
-    ckpt_sizes_handle.write(
-        "\n"
-        "Average checkpoint size:\n"
-        f"     BYTES: {ckpt_size_avg}\n"
-        f" KILOBYTES: {ckpt_size_avg / (1 << 10)}\n"
-        f" MEGABYTES: {ckpt_size_avg / (1 << 20)}\n"
-        f" GIGABYTES: {ckpt_size_avg / (1 << 30)}\n"
+    ckpt_times_compressed = [0] * ckpt_iterations
+    ckpt_times_uncompressed = [0] * ckpt_iterations
+
+    restart_times_compressed = [0] * ckpt_iterations
+    restart_times_uncompressed = [0] * ckpt_iterations
+
+    no_xnd_runtimes = [0.0] * run_iterations
+    with_xnd_runtimes = [0.0] * run_iterations
+
+    progname = program
+    if program.rfind('/') != -1:
+        progname = program[program.rfind('/') + 1:]
+
+    output_file_handle = open(output_file, "w")
+    output_file_handle.write("{}: {}\n\n".format(output_file, progname))
+
+    # Time native runtime against runtime with libxnd.dylib loaded
+    bench_runtime(
+        program=program,
+        no_xnd_runtimes=no_xnd_runtimes,
+        with_xnd_runtimes=with_xnd_runtimes
     )
 
-    ckpt_times_handle.write(
-        "\n"
-        "Average checkpoint time:\n"
-        f" MICROSECONDS: {ckpt_time_avg * 1000}\n"
-        f" MILLISECONDS: {ckpt_time_avg}\n"
-        f"      SECONDS: {ckpt_time_avg / 1000}\n"
+    # Checkpoint-restart benchmarks without using compression
+    bench_ckpt_restart(
+        program=program,
+        use_compression=False,
+        ckpt_sizes=ckpt_sizes_uncompressed,
+        ckpt_times=ckpt_times_uncompressed,
+        restart_times=restart_times_uncompressed
     )
 
-    restart_times_handle.write(
-        "\n"
-        f" MICROSECONDS: {ckpt_time_avg * 1000}\n"
-        f" MILLISECONDS: {ckpt_time_avg}\n"
-        f"      SECONDS: {ckpt_time_avg / 1000}\n"
+    # Checkpoint-restart benchmarks with compressed checkpoint files
+    bench_ckpt_restart(
+        program=program,
+        use_compression=True,
+        ckpt_sizes=ckpt_sizes_compressed,
+        ckpt_times=ckpt_times_compressed,
+        restart_times=restart_times_compressed
     )
 
-    ckpt_sizes_handle.close()
-    ckpt_times_handle.close()
-    restart_times_handle.close()
+    # Checkpoint sizes without compression
+    output_file_handle.write("Checkpoint sizes (without compression):\n")
+    for itr in range(ckpt_iterations):
+        size = ckpt_sizes_uncompressed[itr]
+        output_file_handle.write(
+            f"Iteration {itr}:\n"
+            f"     BYTES: {size / (1 << 0)}\n"
+            f" KILOBYTES: {size / (1 << 10)}\n"
+            f" MEGABYTES: {size / (1 << 20)}\n"
+            f" GIGABYTES: {size / (1 << 30)}\n"
+        )
+    output_file_handle.write('\n')
+
+    # Checkpoint sizes with compression
+    output_file_handle.write("Checkpoint sizes (with compression):\n")
+    for itr in range(ckpt_iterations):
+        size = ckpt_sizes_compressed[itr]
+        output_file_handle.write(
+            f"Iteration {itr}:\n"
+            f"     BYTES: {size / (1 << 0)}\n"
+            f" KILOBYTES: {size / (1 << 10)}\n"
+            f" MEGABYTES: {size / (1 << 20)}\n"
+            f" GIGABYTES: {size / (1 << 30)}\n"
+        )
+    output_file_handle.write('\n')
+
+    # Checkpoint times without compression
+    output_file_handle.write("Checkpoint times (without compression):\n")
+    for itr in range(ckpt_iterations):
+        ckpt_time = ckpt_times_uncompressed[itr]
+        output_file_handle.write(
+            f"Iteration {itr}:\n"
+            f"      SECONDS: {ckpt_time / 1000}\n"
+            f" MILLISECONDS: {ckpt_time}\n"
+            f" MICROSECONDS: {ckpt_time * 1000}\n"
+        )
+    output_file_handle.write('\n')
+
+    # Checkpoint times with compression
+    output_file_handle.write("Checkpoint times (with compression):\n")
+    for itr in range(ckpt_iterations):
+        ckpt_time = ckpt_times_compressed[itr]
+        output_file_handle.write(
+            f"Iteration {itr}:\n"
+            f"      SECONDS: {ckpt_time / 1000}\n"
+            f" MILLISECONDS: {ckpt_time}\n"
+            f" MICROSECONDS: {ckpt_time * 1000}\n"
+        )
+    output_file_handle.write('\n')
+
+    # Restart times without compression
+    output_file_handle.write("Restart times (without compression):\n")
+    for itr in range(ckpt_iterations):
+        restart_time = restart_times_uncompressed[itr]
+        output_file_handle.write(
+            f"Iteration {itr}:\n"
+            f"      SECONDS: {restart_time / 1000}\n"
+            f" MILLISECONDS: {restart_time}\n"
+            f" MICROSECONDS: {restart_time * 1000}\n"
+        )
+    output_file_handle.write('\n')
+
+    # Restart times with compression
+    output_file_handle.write("Restart times (with compression):\n")
+    for itr in range(ckpt_iterations):
+        restart_time = restart_times_compressed[itr]
+        output_file_handle.write(
+            f"Iteration {itr}:\n"
+            f"      SECONDS: {restart_time / 1000}\n"
+            f" MILLISECONDS: {restart_time}\n"
+            f" MICROSECONDS: {restart_time * 1000}\n"
+        )
+    output_file_handle.write('\n')
+
+    # Runtimes without libxnd.dylib loaded
+    output_file_handle.write("Runtimes (without libxnd):\n")
+    for itr in range(run_iterations):
+        runtime = no_xnd_runtimes[itr]
+        output_file_handle.write(
+            f"Iteration {itr}:\n"
+            f"      MINUTES: {runtime / 60}\n"
+            f"      SECONDS: {runtime}\n"
+            f" MILLISECONDS: {runtime * 1000}\n"
+        )
+    output_file_handle.write('\n')
+    
+    # Runtimes with libxnd.dylib loaded
+    output_file_handle.write("Runtimes (with libxnd):\n")
+    for itr in range(run_iterations):
+        runtime = with_xnd_runtimes[itr]
+        output_file_handle.write(
+            f"Iteration {itr}:\n"
+            f"      MINUTES: {runtime / 60}\n"
+            f"      SECONDS: {runtime}\n"
+            f" MILLISECONDS: {runtime * 1000}\n"
+        )
+    output_file_handle.write('\n')
+
+    output_file_handle.write('\n')
+    output_file_handle.close()
 
 if __name__ == "__main__":
     argc = len(sys.argv)
+    program, output_file = "", ""
     if argc < 2:
         print(USAGE)
         sys.exit(0)
 
-    idx = 1
-    do_bench_ckpt, do_bench_runtime = False, False
-    while idx < argc:
-        if "-c" in sys.argv[idx] or "--bench-checkpoint" in sys.argv[idx]:
-            CKPT_ITERATIONS = int(sys.argv[idx + 1])
-            do_bench_ckpt = True
-            idx += 2
-        elif "-r" in sys.argv[idx] or "--bench-runtime" in sys.argv[idx]:
-            RUNTIME_ITERATIONS = int(sys.argv[idx + 1])
-            do_bench_runtime = True
-            idx += 2
-        elif "-i" in sys.argv[idx] or "--ckpt-interval" in sys.argv[idx]:
-            TIMEOUT = int(sys.argv[idx + 1])
-            idx += 2
-        elif "-o" in sys.argv[idx] or "--output-dir" in sys.argv[idx]:
-            BENCHMARK_DIR = sys.argv[idx + 1]
-            idx += 2
-        else:
-            PROGRAM = sys.argv[idx]
-            idx += 1
-
-    if len(PROGRAM) == 0:
-        print(USAGE)
-        sys.exit(0)
-
     if not find_xnd_executables():
-        print("Failed to find xnd_launch and xnd_restart paths")
+        print("Failed to find xnd_launch and xnd_restart")
         sys.exit(-1)
 
-    print(f"Running benchmarks for {PROGRAM}\n"
-          f" BENCMARK DIRECTORY: {BENCHMARK_DIR}\n")
+    assert(len(xnd_launch_path) >= len("xnd_launch"))
+    assert(len(xnd_restart_path) >= len("xnd_restart"))
 
-    if do_bench_ckpt:
-          print(f" CHECKPOINT ITERATIONS: {CKPT_ITERATIONS}\n"
-                f"   CHECKPOINT INTERVAL: {TIMEOUT}\n")
-    if do_bench_runtime:
-          print(f"    RUNTIME ITERATIONS: {RUNTIME_ITERATIONS}\n")
+    idx = 1
+    while idx < argc:
+        if "-c" in sys.argv[idx] or "--ckpt-iterations" in sys.argv[idx]:
+            ckpt_iterations = int(sys.argv[idx + 1])
+            idx += 2
+        elif "-r" in sys.argv[idx] or "--run-iterations" in sys.argv[idx]:
+            run_iterations = int(sys.argv[idx + 1])
+            idx += 2
+        elif "-o" in sys.argv[idx] or "--output" in sys.argv[idx]:
+            output_file = sys.argv[idx + 1]
+            idx += 2
+        elif "-i" in sys.argv[idx] or "--ckpt-interval" in sys.argv[idx]:
+             ckpt_interval = int(sys.argv[idx + 1])
+             idx += 2
+        else:
+            program = sys.argv[idx]
+            break
 
-    if do_bench_ckpt:
-        bench_ckpt_restart()
-    if do_bench_runtime:
-        bench_overhead()
+    if len(output_file) == 0:
+        print(USAGE)
+        sys.exit(-1)
+    elif len(program) == 0:
+        print(USAGE)
+        sys.exit(-1)
 
+    bench(program, output_file)
     sys.exit(0)
