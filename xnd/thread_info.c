@@ -440,19 +440,19 @@ struct thread_info *main_thread(void)
 
 void ckpt_thread_init(void)
 {
-        struct thread_info      *th = &ckpt_thread;
+        struct thread_info      *ct = &ckpt_thread;
         bool                    wait = true;
 
-        th->state = ST_CKPT_THREAD;
-        xnd_assert(pthread_mutex_init(&th->lock, NULL) == 0);
-        xnd_assert(pthread_cond_init(&th->cond, NULL) == 0);
+        ct->state = ST_CKPT_THREAD;
+        xnd_assert(pthread_mutex_init(&ct->lock, NULL) == 0);
+        xnd_assert(pthread_cond_init(&ct->cond, NULL) == 0);
 
-        pthread_mutex_lock(&th->lock);
-        pthread_create(&th->self, NULL, ckpt_thread_work, (void *)&wait);
+        pthread_mutex_lock(&ct->lock);
+        pthread_create(&ct->self, NULL, ckpt_thread_work, (void *)&wait);
         while (wait) {
-                pthread_cond_wait(&th->cond, &th->lock);
+                pthread_cond_wait(&ct->cond, &ct->lock);
         }
-        pthread_mutex_unlock(&th->lock);
+        pthread_mutex_unlock(&ct->lock);
 }
 
 __noreturn void ckpt_thread_exit(void)
@@ -715,7 +715,7 @@ void restore_threads(void)
         threads_expected = 0;
 
         for_each_thread(th, &thread_list) {
-                xnd_assert(!th->exiting);
+                xnd_assert(!th->exiting && th != &ckpt_thread);
                 err = pthread_create(&th->self, NULL, thread_restart, th);
                 if (unlikely(err != 0)) {
                         xnd_error("pthread_create: %s\n", strerror(err));

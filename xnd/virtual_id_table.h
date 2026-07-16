@@ -19,6 +19,7 @@ private:
         virtual_id_table(void) noexcept
         {
                 xnd_assert(pthread_mutex_init(&mtx, NULL) == 0);
+                xnd_assert(table.empty());
         }
 
         ~virtual_id_table(void) noexcept
@@ -35,9 +36,9 @@ public:
                 return _id_table;
         }
 
-        std::unordered_map<ID, ID> &get(void) noexcept
+        static std::unordered_map<ID, ID> &get(void) noexcept
         {
-                return table;
+                return instance().table;
         }
 
         void atfork_child(void) const noexcept

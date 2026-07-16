@@ -94,10 +94,10 @@ struct xnd_vm_page {
 #define RESTART_REGION_BEHAVIOR_FLAG    VM_BEHAVIOR_RSEQNTL
 #define RESTART_REGION_INHERIT_FLAG     VM_INHERIT_NONE
 
-#define RESTART_REGION(__info) \
-        (((__info)->inheritance == RESTART_REGION_INHERIT_FLAG &&       \
-         ((__info)->behavior == RESTART_REGION_BEHAVIOR_FLAG)) ||       \
-         ((__info)->user_tag == VM_MEMORY_RESTART_STACK))
+#define RESTART_REGION(info) \
+        (((info)->inheritance == RESTART_REGION_INHERIT_FLAG && \
+          (info)->behavior == RESTART_REGION_BEHAVIOR_FLAG) || \
+          (info)->user_tag == VM_MEMORY_RESTART_STACK)
 
 #define IN_VM_RANGE(ptr, start, end) \
         ((uintptr_t)(ptr) >= (uintptr_t)(start) && \

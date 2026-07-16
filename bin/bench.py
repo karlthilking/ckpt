@@ -9,7 +9,8 @@ f"Usage: {sys.argv[0]} [options] ...\n" \
  "Options:\n"                           \
  "  -c, --ckpt-iterations NUMBER\n"     \
  "  -i, --ckpt-interval SECONDS\n"      \
- "  -r, --run-iterations NUMBER\n"
+ "  -r, --run-iterations NUMBER\n"      \
+ "  -t, --test path/to/test\n"
 
 EXECUTABLE_PATH = sys.argv[0]
 EXECUTABLE_DIRECTORY = os.path.dirname(EXECUTABLE_PATH)
@@ -200,7 +201,11 @@ def bench(test: Dict[str, str]):
         progname = program[program.rfind('/') + 1:]
 
     output_file_handle = open(output_file, "w")
-    output_file_handle.write("{}: {}\n\n".format(output_file, progname))
+    output_file_handle.write(
+        f"{output_file}: {progname}\n"
+        f"   Checkpoint Iterations: {ckpt_iterations}\n"
+        f"      Runtime Iterations: {run_iterations}\n\n"
+    )
 
     # Time native runtime against runtime with libxnd.dylib loaded
     bench_runtime(
@@ -329,6 +334,7 @@ def bench(test: Dict[str, str]):
     output_file_handle.close()
 
 if __name__ == "__main__":
+    test_paths = []
     argc = len(sys.argv)
     if argc < 2:
         print(USAGE)
@@ -352,15 +358,43 @@ if __name__ == "__main__":
         elif "-i" in sys.argv[idx] or "--ckpt-interval" in sys.argv[idx]:
              ckpt_interval = int(sys.argv[idx + 1])
              idx += 2
+        elif "-t" in sys.argv[idx] or "--test" in sys.argv[idx]:
+            path = sys.argv[idx + 1]
+            if not os.access(path, os.X_OK):
+                print(f"Not a valid executable path: {path}")
+                sys.exit(-1)
+            else:
+                test_paths.append(path)
+                idx += 2
         else:
             print(f"Unrecognized argument: {sys.argv[idx]}")
             sys.exit(-1)
 
-    print(f"Running benchmarks for {len(TESTS)} programs:")
-    for i in range(len(TESTS)):
-        print(f"\tProgram #{i}: {TESTS[i]["name"]} ({TESTS[i]["path"]})")
-
-    for test in TESTS:
-        bench(test)
+    if len(test_paths) != 0:
+        selected_tests = []
+        for path in test_paths:
+            opts = [path, "./" + path]
+            found = False
+            for opt in opts:
+                try:
+                    test = next(test for test in TESTS if test["path"] == opt)
+                    found = True
+                    selected_tests.append(test)
+                except:
+                    continue
+            if not found:
+                print(f"Couldn't find test for {path}")
+                sys.exit(-1)
+        print(f"Running benchmarks for {len(selected_tests)} program:")
+        for i, test in enumerate(selected_tests):
+            print(f"\tProgram #{i}: {test["name"]} ({test["path"]})")
+        for test in selected_tests:
+            bench(test)
+    else:
+        print(f"Running benchmarks for {len(TESTS)} programs:")
+        for i, test in enumerate(TESTS):
+            print(f"\tProgram #{i}: {test["name"]} ({test["path"]})")
+        for test in TESTS:
+            bench(test)
 
     sys.exit(0)

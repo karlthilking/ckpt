@@ -66,11 +66,7 @@ __noreturn void jump(int fd)
         kern_return_t           ret;
         void                    *sp;
         const mach_vm_size_t    size = 1024 * 1024;
-#if defined(XND_RESTART_STACKADDR)
-        mach_vm_address_t       addr = XND_RESTART_STACKADDR;
-#else
-# error "XND_RESTART_STACKADDR is undefined"
-#endif
+        mach_vm_address_t       addr = XND_RESTART_STACK;
         
         xnd_trace("Allocating temporary stack 0x%llx-0x%llx\n",
                   addr, addr + size);
@@ -109,7 +105,6 @@ __noreturn int main(int argc, char **argv)
 {
         int fd;
         
-        xnd_log_setup_direct(XND_MAX_LOG_LEVEL);
         if (argc != 2) {
                 xnd_error("restart should not be invoked directly!\n"
                           "Usage: ./xnd_run -r <ckpt-file>\n");

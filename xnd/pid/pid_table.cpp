@@ -32,10 +32,13 @@ extern "C" void pid_table_init_pid_info(void)
 
 extern "C" void pid_table_postrestart(void)
 {
+        pid_t new_real;
+
         _real_pid = _real_getpid();
         _real_ppid = _real_getppid();
 
         pid_table->acquire();
+        xnd_assert(_virt_pid != -1 && _virt_ppid != -1);
         pid_table->update(_virt_pid, _real_pid);
         pid_table->update(_virt_ppid, _real_ppid);
         
@@ -43,13 +46,17 @@ extern "C" void pid_table_postrestart(void)
          * Update all virtual -> real mappings by asking coordinator
          * for new real pid.
          */
-        auto &table = pid_table->get();
+        auto &table = virtual_id_table<pid_t>::get();
         for (auto &[virt, real] : table) {
-                if (virt == _virt_pid || virt == _virt_ppid) {
+                if (virt == _virt_pid || virt == _virt_ppid)
                         continue;
+                new_real = virt_to_real_pid_from_coord(virt);
+                if (new_real == -1) {
+                        xnd_warn("pid translation failed: virt=%d\n", virt);
+                        pid_table->erase(virt);
+                } else {
+                        pid_table->update(virt, new_real);
                 }
-                real = virt_to_real_pid_from_coord(virt);
-                xnd_assert(real != -1);
         }
 
         pid_table->release();
