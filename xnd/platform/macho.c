@@ -25,6 +25,38 @@ static u8 *macho_serialize_opcodes(struct macho_info *, u32);
 static int arm64e_with_dyld_info_to_arm64(int, void *, size_t,
 					  struct dyld_info_command *);
 
+static void *macho_thin_from_fat(void *fh_addr, s32 arch)
+{
+	struct fat_header *fh;
+	struct fat_arch *fa;
+	u32 nfat_arch, offset;
+	s32 cputype;
+	bool bswap, found = false;
+
+	fh = (struct fat_header *)fh_addr;
+	bswap = NEEDS_BSWAP(fh->magic);
+	nfat_arch = (bswap ? __builtin_bswap32(fh->nfat_arch) :
+		     fh->nfat_arch);
+
+	fa = (struct fat_arch *)((char *)fh + sizeof(*fh));
+	for (u32 idx = 0; idx < nfat_arch; idx++, fa++) {
+		cputype = (bswap ? __builtin_bswap32(fa->cputype) :
+			   fa->cputype);
+		if (cputype == arch) {
+			found = true;
+			break;
+		}
+	}
+
+	if (!found) {
+		xnd_error("Couldn't find slice with arch %x", arch);
+		return NULL;
+	}
+
+	offset = (bswap ? __builtin_bswap32(fa->offset) : fa->offset);
+	return (void *)((char *)fh + offset);
+}
+
 /**
  * macho_find_load_command:
  *  Find specific load command in memory-mapped mach-o executable
@@ -525,7 +557,7 @@ static char *macho_dylib_name(void *mh_addr, long ordinal, bool special)
 	uintptr_t lc_start, offset;
 	u32 cmdsize;
 	char *name;
-	long idx = 1; /* starts at 0 or 1? */
+	long idx = 1;
 
 	if (special) {
 		switch (ordinal) {
@@ -594,7 +626,7 @@ static void macho_print_opcodes(void *mh, u32 bind_off, u32 bind_size)
 	u8 *op_start, *op_end, *itr, op, imm, type;
 	long ordinal;
 	char *symbol, *dylib_name, *segname, indent[] = "    ";
-	u32 flags, seg_index;
+	u32 flags, seg_index, total = 0;
 	u64 skip, count, opcode_offset, seg_offset;
 	s64 addend;
 
@@ -607,6 +639,7 @@ static void macho_print_opcodes(void *mh, u32 bind_off, u32 bind_size)
 		imm = *itr & BIND_IMMEDIATE_MASK;
 		opcode_offset = itr - op_start;
 		itr++;
+		total++;
 		switch (op) {
 		case BIND_OPCODE_DONE:
 			printf("%s0x%llx %s\n",
@@ -704,16 +737,20 @@ static void macho_print_opcodes(void *mh, u32 bind_off, u32 bind_size)
 			break;
 		}
 	}
+
+	printf("\nTotal bind opcodes: %u\n"
+	       "Total size of bind info: %u\n",
+	       total, bind_size);
 }
 
 int macho_parse_opcodes(char *path, int which)
 {
-	struct dyld_info_command	*cmd;
-	int				fd;
-	void 				*addr;
-	size_t				size;
-	off_t				offset;
-	u32				bind_off, bind_size;
+	struct dyld_info_command *cmd;
+	int ret = -1, fd = -1;
+	void *mh, *addr = MAP_FAILED;
+	size_t size;
+	off_t offset;
+	u32 bind_off, bind_size, magic;
 
 	if ((fd = open(path, O_RDONLY)) < 0) {
 		xnd_error("open(%s): %s\n", path, strerror(errno));
@@ -722,28 +759,38 @@ int macho_parse_opcodes(char *path, int which)
 
 	if ((offset = lseek(fd, 0, SEEK_END)) < 0) {
 		xnd_error("lseek: %s\n", strerror(errno));
-		return -1;
+		goto out;
 	}
 	
 	size = (size_t)offset;
 	addr = mmap(NULL, size, PROT_READ, MAP_PRIVATE, fd, 0);
 	if (addr == MAP_FAILED) {
 		xnd_error("mmap: %s\n", strerror(errno));
-		return -1;
+		goto out;
+	}
+
+	magic = *(u32 *)addr;
+	/* Assuming that we want to parse the arm64(e) slice */
+	if (HEADER_IS_FAT(magic)) {
+		mh = macho_thin_from_fat(addr, CPU_TYPE_ARM64);
+		if (!mh)
+			goto out;
+	} else {
+		mh = addr;
 	}
 
 	cmd = (struct dyld_info_command *)
-		macho_find_load_command(addr, LC_DYLD_INFO_ONLY);
-	if (cmd == NULL) {
+		macho_find_load_command(mh, LC_DYLD_INFO_ONLY);
+	if (!cmd) {
 		xnd_printf("No LC_DYLD_INFO_ONLY in %s\n", path);
-		return -1;
+		goto out;
 	}
 
 	if ((which & BIND_TYPE_REGULAR) != 0) {
 		bind_off = cmd->bind_off;
 		bind_size = cmd->bind_size;
 		printf("Bind opcodes:\n");
-		macho_print_opcodes(addr, bind_off, bind_size);
+		macho_print_opcodes(mh, bind_off, bind_size);
 		printf("\n");
 	}
 	
@@ -751,7 +798,7 @@ int macho_parse_opcodes(char *path, int which)
 		bind_off = cmd->weak_bind_off;
 		bind_size = cmd->weak_bind_size;
 		printf("Weak bind opcodes:\n");
-		macho_print_opcodes(addr, bind_off, bind_size);
+		macho_print_opcodes(mh, bind_off, bind_size);
 		printf("\n");
 	}
 
@@ -759,9 +806,16 @@ int macho_parse_opcodes(char *path, int which)
 		bind_off = cmd->lazy_bind_off;
 		bind_size = cmd->lazy_bind_size;
 		printf("Lazy bind opcodes:\n");
-		macho_print_opcodes(addr, bind_off, bind_size);
+		macho_print_opcodes(mh, bind_off, bind_size);
 		printf("\n");
 	}
+	
+	ret = 0;
+out:
+	if (fd != -1)
+		close(fd);
+	if (addr != MAP_FAILED)
+		munmap(addr, size);
 
-	return 0;
+	return ret;
 }
