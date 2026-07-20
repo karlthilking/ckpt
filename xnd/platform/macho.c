@@ -8,6 +8,7 @@
 #include <mach-o/fat.h>
 #include <mach-o/loader.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
 #include <sys/mman.h>
 
@@ -403,13 +404,13 @@ static int arm64e_with_dyld_info_to_arm64(int outfd, void *mh, size_t size,
 
 int binary_arm64e_to_arm64(char *path, char *tmp)
 {
-	int		     srcfd = -1, dstfd = -1;
-	int		     err, ret = ARM64E_TO_ARM64_SUCCESS;
-	void		     *mh, *addr = NULL;
-	size_t		     size, nbyte;
-	off_t		     off;
-	u32		     magic;
-	struct load_command  *lc;
+	int srcfd = -1, dstfd = -1;
+	int err, ret = ARM64E_TO_ARM64_SUCCESS;
+	struct load_command *lc;
+	void *mh, *addr = NULL;
+	size_t size, nbyte;
+	off_t off;
+	u32 magic;
 
 	if ((srcfd = open(path, O_RDONLY)) < 0) {
 		xnd_error("open: %s\n", strerror(errno));
@@ -422,11 +423,11 @@ int binary_arm64e_to_arm64(char *path, char *tmp)
 		ret = ARM64E_TO_ARM64_FAILURE;
 		goto out;
 	}
-
+	  
 	size = (size_t)off;
-	addr = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_PRIVATE, srcfd, 0);
+	addr = mmap (NULL, size, PROT_READ | PROT_WRITE, MAP_PRIVATE, srcfd, 0);
 	if (addr == MAP_FAILED) {
-		xnd_error("mmap: %s\n", strerror(errno));
+		xnd_error ("mmap: %s\n", strerror (errno));
 		ret = ARM64E_TO_ARM64_FAILURE;
 		goto out;
 	}
@@ -490,4 +491,277 @@ out:
 		unlink(tmp);
 
 	return ret;
+}
+
+static void macho_print_threaded_opcode(u8 **p, u8 imm, char *indent,
+					u64 opcode_offset)
+{
+	u64 count;
+	u8 *itr = *p;
+	
+	switch (imm) {
+	case BIND_SUBOPCODE_THREADED_SET_BIND_ORDINAL_TABLE_SIZE_ULEB:
+		itr = decode_uleb128(itr, &count);
+		printf("%s0x%llx %s: %llu\n", indent, opcode_offset,
+		       bind_subopcode_str[imm], count);
+		break;
+	case BIND_SUBOPCODE_THREADED_APPLY:
+		printf("%s0x%llx %s\n", indent, opcode_offset,
+		       bind_subopcode_str[imm]);
+		break;
+	default:
+		printf("Unknown threaded subopcode: 0x%x\n", imm);
+		break;
+	}
+
+	*p = itr;
+}
+
+static char *macho_dylib_name(void *mh_addr, long ordinal, bool special)
+{
+	struct mach_header *mh;
+	struct load_command *lc;
+	struct dylib *dylib;
+	uintptr_t lc_start, offset;
+	u32 cmdsize;
+	char *name;
+	long idx = 1; /* starts at 0 or 1? */
+
+	if (special) {
+		switch (ordinal) {
+		case 0:
+			return "BIND_SPECIAL_DYLIB_SELF";
+		case -1:
+			return "BIND_SPECIAL_DYLIB_MAIN_EXECUTABLE";
+		case -2:
+			return "BIND_SPECIAL_DYLIB_FLAT_LOOKUP";
+		default:
+			xnd_error("Unknown special dylib: %ld\n", ordinal);
+			return NULL;
+		}
+	}
+
+	mh = (struct mach_header *)mh_addr;
+	lc_start = (HEADER_IS_64BIT(mh->magic) ?
+		    (uintptr_t)mh_addr + sizeof(struct mach_header_64) :
+		    (uintptr_t)mh_addr + sizeof(struct mach_header));
+
+	for (offset = 0; offset < mh->sizeofcmds; offset += cmdsize) {
+		lc = (struct load_command *)(lc_start + offset);
+		cmdsize = lc->cmdsize;
+		if (lc->cmd != LC_LOAD_DYLIB &&
+		    lc->cmd != LC_LOAD_WEAK_DYLIB &&
+		    lc->cmd != LC_REEXPORT_DYLIB)
+			continue;
+		if (idx++ == ordinal) {
+			dylib = &((struct dylib_command *)lc)->dylib;
+			name = (char *)lc + dylib->name.offset;
+			return name;
+		}
+	}
+
+	xnd_error("Couldn't find dylib at index %ld\n", ordinal);
+	return NULL;
+}
+
+static char *macho_segment_name(void *mh_addr, u32 seg_index)
+{
+	struct mach_header *mh;
+	struct load_command *lc;
+	uintptr_t lc_start, offset;
+	u32 cmdsize, idx = 0;
+
+	mh = (struct mach_header *)mh_addr;
+	lc_start = (HEADER_IS_64BIT(mh->magic) ?
+		    (uintptr_t)mh_addr + sizeof(struct mach_header_64) :
+		    (uintptr_t)mh_addr + sizeof(struct mach_header));
+
+	for (offset = 0; offset < mh->sizeofcmds; offset += cmdsize) {
+		lc = (struct load_command *)(lc_start + offset);
+		cmdsize = lc->cmdsize;
+		if (lc->cmd != LC_SEGMENT && lc->cmd != LC_SEGMENT_64)
+			continue;
+		else if (idx++ == seg_index)
+			return ((struct segment_command *)lc)->segname;
+	}
+
+	xnd_error("Couldn't find segment at index %u\n", seg_index);
+	return NULL;
+}
+
+static void macho_print_opcodes(void *mh, u32 bind_off, u32 bind_size)
+{
+	u8 *op_start, *op_end, *itr, op, imm, type;
+	long ordinal;
+	char *symbol, *dylib_name, *segname, indent[] = "    ";
+	u32 flags, seg_index;
+	u64 skip, count, opcode_offset, seg_offset;
+	s64 addend;
+
+	op_start = (u8 *)mh + bind_off;
+	op_end = op_start + bind_size;
+
+	itr = op_start;
+	while (itr < op_end) {
+		op = *itr & BIND_OPCODE_MASK;
+		imm = *itr & BIND_IMMEDIATE_MASK;
+		opcode_offset = itr - op_start;
+		itr++;
+		switch (op) {
+		case BIND_OPCODE_DONE:
+			printf("%s0x%llx %s\n",
+			       indent, opcode_offset,
+			       bind_opcode_str[op]);
+			break;
+		case BIND_OPCODE_SET_DYLIB_ORDINAL_IMM:
+			ordinal = imm;
+			dylib_name = macho_dylib_name(mh, ordinal, false);
+			printf("%s0x%llx %s: %ld (%s)\n",
+			       indent, opcode_offset,
+			       bind_opcode_str[op], ordinal, dylib_name);
+			break;
+		case BIND_OPCODE_SET_DYLIB_ORDINAL_ULEB:
+			itr = decode_uleb128(itr, (u64 *)&ordinal);
+			dylib_name = macho_dylib_name(mh, ordinal, false);
+			printf("%s0x%llx %s: %ld (%s)\n",
+			       indent, opcode_offset,
+			       bind_opcode_str[op], ordinal, dylib_name);
+			break;
+		case BIND_OPCODE_SET_DYLIB_SPECIAL_IMM:
+			if ((ordinal = imm) != 0)
+				ordinal |= BIND_OPCODE_MASK;
+			dylib_name = macho_dylib_name(mh, ordinal, true);
+			printf("%s0x%llx %s: %ld (%s)\n",
+			       indent, opcode_offset,
+			       bind_opcode_str[op], ordinal, dylib_name);
+			break;
+		case BIND_OPCODE_SET_SYMBOL_TRAILING_FLAGS_IMM:
+			flags = imm;
+			symbol = (char *)itr;
+			while (*itr != '\0')
+				itr++;
+			itr++;
+			printf("%s0x%llx %s: 0x%x, %s\n",
+			       indent, opcode_offset,
+			       bind_opcode_str[op], flags, symbol);
+			break;
+		case BIND_OPCODE_SET_TYPE_IMM:
+			type = imm;
+			printf("%s0x%llx %s: %d\n",
+			       indent, opcode_offset,
+			       bind_opcode_str[op], type);
+			break;
+		case BIND_OPCODE_SET_ADDEND_SLEB:
+			itr = decode_sleb128(itr, &addend);
+			printf("%s0x%llx %s: %lld\n",
+			       indent, opcode_offset,
+			       bind_opcode_str[op], addend);
+			break;
+		case BIND_OPCODE_SET_SEGMENT_AND_OFFSET_ULEB:
+			seg_index = imm;
+			segname = macho_segment_name(mh, seg_index);
+			itr = decode_uleb128(itr, &seg_offset);
+			printf("%s0x%llx %s: 0x%x (%s), 0x%llx\n",
+			       indent, opcode_offset,
+			       bind_opcode_str[op], seg_index,
+			       segname, seg_offset);
+			break;
+		case BIND_OPCODE_ADD_ADDR_ULEB:
+			itr = decode_uleb128(itr, &skip);
+			printf("%s0x%llx %s: 0x%llx\n",
+			       indent, opcode_offset,
+			       bind_opcode_str[op], skip);
+			break;
+		case BIND_OPCODE_DO_BIND:
+			printf("%s0x%llx %s\n",
+			       indent, opcode_offset,
+			       bind_opcode_str[op]);
+			break;
+		case BIND_OPCODE_DO_BIND_ADD_ADDR_ULEB:
+			itr = decode_uleb128(itr, &skip);
+			printf("%s0x%llx %s: 0x%llx\n",
+			       indent, opcode_offset,
+			       bind_opcode_str[op], skip);
+		case BIND_OPCODE_DO_BIND_ADD_ADDR_IMM_SCALED:
+			skip = imm * sizeof(void *) + sizeof(void *);
+			printf("%s0x%llx %s: 0x%llx\n",
+			       indent, opcode_offset,
+			       bind_opcode_str[op], skip);
+			break;
+		case BIND_OPCODE_DO_BIND_ULEB_TIMES_SKIPPING_ULEB:
+			itr = decode_uleb128(itr, &count);
+			itr = decode_uleb128(itr, &skip);
+			printf("%s0x%llx %s: %llu, 0x%llx\n",
+			       indent, opcode_offset,
+			       bind_opcode_str[op], count, skip);
+			break;
+		case BIND_OPCODE_THREADED:
+			macho_print_threaded_opcode(&itr, imm, indent,
+						    opcode_offset);
+			break;
+		default:
+			printf("Unknown opcode: 0x%x\n", op | imm);
+			break;
+		}
+	}
+}
+
+int macho_parse_opcodes(char *path, int which)
+{
+	struct dyld_info_command	*cmd;
+	int				fd;
+	void 				*addr;
+	size_t				size;
+	off_t				offset;
+	u32				bind_off, bind_size;
+
+	if ((fd = open(path, O_RDONLY)) < 0) {
+		xnd_error("open(%s): %s\n", path, strerror(errno));
+		return -1;
+	}
+
+	if ((offset = lseek(fd, 0, SEEK_END)) < 0) {
+		xnd_error("lseek: %s\n", strerror(errno));
+		return -1;
+	}
+	
+	size = (size_t)offset;
+	addr = mmap(NULL, size, PROT_READ, MAP_PRIVATE, fd, 0);
+	if (addr == MAP_FAILED) {
+		xnd_error("mmap: %s\n", strerror(errno));
+		return -1;
+	}
+
+	cmd = (struct dyld_info_command *)
+		macho_find_load_command(addr, LC_DYLD_INFO_ONLY);
+	if (cmd == NULL) {
+		xnd_printf("No LC_DYLD_INFO_ONLY in %s\n", path);
+		return -1;
+	}
+
+	if ((which & BIND_TYPE_REGULAR) != 0) {
+		bind_off = cmd->bind_off;
+		bind_size = cmd->bind_size;
+		printf("Bind opcodes:\n");
+		macho_print_opcodes(addr, bind_off, bind_size);
+		printf("\n");
+	}
+	
+	if ((which & BIND_TYPE_WEAK) != 0) {
+		bind_off = cmd->weak_bind_off;
+		bind_size = cmd->weak_bind_size;
+		printf("Weak bind opcodes:\n");
+		macho_print_opcodes(addr, bind_off, bind_size);
+		printf("\n");
+	}
+
+	if ((which & BIND_TYPE_LAZY) != 0) {
+		bind_off = cmd->lazy_bind_off;
+		bind_size = cmd->lazy_bind_size;
+		printf("Lazy bind opcodes:\n");
+		macho_print_opcodes(addr, bind_off, bind_size);
+		printf("\n");
+	}
+
+	return 0;
 }

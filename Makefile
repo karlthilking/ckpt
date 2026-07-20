@@ -110,6 +110,13 @@ XND_PRINT_OBJECTS := \
         $(BUILD)/path.o \
         $(BUILD)/io.o
 
+XND_MACHO_PARSE_OBJECTS := \
+	$(BUILD)/xnd_macho_parse.o \
+	$(BUILD)/io.o \
+	$(BUILD)/log.o \
+	$(BUILD)/path.o \
+	$(BUILD)/macho.o
+
 ALL := \
         $(BUILD)/xnd_launch \
         $(BUILD)/xnd_print \
@@ -117,7 +124,8 @@ ALL := \
         $(BUILD)/xnd_restart_internal \
         $(BUILD)/xnd_command \
         $(BUILD)/xnd_coordinator \
-        $(BUILD)/libxnd.dylib
+        $(BUILD)/libxnd.dylib \
+	$(BUILD)/xnd_macho_parse
 
 all: $(ALL)
 
@@ -194,6 +202,10 @@ $(BUILD)/xnd_coordinator: $(XND_COORD_OBJECTS) | $(BUILD)
 	$(CXX) $(CXXFLAGS) -o $@ $^
 	dsymutil $@
 
+$(BUILD)/xnd_macho_parse: $(XND_MACHO_PARSE_OBJECTS) | $(BUILD)
+	$(CC) $(CFLAGS) -o $@ $^
+	dsymutil $@
+
 test:	
 	$(MAKE) -C test all
 
@@ -207,4 +219,5 @@ clean:
 	$(LIBXND_OBJECTS) \
 	$(XND_RESTART_OBJECTS) \
 	$(XND_COORD_OBJECTS) \
-	$(XND_PRINT_OBJECTS)
+	$(XND_PRINT_OBJECTS) \
+	$(XND_MACHO_PARSE_OBJECTS)
