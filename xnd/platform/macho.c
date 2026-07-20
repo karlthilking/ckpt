@@ -38,8 +38,8 @@ static int arm64e_with_dyld_info_to_arm64(int, void *, size_t,
 
 static inline void lc_shift_offset32(struct macho_info *info, u32 *offset)
 {
-	struct dyld_info_command  *cmd;
-	u32                       shift, old;
+	struct dyld_info_command *cmd;
+	u32			 shift, old;
 
 	if ((old = *offset) != 0) {
 		shift = 0;
@@ -56,8 +56,8 @@ static inline void lc_shift_offset32(struct macho_info *info, u32 *offset)
 
 static inline void lc_shift_offset64(struct macho_info *info, u64 *offset)
 {
-	struct dyld_info_command  *cmd;
-	u64                       shift, old;
+	struct dyld_info_command *cmd;
+	u64			 shift, old;
 
 	if ((old = *offset) != 0) {
 		shift = 0;
@@ -74,8 +74,8 @@ static inline void lc_shift_offset64(struct macho_info *info, u64 *offset)
 
 static inline void macho_shift_dyld_info(struct macho_info *info)
 {
-	struct dyld_info_command  *cmd = info->cmd;
-	u32                       bind_off, weak_bind_off, lazy_bind_off;
+	struct dyld_info_command *cmd = info->cmd;
+	u32			 bind_off, weak_bind_off, lazy_bind_off;
 
 	/**
 	 * rebase_off and export_off can be shifted independently without
@@ -111,8 +111,8 @@ static inline void macho_shift_data_in_code(struct macho_info *info, void *lc)
 {
 	struct linkedit_data_command  *cmd;
 	struct data_in_code_entry     *entry;
-	uintptr_t                     vm_off;
-	u32                           idx, step;
+	uintptr_t		      vm_off;
+	u32			      idx, step;
 
 	step = sizeof(struct data_in_code_entry);
 	cmd = (struct linkedit_data_command *)lc;
@@ -120,7 +120,7 @@ static inline void macho_shift_data_in_code(struct macho_info *info, void *lc)
 
 	vm_off = (uintptr_t)info->mh + cmd->dataoff;
 	entry = (struct data_in_code_entry *)vm_off;
-	
+
 	for (idx = 0; idx < cmd->datasize / step; idx++, entry++)
 		lc_shift_offset32(info, &entry->offset);
 
@@ -134,7 +134,7 @@ static inline void macho_shift_segment(struct macho_info *info, void *lc)
 	switch (cmd) {
 	case LC_SEGMENT: {
 		struct segment_command *seg;
-		struct section         *sect;
+		struct section	       *sect;
 
 		seg = (struct segment_command *)lc;
 		lc_shift_offset32(info, &seg->fileoff);
@@ -145,9 +145,9 @@ static inline void macho_shift_segment(struct macho_info *info, void *lc)
 		 * segment's file size
 		 */
 		if (strcmp(seg->segname, SEG_LINKEDIT) == 0) {
-			seg->filesize -= (info->bind_shift +
-					  info->weak_bind_shift +
-					  info->lazy_bind_shift);
+			seg->filesize -=
+				(info->bind_shift + info->weak_bind_shift +
+				 info->lazy_bind_shift);
 		}
 
 		sect = (struct section *)((char *)seg + sizeof(*seg));
@@ -159,15 +159,15 @@ static inline void macho_shift_segment(struct macho_info *info, void *lc)
 	}
 	case LC_SEGMENT_64: {
 		struct segment_command_64 *seg;
-		struct section_64         *sect;
+		struct section_64	  *sect;
 
 		seg = (struct segment_command_64 *)lc;
 		lc_shift_offset64(info, &seg->fileoff);
 
 		if (strcmp(seg->segname, SEG_LINKEDIT) == 0) {
-			seg->filesize -= (info->bind_shift +
-					  info->weak_bind_shift +
-					  info->lazy_bind_shift);
+			seg->filesize -=
+				(info->bind_shift + info->weak_bind_shift +
+				 info->lazy_bind_shift);
 		}
 
 		sect = (struct section_64 *)((char *)seg + sizeof(*seg));
@@ -177,7 +177,7 @@ static inline void macho_shift_segment(struct macho_info *info, void *lc)
 		}
 		break;
 	}
-	default: 
+	default:
 		xnd_error("Expected LC_SEGMENT or LC_SEGMENT_64\n");
 		xnd_abort();
 	}
@@ -194,8 +194,8 @@ static int macho_shift_offsets(struct macho_info *info)
 {
 	struct mach_header   *mh;
 	struct load_command  *lc;
-	uintptr_t            start;
-	u32                  idx, cmdsize, offset = 0;
+	uintptr_t	     start;
+	u32		     idx, cmdsize, offset = 0;
 
 	mh = (struct mach_header *)info->mh;
 	xnd_assert(!NEEDS_BSWAP(mh->magic));
@@ -266,7 +266,7 @@ static int macho_shift_offsets(struct macho_info *info)
 			lc_shift_offset32(info, &cmd->cryptoff);
 			break;
 		}
-	        case LC_DYLD_INFO:
+		case LC_DYLD_INFO:
 		case LC_DYLD_INFO_ONLY: {
 			/**
 			 * Don't manipulate dyld info load command for now,
@@ -288,8 +288,7 @@ static int macho_shift_offsets(struct macho_info *info)
 			break;
 		}
 		case LC_NOTE: {
-			struct note_command *cmd =
-				(struct note_command *)lc;
+			struct note_command *cmd = (struct note_command *)lc;
 			lc_shift_offset64(info, &cmd->offset);
 			break;
 		}
@@ -309,8 +308,8 @@ static int macho_shift_offsets(struct macho_info *info)
 
 static inline u32 macho_read_threaded_subopcode(u8 **p, u8 imm)
 {
-	u8   *next, *itr = *p;
-	u32  ret = 0;
+	u8  *next, *itr = *p;
+	u32 ret = 0;
 
 	switch (imm) {
 	case BIND_SUBOPCODE_THREADED_SET_BIND_ORDINAL_TABLE_SIZE_ULEB:
@@ -337,8 +336,8 @@ static inline u32 macho_read_threaded_subopcode(u8 **p, u8 imm)
  */
 static u32 macho_sizeof_arm64e_opcodes(struct macho_info *info, int which)
 {
-	u8   *itr, *op_start, *op_end, imm, op;
-	u32  bind_off, bind_size, bytes = 0;
+	u8  *itr, *op_start, *op_end, imm, op;
+	u32 bind_off, bind_size, bytes = 0;
 
 	switch (which) {
 	case BIND_TYPE_REGULAR:
@@ -439,99 +438,99 @@ done:
  *  Find specific load command in memory-mapped mach-o executable
  *
  * \mh_addr  Address of executable's mach header
- * \cmd      Load command to search for
+ * \cmd	     Load command to search for
  * \return   Pointer to struct load_command if found, otherwise NULL
  */
 static struct load_command *macho_find_load_command(void *mh_addr, u32 cmd)
 {
-        struct mach_header      *mh;
-        struct load_command     *lc;
-	uintptr_t               lc_start;
-        u32                     idx, offset, align, ncmds, sizeofcmds;
+	struct mach_header   *mh;
+	struct load_command  *lc;
+	uintptr_t	     lc_start;
+	u32		     idx, offset, align, ncmds, sizeofcmds;
 
-        mh = (struct mach_header *)mh_addr;
-        ncmds = mh->ncmds;
-        sizeofcmds = mh->sizeofcmds;
-        if (NEEDS_BSWAP(mh->magic)) {
-                ncmds = __builtin_bswap32(ncmds);
-                sizeofcmds = __builtin_bswap32(sizeofcmds);
-        }
-        
-        lc_start = (uintptr_t)mh_addr;
-        if (HEADER_IS_64BIT(mh->magic)) {
-                align = 8u;
-                lc_start += sizeof(struct mach_header_64);
-        } else {
-                align = 4u;
-                lc_start += sizeof(struct mach_header);
-        }
+	mh = (struct mach_header *)mh_addr;
+	ncmds = mh->ncmds;
+	sizeofcmds = mh->sizeofcmds;
+	if (NEEDS_BSWAP(mh->magic)) {
+		ncmds = __builtin_bswap32(ncmds);
+		sizeofcmds = __builtin_bswap32(sizeofcmds);
+	}
+
+	lc_start = (uintptr_t)mh_addr;
+	if (HEADER_IS_64BIT(mh->magic)) {
+		align = 8u;
+		lc_start += sizeof(struct mach_header_64);
+	} else {
+		align = 4u;
+		lc_start += sizeof(struct mach_header);
+	}
 
 	offset = 0;
 	for (idx = 0; idx < ncmds; idx++) {
 		lc = (struct load_command *)(lc_start + offset);
-                xnd_assert((lc->cmdsize % align) == 0);
+		xnd_assert((lc->cmdsize % align) == 0);
 		if (lc->cmd == cmd)
 			return lc;
-                offset += lc->cmdsize;
-        }
+		offset += lc->cmdsize;
+	}
 
 	return NULL;
 }
 
 static inline bool fat_is_arm64e(void *fh_addr)
 {
-        struct fat_header       *fh;
-        struct fat_arch         *fa;
-        u32                     nfat_arch;
-        s32                     cputype, subtype;
-        bool                    bswap;
+	struct fat_header  *fh;
+	struct fat_arch	   *fa;
+	u32		   nfat_arch;
+	s32		   cputype, subtype;
+	bool		   bswap;
 
-        fh = (struct fat_header *)fh_addr;
-        bswap = NEEDS_BSWAP(fh->magic);
-        xnd_assert(!HEADER_IS_64BIT(fh->magic));
-        
-        nfat_arch = fh->nfat_arch;
-        if (bswap)
-                nfat_arch = __builtin_bswap32(nfat_arch);
-        
-        fa = (struct fat_arch *)((uchar *)fh_addr + sizeof(*fh));
-        for (u32 idx = 0; idx < nfat_arch; idx++, fa++) {
-                cputype = fa->cputype;
-                subtype = fa->cpusubtype;
-                if (bswap) {
-                        cputype = __builtin_bswap32(cputype);
-                        subtype = __builtin_bswap32(subtype);
-                }
-                if (cputype != CPU_TYPE_ARM64)
-                        continue;
-                else if (CPU_SUBTYPE_IS_ARM64E(subtype))
-                        return true;
-        }
+	fh = (struct fat_header *)fh_addr;
+	bswap = NEEDS_BSWAP(fh->magic);
+	xnd_assert(!HEADER_IS_64BIT(fh->magic));
 
-        return false;
+	nfat_arch = fh->nfat_arch;
+	if (bswap)
+		nfat_arch = __builtin_bswap32(nfat_arch);
+
+	fa = (struct fat_arch *)((uchar *)fh_addr + sizeof(*fh));
+	for (u32 idx = 0; idx < nfat_arch; idx++, fa++) {
+		cputype = fa->cputype;
+		subtype = fa->cpusubtype;
+		if (bswap) {
+			cputype = __builtin_bswap32(cputype);
+			subtype = __builtin_bswap32(subtype);
+		}
+		if (cputype != CPU_TYPE_ARM64)
+			continue;
+		else if (CPU_SUBTYPE_IS_ARM64E(subtype))
+			return true;
+	}
+
+	return false;
 }
 
 static inline bool macho_is_arm64e(void *mh_addr)
 {
-        struct mach_header_64   *mh;
-        s32                     cputype, subtype;
-        
-        mh = (struct mach_header_64 *)mh_addr;
-        cputype = mh->cputype;
-        subtype = mh->cpusubtype;
-        
-        xnd_assert(HEADER_IS_64BIT(mh->magic));
-        if (NEEDS_BSWAP(mh->magic)) {
-                cputype = __builtin_bswap32(cputype);
-                subtype = __builtin_bswap32(subtype);
-        }
+	struct mach_header_64  *mh;
+	s32		       cputype, subtype;
 
-        if (cputype != CPU_TYPE_ARM64)
-                return false;
-        else if (CPU_SUBTYPE_IS_ARM64E(subtype))
-                return true;
+	mh = (struct mach_header_64 *)mh_addr;
+	cputype = mh->cputype;
+	subtype = mh->cpusubtype;
 
-        return false;
+	xnd_assert(HEADER_IS_64BIT(mh->magic));
+	if (NEEDS_BSWAP(mh->magic)) {
+		cputype = __builtin_bswap32(cputype);
+		subtype = __builtin_bswap32(subtype);
+	}
+
+	if (cputype != CPU_TYPE_ARM64)
+		return false;
+	else if (CPU_SUBTYPE_IS_ARM64E(subtype))
+		return true;
+
+	return false;
 }
 
 static inline bool binary_is_arm64e(void *hdr)
@@ -548,66 +547,66 @@ static inline bool binary_is_arm64e(void *hdr)
 
 static inline void *fat_arm64e_to_arm64(void *addr)
 {
-        struct fat_header       *fh;
-        struct fat_arch         *fa;
-        struct mach_header_64   *mh;
-        u32                     nfat_arch, offset;
-        s32                     cputype, subtype;
-        bool                    bswap;
+	struct fat_header      *fh;
+	struct fat_arch	       *fa;
+	struct mach_header_64  *mh;
+	u32		       nfat_arch, offset;
+	s32		       cputype, subtype;
+	bool		       bswap;
 
-        fh = (struct fat_header *)addr;
-        bswap = NEEDS_BSWAP(fh->magic);
-        xnd_assert(!HEADER_IS_64BIT(fh->magic));
-        
-        nfat_arch = fh->nfat_arch;
-        subtype = CPU_SUBTYPE_ARM64_ALL;
-        if (bswap) {
-                nfat_arch = __builtin_bswap32(nfat_arch);
-                subtype = __builtin_bswap32(subtype);
-        }
+	fh = (struct fat_header *)addr;
+	bswap = NEEDS_BSWAP(fh->magic);
+	xnd_assert(!HEADER_IS_64BIT(fh->magic));
 
-        fa = (struct fat_arch *)((uchar *)addr + sizeof(*fh));
-        for (u32 idx = 0; idx < nfat_arch; idx++, fa++) {
-                cputype = fa->cputype;
-                if (bswap)
-                        cputype = __builtin_bswap32(cputype);
-                if (cputype == CPU_TYPE_ARM64)
-                        break;
-        }
-        
-        offset = (bswap ? __builtin_bswap32(fa->offset) : fa->offset);
-        mh = (struct mach_header_64 *)((uchar *)addr + offset);
-        
-        xnd_assert(HEADER_IS_MACHO(mh->magic));
-        return macho_arm64e_to_arm64((void *)mh);
+	nfat_arch = fh->nfat_arch;
+	subtype = CPU_SUBTYPE_ARM64_ALL;
+	if (bswap) {
+		nfat_arch = __builtin_bswap32(nfat_arch);
+		subtype = __builtin_bswap32(subtype);
+	}
+
+	fa = (struct fat_arch *)((uchar *)addr + sizeof(*fh));
+	for (u32 idx = 0; idx < nfat_arch; idx++, fa++) {
+		cputype = fa->cputype;
+		if (bswap)
+			cputype = __builtin_bswap32(cputype);
+		if (cputype == CPU_TYPE_ARM64)
+			break;
+	}
+
+	offset = (bswap ? __builtin_bswap32(fa->offset) : fa->offset);
+	mh = (struct mach_header_64 *)((uchar *)addr + offset);
+
+	xnd_assert(HEADER_IS_MACHO(mh->magic));
+	return macho_arm64e_to_arm64((void *)mh);
 }
 
 static inline void *macho_arm64e_to_arm64(void *addr)
 {
-        struct mach_header_64   *mh;
-        s32                     cputype, subtype;
-        
-        mh = (struct mach_header_64 *)addr;
-        cputype = mh->cputype;
-        subtype = CPU_SUBTYPE_ARM64_ALL;
-        
-        xnd_assert(HEADER_IS_64BIT(mh->magic));
-        if (NEEDS_BSWAP(mh->magic)) {
-                cputype = __builtin_bswap32(cputype);
-                subtype = __builtin_bswap32(subtype);
-        }
+	struct mach_header_64  *mh;
+	s32		       cputype, subtype;
 
-        xnd_assert(cputype == CPU_TYPE_ARM64);
-        mh->cpusubtype = subtype;
+	mh = (struct mach_header_64 *)addr;
+	cputype = mh->cputype;
+	subtype = CPU_SUBTYPE_ARM64_ALL;
 
-        return (void *)mh;
+	xnd_assert(HEADER_IS_64BIT(mh->magic));
+	if (NEEDS_BSWAP(mh->magic)) {
+		cputype = __builtin_bswap32(cputype);
+		subtype = __builtin_bswap32(subtype);
+	}
+
+	xnd_assert(cputype == CPU_TYPE_ARM64);
+	mh->cpusubtype = subtype;
+
+	return (void *)mh;
 }
 
-static inline u32 macho_section_end(struct macho_info *info,
-				    u32 loff, bool has_opcodes)
+static inline u32 macho_section_end(struct macho_info *info, u32 loff,
+				    bool has_opcodes)
 {
 	struct dyld_info_command  *old = info->old_cmd;
-	u32                       roff = UINT32_MAX;
+	u32			  roff = UINT32_MAX;
 
 	if (has_opcodes) {
 		if (loff == old->bind_off)
@@ -634,7 +633,7 @@ static inline u32 macho_section_end(struct macho_info *info,
 }
 
 static inline size_t macho_sizeof_patched_bind_info(struct macho_info *info,
-					            u32 old_bind_off)
+						    u32 old_bind_off)
 {
 	struct dyld_info_command *old = info->old_cmd, *new = info->cmd;
 
@@ -659,14 +658,14 @@ static inline size_t macho_sizeof_patched_bind_info(struct macho_info *info,
  * \bind_off  Offset of current bind opcode section to serialize
  * \return    Pointer to malloc'd buffer with serial bind opcode information
  */
-static u8 *macho_serialize_opcodes(struct macho_info *info,
-				   u32 old_bind_off, u32 new_bind_size)
+static u8 *macho_serialize_opcodes(struct macho_info *info, u32 old_bind_off,
+				   u32 new_bind_size)
 {
 	struct dyld_info_command  *old = info->old_cmd, *new = info->cmd;
-	u8                        *buf, *itr, *next;
-	u8                        *op_start, *op_end, imm, op;
-	u32                       idx, step, bytes = 0;
-	u32                       bind_size;
+	u8			  *buf, *itr, *next;
+	u8			  *op_start, *op_end, imm, op;
+	u32			  idx, step, bytes = 0;
+	u32			  bind_size;
 
 	if (old_bind_off == old->bind_off) {
 		bind_size = old->bind_size;
@@ -774,16 +773,16 @@ done:
  * \info    mach-o executable information (header, dyld_info_command, etc.)
  * \return  0 if serialization is successful, -1 otherwise
  */
-static int macho_write_patched_executable(struct macho_info *info,
-					  int outfd, size_t total_size)
+static int macho_write_patched_executable(struct macho_info *info, int outfd,
+					  size_t total_size)
 {
 	struct dyld_info_command  *cmd = info->cmd;
-	u32                       idx, loff, roff, seqs = 0;
-	u8                        *buf;
-	int                       err;
-	bool                      has_opcodes;
-	void                      *addr;
-	size_t                    nbyte;
+	u32			  idx, loff, roff, seqs = 0;
+	u8			  *buf;
+	int			  err;
+	bool			  has_opcodes;
+	void			  *addr;
+	size_t			  nbyte;
 
 	/**
 	 * For each bind opcode section, if the section is not empty and
@@ -801,8 +800,9 @@ static int macho_write_patched_executable(struct macho_info *info,
 	for (idx = 0; idx < seqs; idx++) {
 		has_opcodes = (idx & 0x1);
 		loff = (idx == 0 ? 0 : roff);
-		roff = (idx + 1 == seqs ? total_size :
-			macho_section_end(info, loff, has_opcodes));
+		roff = (idx + 1 == seqs
+			? total_size
+			: macho_section_end(info, loff, has_opcodes));
 		if (has_opcodes) {
 			xnd_assert(roff != total_size);
 			nbyte = macho_sizeof_patched_bind_info(info, loff);
@@ -815,7 +815,8 @@ static int macho_write_patched_executable(struct macho_info *info,
 			free(buf);
 			if (err) {
 				xnd_error("Failed to write bind opcodes\n"
-					  "(idx=%u, seqs=%u)\n", idx, seqs);
+					  "(idx=%u, seqs=%u)\n",
+					  idx, seqs);
 				return -1;
 			}
 		} else {
@@ -823,7 +824,8 @@ static int macho_write_patched_executable(struct macho_info *info,
 			nbyte = (size_t)(roff - loff);
 			if (writeall(outfd, addr, nbyte) != nbyte) {
 				xnd_error("Failed to write executable\n"
-					  "(idx=%u, seqs=%u)\n", idx, seqs);
+					  "(idx=%u, seqs=%u)\n",
+					  idx, seqs);
 				return -1;
 			}
 		}
@@ -835,8 +837,8 @@ static int macho_write_patched_executable(struct macho_info *info,
 static int arm64e_with_dyld_info_to_arm64(int outfd, void *mh, size_t size,
 					  struct dyld_info_command *cmd)
 {
-	struct macho_info  info = { .mh = mh, .cmd = cmd, 0 };
-	int                err;
+	struct macho_info info = {.mh = mh, .cmd = cmd, 0};
+	int		  err;
 
 	/**
 	 * Determine total size in bytes of arm64e specific opcodes that
@@ -877,49 +879,49 @@ static int arm64e_with_dyld_info_to_arm64(int outfd, void *mh, size_t size,
 
 	return 0;
 }
-	
+
 int binary_arm64e_to_arm64(char *path, char *tmp)
 {
-        int                       srcfd = -1, dstfd = -1;
-	int                       err, ret = ARM64E_TO_ARM64_SUCCESS;
-        void                      *mh, *addr = NULL;
-        size_t                    size, nbyte;
-        off_t                     off;
-        u32                       magic;
-	struct load_command       *lc;
+	int		     srcfd = -1, dstfd = -1;
+	int		     err, ret = ARM64E_TO_ARM64_SUCCESS;
+	void		     *mh, *addr = NULL;
+	size_t		     size, nbyte;
+	off_t		     off;
+	u32		     magic;
+	struct load_command  *lc;
 
-        if ((srcfd = open(path, O_RDONLY)) < 0) {
-                xnd_error("open: %s\n", strerror(errno));
+	if ((srcfd = open(path, O_RDONLY)) < 0) {
+		xnd_error("open: %s\n", strerror(errno));
 		ret = ARM64E_TO_ARM64_FAILURE;
-                goto out;
-        }
+		goto out;
+	}
 
-        if ((off = lseek(srcfd, 0, SEEK_END)) < 0) {
-                xnd_error("lseek: %s\n", strerror(errno));
+	if ((off = lseek(srcfd, 0, SEEK_END)) < 0) {
+		xnd_error("lseek: %s\n", strerror(errno));
 		ret = ARM64E_TO_ARM64_FAILURE;
-                goto out;
-        }
+		goto out;
+	}
 
 	size = (size_t)off;
-        addr = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_PRIVATE, srcfd, 0);
-        if (addr == MAP_FAILED) {
-                xnd_error("mmap: %s\n", strerror(errno));
+	addr = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_PRIVATE, srcfd, 0);
+	if (addr == MAP_FAILED) {
+		xnd_error("mmap: %s\n", strerror(errno));
 		ret = ARM64E_TO_ARM64_FAILURE;
-                goto out;
-        }
+		goto out;
+	}
 
 	/* Exit if binary is not an arm64e compiled executable */
-        if (!binary_is_arm64e(addr)) {
+	if (!binary_is_arm64e(addr)) {
 		ret = ARM64E_TO_ARM64_NOT_ARM64E;
-                goto out;
+		goto out;
 	}
-        
-        if ((dstfd = open(tmp, O_WRONLY | O_CREAT, 0755)) < 0) {
-                xnd_error("open: %s\n", strerror(errno));
+
+	if ((dstfd = open(tmp, O_WRONLY | O_CREAT, 0755)) < 0) {
+		xnd_error("open: %s\n", strerror(errno));
 		ret = ARM64E_TO_ARM64_FAILURE;
-                goto out;
-        }
-        
+		goto out;
+	}
+
 	magic = *(u32 *)addr;
 	if (HEADER_IS_MACHO(magic)) {
 		mh = macho_arm64e_to_arm64(addr);
@@ -938,7 +940,7 @@ int binary_arm64e_to_arm64(char *path, char *tmp)
 	 * other architectures can be ignored.
 	 */
 	nbyte = size - (size_t)((char *)mh - (char *)addr);
-	
+
 	/**
 	 * If executable uses LC_DYLD_INFO(_ONLY) instead of
 	 * LC_DYLD_CHAINED_FIXUPS and LC_DYLD_EXPORTS_TRIE, bind
@@ -947,8 +949,7 @@ int binary_arm64e_to_arm64(char *path, char *tmp)
 	 */
 	if ((lc = macho_find_load_command(mh, LC_DYLD_INFO)) ||
 	    (lc = macho_find_load_command(mh, LC_DYLD_INFO_ONLY))) {
-		struct dyld_info_command *cmd =
-			(struct dyld_info_command *)lc;
+		struct dyld_info_command *cmd = (struct dyld_info_command *)lc;
 		err = arm64e_with_dyld_info_to_arm64(dstfd, mh, nbyte, cmd);
 		if (err != 0)
 			ret = ARM64E_TO_ARM64_FAILURE;
@@ -958,14 +959,14 @@ int binary_arm64e_to_arm64(char *path, char *tmp)
 	}
 
 out:
-        if (srcfd != -1)
-                close(srcfd);
-        if (dstfd != -1)
-                close(dstfd);
-        if (addr && addr != MAP_FAILED)
-                munmap(addr, size);
+	if (srcfd != -1)
+		close(srcfd);
+	if (dstfd != -1)
+		close(dstfd);
+	if (addr && addr != MAP_FAILED)
+		munmap(addr, size);
 	if (ret != ARM64E_TO_ARM64_SUCCESS && access(tmp, F_OK) == 0)
 		unlink(tmp);
 
-        return ret;
+	return ret;
 }
