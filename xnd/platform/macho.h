@@ -25,11 +25,25 @@
 #define CPU_SUBTYPE_IS_ARM64E(subtype) \
         (((subtype) & ~CPU_SUBTYPE_MASK) == CPU_SUBTYPE_ARM64E)
 
-#define MACHO_HAS_LC_DYLD_INFO_ONLY(addr) \
-        (macho_has_load_command(addr, LC_DYLD_INFO_ONLY))
-#define MACHO_HAS_LC_DYLD_CHAINED_FIXUPS(addr) \
-        (macho_has_load_command(addr, LC_DYLD_CHAINED_FIXUPS))
+#define BIND_TYPE_REGULAR  0x1
+#define BIND_TYPE_WEAK     0x2
+#define BIND_TYPE_LAZY     0x4
+#define BIND_TYPE_ALL \
+	(BIND_TYPE_REGULAR | BIND_TYPE_WEAK | BIND_TYPE_LAZY)
 
-bool binary_arm64e_to_arm64(char *, char *);
+struct macho_info {
+	struct mach_header        *mh;
+	struct dyld_info_command  *cmd;
+	struct dyld_info_command  *old_cmd;
+	u32                       bind_shift;
+	u32                       weak_bind_shift;
+	u32                       lazy_bind_shift;
+};
+
+#define ARM64E_TO_ARM64_SUCCESS      0
+#define ARM64E_TO_ARM64_FAILURE     -1
+#define ARM64E_TO_ARM64_NOT_ARM64E  -2
+
+int binary_arm64e_to_arm64(char *, char *);
 
 #endif /* XND_MACHO_H */

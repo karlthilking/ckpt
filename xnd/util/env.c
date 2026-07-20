@@ -91,6 +91,22 @@ char *env_get_tmp_binary(void)
         return getenv(XND_TMP_BINARY_ENV);
 }
 
+void env_set_unlink_tmp_binary(char *value)
+{
+	xnd_assert(setenv(XND_UNLINK_TMP_ENV, value, 0) == 0);
+}
+
+bool env_should_unlink_tmp_binary(void)
+{
+	char *value;
+
+	if ((value = getenv(XND_UNLINK_TMP_ENV)) != NULL) {
+		return (strcmp(value, "0") != 0);
+	}
+
+	return true;
+}
+
 void env_set_ckpt_signal(char *sig)
 {
         xnd_assert(setenv(XND_CKPT_SIGNAL_ENV, sig, 1) == 0);

@@ -213,8 +213,10 @@ static __constructor(101) void xnd_setup(void)
         pid_table_init();
         pid_table_init_pid_info();
 
-        if ((tmp = env_get_tmp_binary()) != NULL)
-                unlink(tmp);
+	if ((tmp = env_get_tmp_binary()) != NULL) {
+		if (env_should_unlink_tmp_binary())
+			unlink(tmp);
+	}
 
         set_xnd_state(XND_RUNNING);
 

@@ -6,6 +6,7 @@
 extern "C" {
 #endif /* __cplusplus */
 
+int xnd_path_find(const char *, char *, size_t);
 int xnd_path_dirname(const char *, char *, size_t);
 int xnd_path_basename(const char *, char *, size_t);
 int xnd_path_stem(const char *, char *, size_t);

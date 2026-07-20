@@ -12,6 +12,7 @@
 
 #define XND_PROGRAM_ENV         "XND_PROGRAM"
 #define XND_TMP_BINARY_ENV      "XND_TMP_BINARY"
+#define XND_UNLINK_TMP_ENV      "XND_UNLINK_TMP"
 #define XND_CKPT_SIGNAL_ENV     "XND_CKPT_SIGNAL"
 #define XND_USE_ZLIB_ENV        "XND_USE_ZLIB"
 #define XND_CKPT_INTERVAL_ENV   "XND_CKPT_INTERVAL"
@@ -28,6 +29,8 @@ char *env_get_program_name(void);
 
 void env_set_tmp_binary(char *);
 char *env_get_tmp_binary(void);
+void env_set_unlink_tmp_binary(char *);
+bool env_should_unlink_tmp_binary(void);
 
 void env_set_ckpt_signal(char *);
 int env_get_ckpt_signal(void);

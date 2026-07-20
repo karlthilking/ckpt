@@ -25,6 +25,11 @@
         (strncmp(arg, "--no-zlib", sizeof("no-zlib")) == 0)
 #define ARG_IS_CKPT_SIGNAL(arg) \
         (strncmp(arg, "--ckpt-signal", sizeof("--ckpt-signal")) == 0)
+#define ARG_IS_UNLINK_TMP(arg) \
+	(strncmp(arg, "--unlink-tmp", sizeof("--unlink-tmp")) == 0)
+#define ARG_IS_INVALID(arg) \
+	((strncmp(arg, "--", 2) == 0) || \
+	 (strlen(arg) == 2 && (arg)[0] == '-'))
 
 static void usage(void);
 static void xnd_exit(int);
@@ -46,6 +51,10 @@ static const char *help =
 "  --ckpt-signal <signal>\n"
 "       Set the signal used for checkpoints\n"
 "       Default: SIGUSR2\n\n"
+"  --unlink-tmp [0 | 1]\n"
+"       Unlink temporary arm64 executable created by xnd_launch\n"
+"       (Only relevant when xnd_launch is given an arm64e executable)\n"
+"        Default: 1 (true)\n\n"
 "  --help\n"
 "       Display this help message\n";
 
@@ -79,7 +88,15 @@ int main(int argc, char *argv[])
                         env_set_ckpt_signal(argv[1]);
                         argv++; argv++;
                         argc--; argc--;
-                } else {
+                } else if (ARG_IS_UNLINK_TMP(argv[0])) {
+			env_set_unlink_tmp_binary(argv[1]);
+			argv++; argv++;
+			argc--; argc--;
+		} else if (ARG_IS_INVALID(argv[0])) {
+			xnd_printf("Invalid argument: %s\n", argv[0]);
+			usage();
+			xnd_exit(XND_EXIT_FAILURE);
+		} else {
                         break;
                 }
         }
@@ -100,29 +117,47 @@ static __noreturn void xnd_exit(int status)
 
 static void prepare_args(int argc, char **argv, char **new_argv)
 {
-        int     err;
-        char    progname[PATH_MAX];
-        
-        bzero(progname, sizeof(progname));
-        for (int i = 1; i < argc; i++) {
-                new_argv[i] = strdup(argv[i]);
-        }
-        new_argv[argc] = NULL;
-        
-        strncpy(progname, "./", 2);
-        err = xnd_path_basename(argv[0], progname + 2, PATH_MAX - 2);
-        if (err < 0) {
-                xnd_error("xnd_path_basename failed: %s\n", argv[0]);
-                xnd_exit(XND_EXIT_FAILURE);
-        }
+	int    ret;
+	char   exec_path[PATH_MAX], tmp[PATH_MAX] = { '.', '/', 0 };
 
-        strcat(progname, "_tmp");
-        if (binary_arm64e_to_arm64(argv[0], progname)) {
-                new_argv[0] = strdup(progname);
-                env_set_tmp_binary(progname);
-        } else {
-                new_argv[0] = strdup(argv[0]);
-        }
+	new_argv[argc] = NULL;
+	for (uint i = 1u; i < argc; i++)
+		new_argv[i] = strdup(argv[i]);
+
+	ret = xnd_path_basename(argv[0], tmp + 2, sizeof(tmp) - 2);
+	if (ret != 0) {
+		xnd_error("Failed to get basename of %s\n", argv[0]);
+		xnd_exit(XND_EXIT_FAILURE);
+	} else {
+		strcat(tmp, "-tmp");
+	}
+
+	if (access(argv[0], X_OK) == 0) {
+		strncpy(exec_path, argv[0], strlen(argv[0]) + 1);
+	} else {
+		ret = xnd_path_find(argv[0], exec_path, PATH_MAX);
+		if (ret != 0) {
+			xnd_error("Failed to find path of %s\n", argv[0]);
+			xnd_exit(XND_EXIT_FAILURE);
+		}
+	}
+
+	ret = binary_arm64e_to_arm64(exec_path, tmp);
+	switch (ret) {
+	case ARM64E_TO_ARM64_SUCCESS:
+		new_argv[0] = strdup(tmp);
+		env_set_tmp_binary(tmp);
+		break;
+	case ARM64E_TO_ARM64_NOT_ARM64E:
+		new_argv[0] = strdup(exec_path);
+		break;
+	case ARM64E_TO_ARM64_FAILURE:
+		xnd_error("Error patching arm64e binary: %s\n", exec_path);
+		xnd_exit(XND_EXIT_FAILURE);
+	default:
+		xnd_error("Unknown binary_arm64e_to_arm64 return value\n");
+		xnd_exit(XND_EXIT_FAILURE);
+	}
 }
 
 static __noreturn void launch(int argc, char **argv)
@@ -132,7 +167,7 @@ static __noreturn void launch(int argc, char **argv)
          * XND_PROGRAM=<binary>
          * <binary> <args> ...
          */
-        char    libxnd_path[PATH_MAX], xnd_program[PATH_MAX];
+        char    libxnd_path[PATH_MAX];
         char    *new_argv[argc + 1];
         int     err;
         pid_t   coord_pid;
@@ -149,33 +184,21 @@ static __noreturn void launch(int argc, char **argv)
                 xnd_exit(XND_EXIT_FAILURE);
         }
 
-        err = xnd_path_basename(argv[0], xnd_program, PATH_MAX);
-        if (err < 0) {
-                xnd_error("xnd_path_basename failed: %s\n", argv[0]);
-                xnd_exit(XND_EXIT_FAILURE);
-        }
-        
-        env_set_program_name(xnd_program);
-        err = setenv("DYLD_INSERT_LIBRARIES", libxnd_path, 1);
-        if (err != 0) {
-                xnd_error("setenv(\"DYLD_INSERT_LIBRARIES\", %s, 1): %s\n",
-                          libxnd_path, strerror(errno));
-                xnd_exit(XND_EXIT_FAILURE);
-        }
+        env_set_program_name(new_argv[0]);
+	xnd_assert(setenv("DYLD_INSERT_LIBRARIES", libxnd_path, 1) == 0);
 
         env_set_dyld_shared_region_private();
-        xnd_trace("XND_PROGRAM=%s\n"
-                  "DYLD_INSERT_LIBRARIES=%s\n"
-                  "DYLD_SHARED_REGION=private\n",
-                  xnd_program, libxnd_path);
-        
-        xnd_printf("Executing %s (pid=%d)\n", xnd_program, getpid());
-        err = execvp(new_argv[0], new_argv);
-        if (err != 0) {
-                xnd_error("execvp(%s): %s\n", new_argv[0], strerror(errno));
-                xnd_exit(XND_EXIT_FAILURE);
-        }
-        
-        xnd_exit(XND_EXIT_SUCCESS);
-        unreachable();
+	xnd_trace("XND_PROGRAM=%s\n"
+		  "DYLD_INSERT_LIBRARIES=%s\n"
+		  "DYLD_SHARED_REGION=private\n",
+		  new_argv[0], libxnd_path);
+
+	xnd_printf("Executing %s (pid=%d)\n", new_argv[0], getpid());
+	err = execvp(new_argv[0], new_argv);
+	if (err != 0) {
+		xnd_error("execvp(%s): %s\n", new_argv[0], strerror(errno));
+		xnd_exit(XND_EXIT_FAILURE);
+	}
+	
+	unreachable();
 }

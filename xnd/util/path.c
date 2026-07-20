@@ -1,7 +1,49 @@
 /* path.c */
 #include "xnd/xnd.h"
 #include "xnd/util/path.h"
+#include <limits.h>
+#include <stdlib.h>
 #include <string.h>
+
+int xnd_path_find(const char *file, char *out, size_t outlen)
+{
+	char    *path_env, *endp, buf[PATH_MAX];
+	size_t   len, namelen = strlen(file);
+	bool     next = true, found = false;
+
+	if ((path_env = getenv("PATH")) == NULL)
+		return -1;
+
+	while (next) {
+		bzero(buf, sizeof(buf));
+		if ((endp = strchr(path_env, ':')) == NULL) {
+			next = false;
+			endp = path_env + strlen(path_env);
+		}
+
+		len = endp - path_env;
+		strncpy(buf, path_env, len);
+		buf[len] = '/';
+		strncat(buf, file, namelen);
+		buf[len + 1 + namelen] = '\0';
+
+		/* Found file path */
+		if (access(buf, F_OK) == 0) {
+			found = true;
+			break;
+		}
+
+		/* Advance to next path in PATH */
+		path_env = endp + 1;
+	}
+
+	if (found) {
+		strncpy(out, buf, outlen);
+		return 0;
+	}
+
+	return -1;
+}
 
 /**
  * /path/to/file -> /path/to
