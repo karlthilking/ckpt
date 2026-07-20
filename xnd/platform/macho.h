@@ -34,10 +34,6 @@
 struct macho_info {
 	struct mach_header        *mh;
 	struct dyld_info_command  *cmd;
-	struct dyld_info_command  *old_cmd;
-	u32                       bind_shift;
-	u32                       weak_bind_shift;
-	u32                       lazy_bind_shift;
 };
 
 #define ARM64E_TO_ARM64_SUCCESS      0
