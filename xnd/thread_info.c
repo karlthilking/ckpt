@@ -74,7 +74,7 @@ void thread_list_init(void)
                 xnd_error("pthread_mutex_init: %s\n", strerror(err));
                 xnd_abort();
         }
-        
+
         xnd_assert(pthread_cond_init(&myself->cond, NULL) == 0);
         zombie_list_init();
         ckpt_thread_init();
@@ -96,7 +96,7 @@ void thread_list_destroy(void)
         }
         thread_list_release();
         pthread_mutex_destroy(&thread_list.lock);
-        
+
         zombie_list_destroy();
         tlv_exit();
 }
@@ -104,7 +104,7 @@ void thread_list_destroy(void)
 void thread_list_acquire(void)
 {
         int err;
-        
+
         err = pthread_mutex_lock(&thread_list.lock);
         if (unlikely(err != 0)) {
                 xnd_error("pthread_mutex_lock: %s\n", strerror(err));
@@ -115,7 +115,7 @@ void thread_list_acquire(void)
 void thread_list_release(void)
 {
         int err;
-        
+
         err = pthread_mutex_unlock(&thread_list.lock);
         if (unlikely(err != 0)) {
                 xnd_error("pthread_mutex_unlock: %s\n", strerror(err));
@@ -486,7 +486,7 @@ void *ckpt_thread_work(void *wait)
         sigemptyset(&set);
         sigaddset(&set, env_get_ckpt_signal());
         pthread_sigmask(SIG_BLOCK, &set, NULL);
-       
+
         tlv_init();
         myself = &ckpt_thread;
         myself->self = pthread_self();
@@ -498,7 +498,7 @@ void *ckpt_thread_work(void *wait)
         pthread_mutex_lock(&myself->lock);
         *(bool *)wait = false;
         pthread_cond_signal(&myself->cond);
-        
+
         /**
          * If the main thread is still handling atfork routines, wait until
          * the main thread is ready to resume (get_xnd_state() == XND_RUNNING)
@@ -524,11 +524,11 @@ void *ckpt_thread_work(void *wait)
                 thread_restore_tls();
                 thread_restore_sig_state();
                 sig_state_restore();
-                
+
                 zombie_list_filter();
                 barrier_release();
         }
-        
+
         restart = true;
         for (;;) {
                 xnd_log_ckpt_thread_info(myself);
@@ -541,17 +541,17 @@ void *ckpt_thread_work(void *wait)
                  */
                 ckpt_thread_wait();
                 enter_coord_barrier(COORD_BARRIER_PRECKPT);
-                
+
                 thread_save_tls();
                 thread_save_sig_state();
-                
+
                 /**
                  * Suspend user threads and transition from XND_CKPTPENDING
                  * to XND_SUSPINPROG.
                  */
                 suspend_threads();
                 wait_for_exiting_threads();
-                
+
                 /**
                  * Wait for all threads to arrive at the barrier and
                  * transition from XND_SUSPINPROG -> XND_CKPTINPROG.
@@ -561,7 +561,7 @@ void *ckpt_thread_work(void *wait)
                 xnd_precheckpoint();
                 set_tls_slot(TLS_TLV_FLAG_SLOT, 0);
                 xnd_checkpoint(&myself->uctx);
-                
+
                 /**
                  * Checkpoint is complete, now wait in another coordinator
                  * barrier while the coordinator writes the checkpoint
@@ -569,10 +569,10 @@ void *ckpt_thread_work(void *wait)
                  */
                 enter_coord_barrier(COORD_BARRIER_POSTCKPT);
                 set_tls_slot(TLS_TLV_FLAG_SLOT, TLS_TLV_INIT_MAGIC);
-        
+
                 xnd_postcheckpoint();
                 /**
-                 * Release user threads 
+                 * Release user threads
                  *  XND_CKPTINPROG -> XND_RUNNING
                  */
                 barrier_release();
@@ -583,19 +583,7 @@ void *ckpt_thread_work(void *wait)
 
 void ckpt_thread_reap(void)
 {
-        kern_return_t   kr;
-        mach_port_t     port;
-
         xnd_assert(myself != &ckpt_thread);
-
-        port = get_thread_info_mach_port(&ckpt_thread);
-        if ((kr = thread_terminate(port)) != KERN_SUCCESS) {
-                xnd_trace("thread_terminate(%u): %s\n"
-                          "pthread_mach_thread_np(): %u\n",
-                          (u32)port, mach_error_string(kr),
-                          (u32)pthread_mach_thread_np(ckpt_thread.self));
-        }
-
         pthread_mutex_destroy(&ckpt_thread.lock);
         pthread_cond_destroy(&ckpt_thread.cond);
 }
