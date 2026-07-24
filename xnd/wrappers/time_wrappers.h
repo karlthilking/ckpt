@@ -21,12 +21,29 @@
 #define TIMESPEC_NSEC_DIFF(__first, __second) \
         (TIMESPEC_TO_NSEC((__first))) - (TIMESPEC_TO_NSEC((__second)))
 
-#define MSEC_PER_SEC    (1000L)
-#define NSEC_PER_USEC   (1000L)
-#define USEC_PER_MSEC   (1000L)
-#define NSEC_PER_MSEC   (1000000L)
-#define USEC_PER_SEC    (1000000L)
-#define NSEC_PER_SEC    (1000000000L)
+#ifndef MSEC_PER_SEC
+# define MSEC_PER_SEC    (1000L)
+#endif
+
+#ifndef NSEC_PER_USEC
+# define NSEC_PER_USEC   (1000L)
+#endif
+
+#ifndef USEC_PER_MSEC
+# define USEC_PER_MSEC   (1000L)
+#endif
+
+#ifndef NSEC_PER_MSEC
+# define NSEC_PER_MSEC   (1000000L)
+#endif
+
+#ifndef USEC_PER_SEC
+# define USEC_PER_SEC    (1000000L)
+#endif
+
+#ifndef NSEC_PER_SEC
+# define NSEC_PER_SEC    (1000000000L)
+#endif
 
 unsigned int __sleep_hook(unsigned int);
 int __usleep_hook(useconds_t);
