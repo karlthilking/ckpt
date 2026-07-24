@@ -58,7 +58,7 @@ void set_xnd_state(enum xnd_state new_state)
 void xnd_precheckpoint(void)
 {
         sig_state_save();
-        fd_table_save_state();
+        fd_table_save();
         _pthread_ptr_munge_token = thread_munge_token();
 }
 
@@ -83,7 +83,7 @@ void xnd_postrestart(void)
         thread_sig_fixup(_pthread_ptr_munge_token);
         ckpt_vm_deallocate_regions();
         pid_table_postrestart();
-        fd_table_restore_state();
+        fd_table_restore();
 
         if (env_use_zlib_compression()) {
                 dirfd = xnd_ckptdir_open(xnd_uuid, epoch - 1);

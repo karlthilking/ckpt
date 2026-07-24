@@ -42,6 +42,7 @@ LIBXND_OBJECTS := \
         $(BUILD)/signal_wrappers.o \
         $(BUILD)/pthread_wrappers.o \
         $(BUILD)/file_wrappers.o \
+        $(BUILD)/fd_table.o \
         $(BUILD)/pid_wrappers.o \
         $(BUILD)/fd.o \
         $(BUILD)/env.o \
