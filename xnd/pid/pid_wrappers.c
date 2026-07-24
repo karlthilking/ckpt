@@ -74,13 +74,13 @@ pid_t __getppid_hook(void)
                 return _real_getppid();
         }
 
-        return _virt_ppid; 
+        return _virt_ppid;
 }
 
 pid_t __getpgrp_hook(void)
 {
         pid_t real_pgrp, virt_pgrp;
-        
+
         unsafe_enter();
         real_pgrp = _real_getpgrp();
 
@@ -91,7 +91,7 @@ pid_t __getpgrp_hook(void)
         } else {
                 virt_pgrp = real_to_virtual_pid(real_pgrp);
         }
-        
+
         unsafe_exit();
         return virt_pgrp;
 }
@@ -99,7 +99,7 @@ pid_t __getpgrp_hook(void)
 pid_t __getpgid_hook(pid_t pid)
 {
         pid_t real_pid, real_pgid, virt_pgid;
-        
+
         if (pid == 0 || pid == _real_pid) {
                 return __getpgrp_hook();
         }
@@ -123,9 +123,9 @@ fail:
 pid_t __fork_hook(void)
 {
         pid_t virt_ret, real_ret;
-        
+
         unsafe_enter();
-        
+
         /**
          * Register atfork handlers if not already registered; prepare
          * and child responsibilities at the time of fork() are as follows:
@@ -208,7 +208,7 @@ pid_t __wait4_hook(pid_t pid, int *status, int options, struct rusage *ru)
                         xnd_assert(real_pid != -1);
                         break;
                 }
-                
+
                 real_ret = wait4(real_pid, status, options | WNOHANG, ru);
                 switch (real_ret) {
                 case -1:
@@ -288,7 +288,7 @@ int __killpg_hook(pid_t pgrp, int sig)
 {
         int     retval;
         pid_t   real_pgrp;
-        
+
         if (sig == env_get_ckpt_signal()) {
                 xnd_warn("Signal %d is reserved for xnd\n", sig);
                 return -1;
