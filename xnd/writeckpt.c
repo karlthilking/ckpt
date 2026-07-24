@@ -167,9 +167,9 @@ int write_context(int fd, ucontext_t *ctx)
         return 0;
 }
 
-int write_ckpt(struct xnd_ckpt_header *header, 
-               enum xnd_ckpt_entry *entries, 
-               struct xnd_vm_region *regions, 
+int write_ckpt(struct xnd_ckpt_header *header,
+               enum xnd_ckpt_entry *entries,
+               struct xnd_vm_region *regions,
                ucontext_t *uctx)
 {
         int                     err, fd = -1, dirfd = -1;
@@ -177,7 +177,7 @@ int write_ckpt(struct xnd_ckpt_header *header,
         struct xnd_vm_region    *rgn = regions;
         ssize_t                 bytes;
         bool                    use_zlib;
-        
+
         use_zlib = env_use_zlib_compression();
         xnd_ckptfile_name(ckptfile, sizeof(ckptfile), xnd_pid);
         dirfd = xnd_ckptdir_open(header->xnd_uuid, epoch);
@@ -191,7 +191,7 @@ int write_ckpt(struct xnd_ckpt_header *header,
                 xnd_error("Failed to create checkpoint file\n");
                 goto bad;
         }
-        
+
         bytes = writeall(fd, header, sizeof(struct xnd_ckpt_header));
         if (bytes != sizeof(struct xnd_ckpt_header)) {
                 xnd_error("Failed to write checkpoint header\n");
@@ -222,13 +222,13 @@ int write_ckpt(struct xnd_ckpt_header *header,
                         goto bad;
                 }
         }
-        
+
         if (use_zlib) {
                 if (xnd_compress_ckpt(dirfd, ckptfile) != 0) {
                         goto bad;
                 }
         }
-        
+
         report_ckpt_success(header->xnd_uuid, use_zlib);
         close(dirfd);
         close(fd);
