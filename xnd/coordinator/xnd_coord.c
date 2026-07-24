@@ -39,7 +39,7 @@ void proc_exit_callback(struct proc *p)
         }
 
         if (p->oob_fd != -1) {
-                close(p->oob_fd); 
+                close(p->oob_fd);
         }
 
         pid_table_erase(p->virt_pid);
@@ -66,7 +66,7 @@ void coord_work(void)
         int             err, elapsed;
         bool            refresh;
         u64             iter = 0u;
-        
+
         while (proc_list->size == 0) {
                 err = kill(getppid(), 0);
                 if (err != 0 && errno == ESRCH) {
@@ -74,7 +74,7 @@ void coord_work(void)
                 }
                 coord_wait_for_connection();
         }
-        
+
         refresh = false;
         gettimeofday(&tv_start, NULL);
         for (;;) {
@@ -94,7 +94,7 @@ void coord_work(void)
                                 refresh = true;
                         }
                 }
-                
+
                 if (COORD_CHECK_HEARTBEAT(iter++)) {
                         proc_list_filter(proc_list);
                         if (proc_list->size == 0)
@@ -188,7 +188,7 @@ void coord_setup_handler(int sig)
         sigfillset(&sa.sa_mask);
         sa.sa_flags = SA_RESETHAND;
         sa.sa_handler = coord_handler;
-        
+
         err = sigaction(sig, &sa, NULL);
         if (err != 0) {
                 xnd_error("sigaction: %s\n", strerror(errno));
@@ -237,7 +237,7 @@ void coord_handle_command(int fd, struct xnd_msg *msg)
                 xnd_error("Invalid command: %s\n", xnd_cmd_string(msg->cmd));
                 coord_exit(COORD_EXIT_FAILURE);
         }
-        
+
         resp.hdr = XND_COORD_ACK;
         resp.ret = XND_SUCCESS;
         xnd_assert(coord_send_msg(fd, &resp) == 0);
@@ -276,7 +276,7 @@ void coord_handle_msg(int fd, struct xnd_msg *msg)
 int coord_send_msg(int fd, struct xnd_msg *msg)
 {
         ssize_t bytes;
-        
+
         bytes = writeall(fd, msg, sizeof(struct xnd_msg));
         if (bytes == sizeof(struct xnd_msg)) {
                 return 0;
@@ -392,7 +392,7 @@ void coord_wait_for_msg(void)
 {
         fd_set          set;
         int             err, nfds;
-        struct proc     *p;
+        struct proc     *p, *next;
         struct xnd_msg  msg;
         struct timeval  tv = { 0, COORD_TIMEOUT_USEC };
 
@@ -414,20 +414,24 @@ void coord_wait_for_msg(void)
                 return;
         }
 
-        proc_foreach(p, proc_list) {
-                if (FD_ISSET(p->fd, &set)) {
-                        err = coord_recv_msg(p->fd, &msg);
-                        if (err == 0) {
-                                coord_handle_msg(p->fd, &msg);
-                        }
-                }
-                if (p->oob_fd != -1 && FD_ISSET(p->oob_fd, &set)) {
-                        err = coord_recv_msg(p->oob_fd, &msg);
-                        if (err == 0) {
-                                coord_handle_msg(p->oob_fd, &msg);
-                        }
-                }
-        }
+	proc_foreach_safe(p, next, proc_list) {
+		if (FD_ISSET(p->fd, &set)) {
+			err = coord_recv_msg(p->fd, &msg);
+			if (err != 0) {
+				proc_list_remove(proc_list, p);
+				continue;
+			}
+			coord_handle_msg(p->fd, &msg);
+		}
+		if (p->oob_fd != -1 && FD_ISSET(p->oob_fd, &set)) {
+			err = coord_recv_msg(p->oob_fd, &msg);
+			if (err != 0) {
+				proc_list_remove(proc_list, p);
+				continue;
+			}
+			coord_handle_msg(p->oob_fd, &msg);
+		}
+	}
 }
 
 void coord_wait_for_connection(void)

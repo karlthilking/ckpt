@@ -129,7 +129,7 @@ int send_command_to_coord(enum xnd_cmd cmd)
                 xnd_error("Failed to receive ack from coordinator\n");
                 goto out;
         }
-        
+
         xnd_assert(msg.hdr == XND_COORD_ACK && msg.ret == XND_SUCCESS);
 out:
         close(fd);
@@ -141,7 +141,7 @@ int send_msg_to_coord(int fd, struct xnd_msg *msg)
         ssize_t bytes;
 
 #if DEVELOPMENT || DEBUG
-        xnd_trace("Sending message to coordinator: %s\n", 
+        xnd_trace("Sending message to coordinator: %s\n",
                   xnd_msghdr_string(msg->hdr));
 #endif
 
@@ -178,7 +178,7 @@ bool coord_exited(int fd)
         pid_t   coord_pid;
         char    *coord_pid_str, buf[32];
         bool    exited;
-        
+
         if ((coord_pid_str = getenv("XND_COORD_PID")) != NULL) {
                 coord_pid = atoi(coord_pid_str);
                 err = kill(coord_pid, 0);
@@ -186,7 +186,7 @@ bool coord_exited(int fd)
                         return true;
                 }
         }
-        
+
         if ((flags = fcntl(fd, F_GETFL)) == -1 ||
              fcntl(fd, F_SETFL, flags | O_NONBLOCK) == -1) {
                 return true;
@@ -197,7 +197,7 @@ bool coord_exited(int fd)
         } else {
                 exited = false;
         }
-        
+
         if ((flags = fcntl(fd, F_GETFL)) == -1 ||
              fcntl(fd, F_SETFL, flags & ~O_NONBLOCK) == -1) {
                 return true;
@@ -210,7 +210,7 @@ int coord_socket_status(int fd)
 {
         int             err, stat;
         socklen_t       len = sizeof(stat);
-        
+
         xnd_assert(fd != -1);
         err = getsockopt(fd, SOL_SOCKET, SO_ERROR, &stat, &len);
         if (err != 0) {

@@ -18,7 +18,7 @@ struct proc_list *proc_list_init(void)
 void proc_list_destroy(struct proc_list *list)
 {
         struct proc *p, *next;
-        
+
         proc_foreach_safe(p, next, list) {
                 if (p->cleanup) {
                         p->cleanup(p);
@@ -59,7 +59,7 @@ void proc_list_remove(struct proc_list *list, struct proc *p)
         if (p->cleanup) {
                 p->cleanup(p);
         }
-        
+
         free(p);
         list->size--;
 }
@@ -80,7 +80,7 @@ void proc_list_filter(struct proc_list *list)
 struct proc *proc_list_find_by_real_pid(struct proc_list *list, pid_t real)
 {
         struct proc *p;
-        
+
         proc_foreach(p, list) {
                 if (p->real_pid == real) {
                         return p;
