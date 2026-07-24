@@ -4,6 +4,9 @@
 *.dSYM
 *.dat
 *.ckpt
+*~
+\#*\#\
+.#*
 tmp/
 build/
 xnd_run
