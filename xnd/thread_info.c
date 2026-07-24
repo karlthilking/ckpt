@@ -923,32 +923,32 @@ __noreturn void thread_restore_context(void)
 
 void thread_save_sig_state(void)
 {
-	int err;
+        int err;
 
-	err = pthread_sigmask(SIG_SETMASK, NULL, &myself->sigblocked);
-	if (err != 0) {
-		sigemptyset(&myself->sigblocked);
-		xnd_warn("pthread_sigmask: %s\n", strerror(err));
-	}
+        err = pthread_sigmask(SIG_SETMASK, NULL, &myself->sigblocked);
+        if (err != 0) {
+                sigemptyset(&myself->sigblocked);
+                xnd_warn("pthread_sigmask: %s\n", strerror(err));
+        }
 
-	if (sigaltstack(NULL, &myself->ss) != 0) {
-		myself->ss.ss_flags = SS_DISABLE;
-		xnd_warn("sigaltstack: %s\n", strerror(errno));
-	}
+        if (sigaltstack(NULL, &myself->ss) != 0) {
+                myself->ss.ss_flags = SS_DISABLE;
+                xnd_warn("sigaltstack: %s\n", strerror(errno));
+        }
 }
 
 void thread_restore_sig_state(void)
 {
-	int err;
+        int err;
 
-	err = pthread_sigmask(SIG_SETMASK, &myself->sigblocked, NULL);
-	if (err != 0)
-		xnd_warn("pthread_sigmask: %s\n", strerror(err));
+        err = pthread_sigmask(SIG_SETMASK, &myself->sigblocked, NULL);
+        if (err != 0)
+                xnd_warn("pthread_sigmask: %s\n", strerror(err));
 
-	if (myself->ss.ss_sp == NULL || (myself->ss.ss_flags & SS_DISABLE))
-		return;
+        if (myself->ss.ss_sp == NULL || (myself->ss.ss_flags & SS_DISABLE))
+                return;
 
-	myself->ss.ss_flags &= ~SS_ONSTACK;
-	if (sigaltstack(&myself->ss, NULL) != 0)
-		xnd_warn("sigaltstack: %s\n", strerror(errno));
+        myself->ss.ss_flags &= ~SS_ONSTACK;
+        if (sigaltstack(&myself->ss, NULL) != 0)
+                xnd_warn("sigaltstack: %s\n", strerror(errno));
 }

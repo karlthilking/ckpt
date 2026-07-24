@@ -32,54 +32,54 @@ static xnd_restart_dag  *dag    = nullptr;
 
 static void restore_parent_cleanup(void)
 {
-	delete dag;
-	delete info;
-	for (auto t : targets)
-		delete t;
+        delete dag;
+        delete info;
+        for (auto t : targets)
+                delete t;
 
-	xnd_log_cleanup();
+        xnd_log_cleanup();
 }
 
 static void restore_parent_handler(int sig)
 {
-	if (killpg(getpgrp(), sig) != 0 && errno != ESRCH)
-		xnd_perror("killpg");
+        if (killpg(getpgrp(), sig) != 0 && errno != ESRCH)
+                xnd_perror("killpg");
 
-	restore_parent_cleanup();
-	kill(getpid(), sig);
+        restore_parent_cleanup();
+        kill(getpid(), sig);
 }
 
 static int restore_parent_setup(void)
 {
-	struct sigaction sa;
+        struct sigaction sa;
 
-	sigfillset(&sa.sa_mask);
-	sa.sa_flags = SA_RESETHAND;
-	sa.sa_handler = restore_parent_handler;
+        sigfillset(&sa.sa_mask);
+        sa.sa_flags = SA_RESETHAND;
+        sa.sa_handler = restore_parent_handler;
 
-	if (sigaction(SIGINT, &sa, NULL) != 0) {
-		xnd_perror("sigaction");
-		return -1;
-	}
-	
-	if (sigaction(SIGTERM, &sa, NULL) != 0) {
-		xnd_perror("sigaction");
-		return -1;
-	}
-	
-	if (sigaction(SIGQUIT, &sa, NULL) != 0) {
-		xnd_perror("sigaction");
-		return -1;
-	}
+        if (sigaction(SIGINT, &sa, NULL) != 0) {
+                xnd_perror("sigaction");
+                return -1;
+        }
+        
+        if (sigaction(SIGTERM, &sa, NULL) != 0) {
+                xnd_perror("sigaction");
+                return -1;
+        }
+        
+        if (sigaction(SIGQUIT, &sa, NULL) != 0) {
+                xnd_perror("sigaction");
+                return -1;
+        }
 
-	if (launch_coordinator(true) == -1) {
-		xnd_error("launch_coordinator() failed\n");
-		return -1;
-	}
+        if (launch_coordinator(true) == -1) {
+                xnd_error("launch_coordinator() failed\n");
+                return -1;
+        }
 
-	xnd_log_mach_port_info();
-	env_set_dyld_shared_region_private();
-	return 0;
+        xnd_log_mach_port_info();
+        env_set_dyld_shared_region_private();
+        return 0;
 }
 
 [[noreturn]] void xnd_restart_target::exec_restart(void) const noexcept
@@ -250,13 +250,13 @@ int main(int argc, char *argv[])
         int     stat, code;
         pid_t   ret, child;
 
-	xnd_log_setup();
+        xnd_log_setup();
         if (argc != 2) {
                 xnd_error("Usage: ./xnd_restart <ckpt-dir>\n");
-		exit(0);
+                exit(0);
         }
 
-	restore_parent_setup();
+        restore_parent_setup();
         info = new xnd_restart_info(argv[1]);
         switch ((child = fork())) {
         case -1:
@@ -269,27 +269,27 @@ int main(int argc, char *argv[])
                 break;
         }
 
-	do {
-		ret = waitpid(child, &stat, 0);
-		if (ret == -1 && errno != EINTR) {
-			xnd_perror("waitpid");
-			goto fail;
-		} else if (WIFEXITED(stat)) {
-			code = WEXITSTATUS(stat);
-			xnd_trace("%d exited: %d\n", child, code);
-			break;
-		} else {
-			xnd_assert(WIFSIGNALED(stat));
-			code = 128 + WTERMSIG(stat);
-			xnd_trace("%d signaled: %d\n", child, code - 128);
-			break;
-		}
-	} while (true);
+        do {
+                ret = waitpid(child, &stat, 0);
+                if (ret == -1 && errno != EINTR) {
+                        xnd_perror("waitpid");
+                        goto fail;
+                } else if (WIFEXITED(stat)) {
+                        code = WEXITSTATUS(stat);
+                        xnd_trace("%d exited: %d\n", child, code);
+                        break;
+                } else {
+                        xnd_assert(WIFSIGNALED(stat));
+                        code = 128 + WTERMSIG(stat);
+                        xnd_trace("%d signaled: %d\n", child, code - 128);
+                        break;
+                }
+        } while (true);
 
-	restore_parent_cleanup();
+        restore_parent_cleanup();
         exit(code);
 
 fail:
-	restore_parent_cleanup();
+        restore_parent_cleanup();
         exit(XND_EXIT_FAILURE);
 }

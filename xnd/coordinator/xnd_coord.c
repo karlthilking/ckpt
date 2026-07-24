@@ -414,24 +414,24 @@ void coord_wait_for_msg(void)
                 return;
         }
 
-	proc_foreach_safe(p, next, proc_list) {
-		if (FD_ISSET(p->fd, &set)) {
-			err = coord_recv_msg(p->fd, &msg);
-			if (err != 0) {
-				proc_list_remove(proc_list, p);
-				continue;
-			}
-			coord_handle_msg(p->fd, &msg);
-		}
-		if (p->oob_fd != -1 && FD_ISSET(p->oob_fd, &set)) {
-			err = coord_recv_msg(p->oob_fd, &msg);
-			if (err != 0) {
-				proc_list_remove(proc_list, p);
-				continue;
-			}
-			coord_handle_msg(p->oob_fd, &msg);
-		}
-	}
+        proc_foreach_safe(p, next, proc_list) {
+                if (FD_ISSET(p->fd, &set)) {
+                        err = coord_recv_msg(p->fd, &msg);
+                        if (err != 0) {
+                                proc_list_remove(proc_list, p);
+                                continue;
+                        }
+                        coord_handle_msg(p->fd, &msg);
+                }
+                if (p->oob_fd != -1 && FD_ISSET(p->oob_fd, &set)) {
+                        err = coord_recv_msg(p->oob_fd, &msg);
+                        if (err != 0) {
+                                proc_list_remove(proc_list, p);
+                                continue;
+                        }
+                        coord_handle_msg(p->oob_fd, &msg);
+                }
+        }
 }
 
 void coord_wait_for_connection(void)

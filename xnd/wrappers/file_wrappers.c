@@ -132,25 +132,25 @@ int __dup2_hook(int oldfd, int newfd)
 
 int __fcntl_hook(int fd, int cmd, ...)
 {
-	int ret;
-	va_list va;
-	void *arg = NULL;
+        int ret;
+        va_list va;
+        void *arg = NULL;
 
-	va_start(va, cmd);
-	arg = va_arg(va, void *);
-	va_end(va);
+        va_start(va, cmd);
+        arg = va_arg(va, void *);
+        va_end(va);
 
-	if (skip_interpose()) {
-		return fcntl(fd, cmd, arg);
-	}
+        if (skip_interpose()) {
+                return fcntl(fd, cmd, arg);
+        }
 
-	unsafe_enter();
-	ret = fcntl(fd, cmd, arg);
-	if (ret != -1 && (cmd == F_DUPFD || cmd == F_DUPFD_CLOEXEC))
-		fd_table_dup(fd, ret);
-	unsafe_exit();
+        unsafe_enter();
+        ret = fcntl(fd, cmd, arg);
+        if (ret != -1 && (cmd == F_DUPFD || cmd == F_DUPFD_CLOEXEC))
+                fd_table_dup(fd, ret);
+        unsafe_exit();
 
-	return ret;
+        return ret;
 }
 
 FILE *__fopen_hook(const char *path, const char *mode)
@@ -174,75 +174,75 @@ FILE *__fopen_hook(const char *path, const char *mode)
 
 int __fclose_hook(FILE *stream)
 {
-	int ret, fd;
+        int ret, fd;
 
-	if (skip_interpose()) {
-		return fclose(stream);
-	}
+        if (skip_interpose()) {
+                return fclose(stream);
+        }
 
-	unsafe_enter();
-	fd = fileno(stream);
-	if ((ret = fclose(stream)) != EOF)
-		fd_table_close(fd);
-	unsafe_exit();
+        unsafe_enter();
+        fd = fileno(stream);
+        if ((ret = fclose(stream)) != EOF)
+                fd_table_close(fd);
+        unsafe_exit();
 
         return ret;
 }
 
 FILE *__freopen_hook(const char *path, const char *mode, FILE *oldfp)
 {
-	FILE *newfp;
-	char buf[PATH_MAX];
-	int oldfd, newfd, oflag;
+        FILE *newfp;
+        char buf[PATH_MAX];
+        int oldfd, newfd, oflag;
 
-	if (skip_interpose()) {
-		return freopen(path, mode, oldfp);
-	}
+        if (skip_interpose()) {
+                return freopen(path, mode, oldfp);
+        }
 
-	unsafe_enter();
-	oldfd = fileno(oldfp);
-	/**
-	 * freopen(NULL, mode, fp) changes mode of the stream
-	 * of the same underlying file, obtain the path with
-	 * fcntl(fd, F_GETPATH, buf)
-	 */
-	if (path == NULL)
-		path = (fcntl(oldfd, F_GETPATH, buf) == 0 ? buf : "");
+        unsafe_enter();
+        oldfd = fileno(oldfp);
+        /**
+         * freopen(NULL, mode, fp) changes mode of the stream
+         * of the same underlying file, obtain the path with
+         * fcntl(fd, F_GETPATH, buf)
+         */
+        if (path == NULL)
+                path = (fcntl(oldfd, F_GETPATH, buf) == 0 ? buf : "");
 
-	if ((newfp = freopen(path, mode, oldfp))) {
-		newfd = fileno(newfp);
-		oflag = mode_to_oflag(mode);
-		/**
-		 * If oldfd is not repruposed for new stream, close
-		 * oldfd's entry in fd table
-		 */
-		if (newfd != oldfd)
-			fd_table_close(oldfd);
-		/**
-		 * Close old entry at newfd and open with freopen
-		 * arguments
-		 */
-		fd_table_close(newfd);
-		fd_table_open(newfd, path, oflag, 0666);
-	}
-	unsafe_exit();
+        if ((newfp = freopen(path, mode, oldfp))) {
+                newfd = fileno(newfp);
+                oflag = mode_to_oflag(mode);
+                /**
+                 * If oldfd is not repruposed for new stream, close
+                 * oldfd's entry in fd table
+                 */
+                if (newfd != oldfd)
+                        fd_table_close(oldfd);
+                /**
+                 * Close old entry at newfd and open with freopen
+                 * arguments
+                 */
+                fd_table_close(newfd);
+                fd_table_open(newfd, path, oflag, 0666);
+        }
+        unsafe_exit();
 
-	return newfp;
+        return newfp;
 }
 
 DIR *__opendir_hook(const char *path)
 {
         DIR *dirp;
 
-	if (skip_interpose()) {
-		return opendir(path);
-	}
+        if (skip_interpose()) {
+                return opendir(path);
+        }
 
-	unsafe_enter();
-	dirp = opendir(path);
-	if (dirp)
-		fd_table_opendir(dirp, path);
-	unsafe_exit();
+        unsafe_enter();
+        dirp = opendir(path);
+        if (dirp)
+                fd_table_opendir(dirp, path);
+        unsafe_exit();
 
         return dirp;
 }
@@ -250,110 +250,110 @@ DIR *__opendir_hook(const char *path)
 DIR *__fdopendir_hook(int fd)
 {
         DIR *dirp;
-	const char *path;
-	char buf[PATH_MAX];
+        const char *path;
+        char buf[PATH_MAX];
 
-	if (skip_interpose()) {
-		return fdopendir(fd);
-	}
+        if (skip_interpose()) {
+                return fdopendir(fd);
+        }
 
-	path = (fcntl(fd, F_GETPATH, buf) == 0 ? buf : "");
+        path = (fcntl(fd, F_GETPATH, buf) == 0 ? buf : "");
 
-	unsafe_enter();
-	dirp = fdopendir(fd);
-	if (dirp)
-		fd_table_opendir(dirp, path);
-	unsafe_exit();
+        unsafe_enter();
+        dirp = fdopendir(fd);
+        if (dirp)
+                fd_table_opendir(dirp, path);
+        unsafe_exit();
 
         return dirp;
 }
 
 int __closedir_hook(DIR *dirp)
 {
-	int ret, fd;
+        int ret, fd;
 
-	if (skip_interpose()) {
-		return closedir(dirp);
-	}
+        if (skip_interpose()) {
+                return closedir(dirp);
+        }
 
-	fd = dirfd(dirp);
+        fd = dirfd(dirp);
 
-	unsafe_enter();
-	ret = closedir(dirp);
-	if (ret == 0)
-		fd_table_close(fd);
-	unsafe_exit();
+        unsafe_enter();
+        ret = closedir(dirp);
+        if (ret == 0)
+                fd_table_close(fd);
+        unsafe_exit();
 
-	return ret;
+        return ret;
 }
 
 struct dirent *__readdir_hook(DIR *dirp)
 {
-	struct dirent *ent;
+        struct dirent *ent;
 
-	if (skip_interpose()) {
-		return readdir(dirp);
-	}
+        if (skip_interpose()) {
+                return readdir(dirp);
+        }
 
-	unsafe_enter();
-	ent = readdir(dirp);
-	unsafe_exit();
+        unsafe_enter();
+        ent = readdir(dirp);
+        unsafe_exit();
 
-	return ent;
+        return ent;
 }
 
 int __readdir_r_hook(DIR *dirp, struct dirent *entry, struct dirent **result)
 {
-	int ret;
+        int ret;
 
-	if (skip_interpose()) {
-		return readdir_r(dirp, entry, result);
-	}
+        if (skip_interpose()) {
+                return readdir_r(dirp, entry, result);
+        }
 
-	unsafe_enter();
-	ret = readdir_r(dirp, entry, result);
-	unsafe_exit();
+        unsafe_enter();
+        ret = readdir_r(dirp, entry, result);
+        unsafe_exit();
 
-	return ret;
+        return ret;
 }
 
 long __telldir_hook(DIR *dirp)
 {
-	long loc;
+        long loc;
 
-	if (skip_interpose()) {
-		return telldir(dirp);
-	}
+        if (skip_interpose()) {
+                return telldir(dirp);
+        }
 
-	unsafe_enter();
-	loc = telldir(dirp);
-	unsafe_exit();
+        unsafe_enter();
+        loc = telldir(dirp);
+        unsafe_exit();
 
-	return loc;
+        return loc;
 }
 
 void __seekdir_hook(DIR *dirp, long loc)
 {
-	if (skip_interpose()) {
-		seekdir(dirp, loc);
-		return;
-	}
+        if (skip_interpose()) {
+                seekdir(dirp, loc);
+                return;
+        }
 
-	unsafe_enter();
-	seekdir(dirp, loc);
-	unsafe_exit();
+        unsafe_enter();
+        seekdir(dirp, loc);
+        unsafe_exit();
 }
 
 void __rewinddir_hook(DIR *dirp)
 {
-	if (skip_interpose()) {
-		rewinddir(dirp);
-		return;
-	}
+        if (skip_interpose()) {
+                rewinddir(dirp);
+                return;
+        }
 
-	unsafe_enter();
-	rewinddir(dirp);
-	unsafe_exit();
+        unsafe_enter();
+        rewinddir(dirp);
+        unsafe_exit();
 }
 
 INTERPOSE(__openat_hook, openat);

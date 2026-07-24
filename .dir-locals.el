@@ -1,0 +1,6 @@
+((c-mode . ((indent-tabs-mode . nil)
+            (tab-width . 8)
+            (c-basic-offset . 8)))
+ (c++-mode . ((indent-tabs-mode . nil)
+              (tab-width . 8)
+              (c-basic-offset . 8))))

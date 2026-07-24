@@ -30,11 +30,11 @@
 #define BIND_TYPE_WEAK     0x2
 #define BIND_TYPE_LAZY     0x4
 #define BIND_TYPE_ALL \
-	(BIND_TYPE_REGULAR | BIND_TYPE_WEAK | BIND_TYPE_LAZY)
+        (BIND_TYPE_REGULAR | BIND_TYPE_WEAK | BIND_TYPE_LAZY)
 
 struct macho_info {
-	struct mach_header        *mh;
-	struct dyld_info_command  *cmd;
+        struct mach_header        *mh;
+        struct dyld_info_command  *cmd;
 };
 
 struct macho_bind_entry {

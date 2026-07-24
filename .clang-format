@@ -1,15 +1,15 @@
 IndentWidth:              8
 TabWidth:                 8
-UseTab:                   Always
+UseTab:                   Never
 ContinuationIndentWidth:  8
 
 BreakBeforeBraces:        Linux
 BraceWrapping:
   AfterControlStatement:  Never
-  AfterStruct:		  false
-  AfterUnion:		  false
-  AfterFunction:	  true
-  IndentBraces:		  false
+  AfterStruct:            false
+  AfterUnion:             false
+  AfterFunction:          true
+  IndentBraces:           false
 
 InsertBraces:             false
 RemoveBracesLLVM:         true
@@ -23,15 +23,15 @@ AllowShortLoopsOnASingleLine:         false
 AllowShortBlocksOnASingleLine:        Never
 AllowShortCaseLabelsOnASingleLine:    false
 
-AlignAfterOpenBracket: 		      Align
-AlignConsecutiveDeclarations: 	      true
-AlignConsecutiveAssignments:  	      false
-AlignConsecutiveMacros:		      true
-AlignOperands:			      true
-AlignTrailingComments:		      false
+AlignAfterOpenBracket:                Align
+AlignConsecutiveDeclarations:         true
+AlignConsecutiveAssignments:          false
+AlignConsecutiveMacros:               true
+AlignOperands:                        true
+AlignTrailingComments:                false
 
 
-SortIncludes:     		      false
+SortIncludes:                         false
 SpaceBeforeParens:                    ControlStatements
 SpaceInEmptyParentheses:              false
 SpaceAfterCStyleCast:                 false
@@ -42,16 +42,16 @@ SpaceBeforeSquareBrackets:            false
 SpaceAroundPointerQualifiers:         Default
 SpaceBeforeAssignmentOperators:       true
 SpaceAfterLogicalNot:                 false
-ReflowComments:			      false
+ReflowComments:                       false
 
-BinPackArguments:           	      true
-BinPackParameters:          	      true
+BinPackArguments:                     true
+BinPackParameters:                    true
 
-AlwaysBreakAfterReturnType: 	      None
-BreakBeforeBinaryOperators: 	      None
-BreakBeforeTernaryOperators: 	      true
-BreakStringLiterals:		      false
-MaxEmptyLinesToKeep:		      1
+AlwaysBreakAfterReturnType:           None
+BreakBeforeBinaryOperators:           None
+BreakBeforeTernaryOperators:          true
+BreakStringLiterals:                  false
+MaxEmptyLinesToKeep:                  1
 KeepEmptyLinesAtTheStartOfBlocks:     false
-IndentCaseLabels:          	      false
-IndentGotoLabels:          	      true
+IndentCaseLabels:                     false
+IndentGotoLabels:                     true

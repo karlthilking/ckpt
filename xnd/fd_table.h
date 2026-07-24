@@ -12,32 +12,32 @@
 #define FD_STATE_SAVED          0x1
 #define FD_STATE_RESTORED       0x2
 
-#define FD_NULL		0x0
-#define FD_INHERITED	0x1
-#define FD_FILE		0x2
-#define FD_DIRECTORY	0x3
+#define FD_NULL         0x0
+#define FD_INHERITED    0x1
+#define FD_FILE         0x2
+#define FD_DIRECTORY    0x3
 
 struct fd_source {
-	char type;
-	char state;
-	char path[PATH_MAX];
-	int flags;
-	mode_t mode;
-	off_t offset;
-	int ref;
-	int root;
-	DIR *dirp;
+        char type;
+        char state;
+        char path[PATH_MAX];
+        int flags;
+        mode_t mode;
+        off_t offset;
+        int ref;
+        int root;
+        DIR *dirp;
 };
 
 struct fd_table {
-	struct fd_source *table[MAXFILES];
-	pthread_mutex_t lock;
-	bool init;
+        struct fd_source *table[MAXFILES];
+        pthread_mutex_t lock;
+        bool init;
 };
 
 struct fd_ops {
-	int (*save)(int);
-	int (*restore)(int);
+        int (*save)(int);
+        int (*restore)(int);
 };
 
 void fd_table_init(void);

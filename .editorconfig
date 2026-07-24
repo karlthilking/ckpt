@@ -1,0 +1,8 @@
+root = true
+
+[*.{c,h,cpp,hpp}]
+indent_style = space
+indent_size = 8
+
+[Makefile]
+indent_style = tab

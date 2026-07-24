@@ -58,7 +58,7 @@ enum xnd_log_fd {
         printf("[xnd]: " fmt "\n", ##__VA_ARGS__)
 
 #define xnd_perror(msg) \
-	xnd_error(msg ": %s\n", strerror(errno));
+        xnd_error(msg ": %s\n", strerror(errno));
 
 #define xnd_error(__fmt, ...) \
         xnd_print(XND_ERROR_FD, "error", __fmt, ##__VA_ARGS__)
