@@ -52,7 +52,7 @@ void thread_list_init(void)
 
         myself = _main_thread = thread_list.head;
         myself->self = pthread_self();
-        
+
         /**
          * If thread_list_init() was called form thread_list_atfork_child,
          * set the main thread's state to ST_UNSAFE and wrapper_depth to 1.
@@ -60,7 +60,7 @@ void thread_list_init(void)
          * the thread in the parent that calls fork() and the main thread
          * in the child are in an "unsafe" state until __fork_hook returns.
          * Thus, the main the in the child should have state=ST_UNSAFE and
-         * wrapper_depth=1, otherwise, unsafe_exit() would produce 
+         * wrapper_depth=1, otherwise, unsafe_exit() would produce
          * unexpected results.
          */
         if (get_xnd_state() == XND_ATFORK) {
@@ -142,7 +142,7 @@ void thread_list_add(void)
 
         if (myself->next)
                 myself->next->prev = myself;
-        
+
         thread_list.head = myself;
         thread_list_release();
 }
@@ -166,7 +166,7 @@ void thread_list_remove(struct thread_info *th)
         if (th->next) {
                 th->next->prev = th->prev;
         }
-        
+
         /**
          * If the thread is joined, free all resources. Otherwise, a user
          * thread will eventually call pthread_join and start executing
@@ -783,7 +783,7 @@ void thread_sighandler(int sig, siginfo_t *info, void *uctx)
                 return;
         }
         xnd_assert(thread_state_cas(myself, ST_SIGNALED, ST_SUSPINPROG));
-        
+
         /* Save state and transition to suspended */
         thread_save_tls();
         thread_save_sig_state();
@@ -793,11 +793,11 @@ void thread_sighandler(int sig, siginfo_t *info, void *uctx)
         if (is_restart) {
                 return;
         }
-        
+
         is_restart = true;
         set_tls_slot(TLS_TLV_FLAG_SLOT, 0);
         xnd_assert(thread_state_cas(myself, ST_SUSPINPROG, ST_SUSPENDED));
-        
+
         /* Wait in barrier and then resume */
         thread_barrier();
         set_tls_slot(TLS_TLV_FLAG_SLOT, TLS_TLV_INIT_MAGIC);
@@ -807,7 +807,7 @@ void thread_sighandler(int sig, siginfo_t *info, void *uctx)
 __noreturn void *thread_start(void *thread)
 {
         void *retval;
-        
+
         tlv_init();
         /**
          * Set thread local pointer to thread descriptor to point to
@@ -817,10 +817,10 @@ __noreturn void *thread_start(void *thread)
         myself = (struct thread_info *)thread;
         myself->self = pthread_self();
         thread_list_add();
-        
+
         /**
-         * Signal to thread that spawned this thread in 
-         * __pthread_create_hook that this thread has started and added 
+         * Signal to thread that spawned this thread in
+         * __pthread_create_hook that this thread has started and added
          * itself to the thread list.
          */
         pthread_mutex_lock(&myself->lock);
@@ -837,7 +837,7 @@ __noreturn void *thread_start(void *thread)
 __noreturn void *thread_restart(void *thread)
 {
         tlv_init();
-        
+
         /**
          * Reinitialize thread local struct thread_info pointer to
          * the current thread
@@ -845,11 +845,11 @@ __noreturn void *thread_restart(void *thread)
         myself = (struct thread_info *)thread;
         myself->self = pthread_self();
         myself->state = ST_RUNNING;
-        
+
         /* Restore tls/tsd and signal state */
         thread_restore_tls();
         thread_restore_sig_state();
-        
+
         /**
          * Wait in barrier until all threads have restored their
          * tls and signal state. Then, restore context via setcontext().
@@ -868,7 +868,7 @@ void thread_save_tls(void)
 
 /**
  * thread_restore_tls:
- *  TPIDRRO_EL0 can not be written to directly. Instead, restore tsd 
+ *  TPIDRRO_EL0 can not be written to directly. Instead, restore tsd
  *  slots 125-209 and 256-767 for thread locals.
  *  Also restore per-thread cleanup stack that was located in the
  *  thread's previous struct pthread_s.
@@ -923,28 +923,32 @@ __noreturn void thread_restore_context(void)
 
 void thread_save_sig_state(void)
 {
-        int err;
+	int err;
 
-        err = pthread_sigmask(SIG_SETMASK, NULL, &myself->sigblocked);
-        if (err != 0)
-                xnd_warn("pthread_sigmask: %s\n", strerror(err));
+	err = pthread_sigmask(SIG_SETMASK, NULL, &myself->sigblocked);
+	if (err != 0) {
+		sigemptyset(&myself->sigblocked);
+		xnd_warn("pthread_sigmask: %s\n", strerror(err));
+	}
 
-        if (sigaltstack(NULL, &myself->ss) < 0)
-                xnd_warn("sigaltstack: %s\n", strerror(errno));
+	if (sigaltstack(NULL, &myself->ss) != 0) {
+		myself->ss.ss_flags = SS_DISABLE;
+		xnd_warn("sigaltstack: %s\n", strerror(errno));
+	}
 }
 
 void thread_restore_sig_state(void)
 {
-        int err;
+	int err;
 
-        err = pthread_sigmask(SIG_SETMASK, &myself->sigblocked, NULL);
-        if (err != 0)
-                xnd_warn("pthread_sigmask: %s\n", strerror(err));
+	err = pthread_sigmask(SIG_SETMASK, &myself->sigblocked, NULL);
+	if (err != 0)
+		xnd_warn("pthread_sigmask: %s\n", strerror(err));
 
-        if (myself->ss.ss_sp == NULL || (myself->ss.ss_flags & SS_DISABLE))
-                return;
-        
-        err = sigaltstack(&myself->ss, NULL);
-        if (err < 0)
-                xnd_warn("sigaltstack: %s\n", strerror(errno));
+	if (myself->ss.ss_sp == NULL || (myself->ss.ss_flags & SS_DISABLE))
+		return;
+
+	myself->ss.ss_flags &= ~SS_ONSTACK;
+	if (sigaltstack(&myself->ss, NULL) != 0)
+		xnd_warn("sigaltstack: %s\n", strerror(errno));
 }
