@@ -35,6 +35,16 @@ TESTS = [
         "name" : "NAS EP Class C",
         "path" : f"{EXECUTABLE_DIRECTORY}/ep.C.x",
         "output" : "benchmarks/NAS-EP-C-benchmarks"
+    },
+    {
+        "name" : "OpenSSL AES-256-CBC enc",
+        "path" : "/usr/bin/openssl",
+        "output" : "benchmarks/OpenSSL-enc-benchmarks",
+        "args" : [
+            "enc", "-aes-256-cbc", "-pbkdf2", "-k", "testpassword123",
+            "-in", "openssl_eval/testfile",
+            "-out", "openssl_eval/testfile.enc.xnd"
+        ]
     }
 ]
 
@@ -68,7 +78,8 @@ def find_xnd_executables():
     return found_launch and found_restart
 
 def bench_runtime(
-    program: str, no_xnd_runtimes: List[float], with_xnd_runtimes: List[float]
+    program: str, args: List[str],
+    no_xnd_runtimes: List[float], with_xnd_runtimes: List[float]
 ):
     assert(len(no_xnd_runtimes) == run_iterations)
     assert(len(with_xnd_runtimes) == run_iterations)
@@ -76,7 +87,7 @@ def bench_runtime(
     for itr in range(run_iterations):
         start = time.time()
         proc = subprocess.run(
-            [program],
+            [program] + args,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL
         )
@@ -88,7 +99,7 @@ def bench_runtime(
 
         start = time.time()
         proc = subprocess.run(
-            [xnd_launch_path, program],
+            [xnd_launch_path, program] + args,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL
         )
@@ -99,7 +110,7 @@ def bench_runtime(
         ))
 
 def bench_ckpt_restart(
-    program: str, use_compression: bool,
+    program: str, args: List[str], use_compression: bool,
     ckpt_sizes: List[int], ckpt_times: List[int], restart_times: List[int]
 ):
     ckpt_msg = "Checkpoint complete: "
@@ -115,9 +126,14 @@ def bench_ckpt_restart(
 
     while itr < ckpt_iterations:
         master_fd, slave_fd = pty.openpty()
+        argv = [
+            xnd_launch_path, "-i", str(ckpt_interval),
+            zlib_arg, program
+        ]
+        argv.extend(args)
+        print(f"\t{' '.join(argv)}\n", flush=True, end="")
         proc = subprocess.Popen(
-            [xnd_launch_path, "-i", str(ckpt_interval), zlib_arg, program],
-            stdout=slave_fd, stderr=slave_fd,
+            argv, stdout=slave_fd, stderr=slave_fd,
             start_new_session=True, text=True, close_fds=True
         )
         os.close(slave_fd)
@@ -181,8 +197,9 @@ def bench_ckpt_restart(
         assert(ckpt_times[itr] != 0)
         assert(restart_times[itr] != 0)
 
-def bench(test: Dict[str, str]):
+def bench(test: Dict[str, Any]):
     program, output_file = test["path"], test["output"]
+    args = test.get("args", [])
 
     ckpt_sizes_compressed = [0] * ckpt_iterations
     ckpt_sizes_uncompressed = [0] * ckpt_iterations
@@ -210,6 +227,7 @@ def bench(test: Dict[str, str]):
     # Time native runtime against runtime with libxnd.dylib loaded
     bench_runtime(
         program=program,
+        args=args,
         no_xnd_runtimes=no_xnd_runtimes,
         with_xnd_runtimes=with_xnd_runtimes
     )
@@ -217,6 +235,7 @@ def bench(test: Dict[str, str]):
     # Checkpoint-restart benchmarks without using compression
     bench_ckpt_restart(
         program=program,
+        args=args,
         use_compression=False,
         ckpt_sizes=ckpt_sizes_uncompressed,
         ckpt_times=ckpt_times_uncompressed,
@@ -226,6 +245,7 @@ def bench(test: Dict[str, str]):
     # Checkpoint-restart benchmarks with compressed checkpoint files
     bench_ckpt_restart(
         program=program,
+        args=args,
         use_compression=True,
         ckpt_sizes=ckpt_sizes_compressed,
         ckpt_times=ckpt_times_compressed,
