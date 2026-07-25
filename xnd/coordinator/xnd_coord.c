@@ -62,16 +62,25 @@ static inline u32 coord_next_xnd_pid(void)
 void coord_work(void)
 {
         struct timeval  tv_start, tv_end;
-        int             err, elapsed;
+        int             elapsed;
+        pid_t		ppid;
         bool            refresh;
         u64             iter = 0u;
 
-        while (proc_list->size == 0) {
-                err = kill(getppid(), 0);
-                if (err != 0 && errno == ESRCH)
-                        coord_exit(COORD_EXIT_FAILURE);
-                coord_wait_for_connection();
+        if ((ppid = getppid()) == 1) {
+                xnd_error("Coordinator orphaned unexpectedly\n");
+                coord_exit(COORD_EXIT_FAILURE);
         }
+
+        do {
+                coord_wait_for_connection();
+                if (proc_list->size != 0)
+                        break;
+                if (kill(ppid, 0) != 0 && errno == ESRCH) {
+                        xnd_error("Parent process bailed\n");
+                        coord_exit(COORD_EXIT_FAILURE);
+                }
+        } while (proc_list->size == 0);
 
         refresh = false;
         gettimeofday(&tv_start, NULL);
@@ -433,10 +442,10 @@ void coord_wait_for_connection(void)
         nfds = coord_info.listen_fd + 1;
         FD_ZERO(&set);
         FD_SET(coord_info.listen_fd, &set);
+
         if ((err = select(nfds, &set, NULL, NULL, &tv)) <= 0) {
-                if (err == -1) {
-                        xnd_error("select: %s\n", strerror(errno));
-                }
+                if (err == -1)
+                        xnd_perror("select");
                 return;
         }
 
@@ -450,6 +459,16 @@ void coord_wait_for_connection(void)
         switch (msg.hdr) {
         case XND_CONNECT_LAUNCH: {
                 coord_connect_with_process_on_launch(fd, &msg);
+                break;
+        }
+        case XND_CONNECT_RESTART: {
+                if (proc_list->size == 0) {
+                        coord_info.epoch = msg.epoch;
+                        coord_info.num_peers = msg.num_peers;
+                        coord_info.ckpt_interval = msg.ckpt_interval;
+                        uuid_copy(coord_info.xnd_uuid, msg.xnd_uuid);
+                }
+                coord_connect_with_process_on_restart(fd, &msg);
                 break;
         }
         case XND_ATFORK_PREPARE: {
@@ -485,7 +504,7 @@ void coord_wait_for_connection(void)
 void coord_connect_with_process_on_launch(int fd, struct xnd_msg *msg)
 {
         struct proc *p, *parent;
-        
+
         /**
          * If msg->real_pid already corresponds to a process in the process
          * list, then this process exec'd into a new process image and is
@@ -499,18 +518,18 @@ void coord_connect_with_process_on_launch(int fd, struct xnd_msg *msg)
                 coord_send_handshake(p);
                 return;
         }
-        
+
         p = malloc(sizeof(struct proc));
         xnd_assert(p != NULL);
-        
+
         p->fd = fd;
         p->oob_fd = -1;
         p->real_pid = msg->real_pid;
         p->real_ppid = msg->real_ppid;
-        
+
         /* Should be initial startup (epoch == 0) */
         xnd_assert(coord_info.epoch == 0);
-        
+
         if (pid_table_real_pid_exists(p->real_ppid)) {
                 parent = proc_list_find_by_real_pid(proc_list, p->real_ppid);
                 xnd_assert(parent != NULL);
@@ -518,15 +537,15 @@ void coord_connect_with_process_on_launch(int fd, struct xnd_msg *msg)
                 p->xnd_ppid = parent->xnd_pid;
                 p->xnd_pgid = parent->xnd_pgid;
                 p->virt_pid = coord_next_virt_pid();
-                p->xnd_pid = coord_next_xnd_pid(); 
+                p->xnd_pid = coord_next_xnd_pid();
         } else {
                 p->virt_ppid = coord_next_virt_pid();
                 p->virt_pid = coord_next_virt_pid();
-                p->xnd_ppid = coord_next_xnd_pid(); 
+                p->xnd_ppid = coord_next_xnd_pid();
                 p->xnd_pid = coord_next_xnd_pid();
                 p->xnd_pgid = p->xnd_pid;
         }
-        
+
         coord_send_handshake(p);
         p->state = PROC_RUNNING;
         p->cleanup = proc_exit_callback;
@@ -554,14 +573,11 @@ void coord_connect_with_process_on_restart(int fd, struct xnd_msg *msg)
         p->xnd_ppid = msg->xnd_ppid;
         p->xnd_pgid = msg->xnd_pgid;
 
-        if (p->virt_pid + 1 > coord_info.next_virt_pid) {
+        if (p->virt_pid >= coord_info.next_virt_pid)
                 coord_info.next_virt_pid = p->virt_pid + 1;
-        }
-        
-        if (p->xnd_pid + 1 > coord_info.next_xnd_pid) {
+        if (p->xnd_pid >= coord_info.next_xnd_pid)
                 coord_info.next_xnd_pid = p->xnd_pid + 1;
-        }
-        
+
         coord_send_handshake(p);
         p->state = PROC_RESTART_IN_PROGRESS;
         p->cleanup = proc_exit_callback;
@@ -601,16 +617,15 @@ void coord_write_ckpt_manifest(void)
         u32             max_xnd_pid = 0, min_xnd_pid = UINT32_MAX;
         struct proc     *p;
         int             err;
-        
+
         proc_foreach(p, proc_list) {
                 max_xnd_pid = max(p->xnd_pid, max_xnd_pid);
                 min_xnd_pid = min(p->xnd_pid, min_xnd_pid);
         }
 
-        err = xnd_ckptfile_write_manifest(coord_info.num_peers, 
-                                          min_xnd_pid, max_xnd_pid,
-                                          coord_info.xnd_uuid, 
-                                          coord_info.epoch);
+        err = xnd_ckptfile_write_manifest(
+                coord_info.num_peers, min_xnd_pid, max_xnd_pid,
+                coord_info.xnd_uuid, coord_info.epoch);
         if (err != 0) {
                 xnd_error("Failed to write checkpoint manifest\n");
                 coord_exit(COORD_EXIT_FAILURE);
@@ -636,7 +651,7 @@ void coord_suspend_processes(void)
         struct proc     *p, *next;
         struct xnd_msg  resp, msg = { .hdr = XND_CKPT_REQUEST };
         int             err, total, ready;
-        
+
         do {
                 total = 0;
                 ready = 0;
@@ -664,7 +679,7 @@ void coord_suspend_processes(void)
                         default:
                                 break;
                         }
-                        
+
                         err = kill(p->real_pid, 0);
                         if (err != 0 && errno == ESRCH) {
                                 proc_list_remove(proc_list, p);
@@ -692,7 +707,7 @@ void coord_wait_for_ckpt_completions(void)
                           total, coord_info.num_peers);
                 coord_exit(COORD_EXIT_FAILURE);
         }
-        
+
         total = 0;
         proc_foreach(p, proc_list) {
                 xnd_assert(p->state == PROC_CKPT_IN_PROGRESS);
@@ -715,15 +730,16 @@ void coord_do_checkpoint(void)
 {
         int             err, total;
         sigset_t        set;
-        u64             cur_epoch = coord_info.epoch;
-        
+        bool		success = true;
+        u64		epoch = coord_info.epoch;
+
         TIMER_PUSH(Checkpoint);
         sigemptyset(&set);
         sigaddset(&set, SIGINT);
         sigaddset(&set, SIGQUIT);
         sigaddset(&set, SIGTERM);
         sigprocmask(SIG_BLOCK, &set, NULL);
-        
+
         /**
          * Wait until each process's checkpoint thread is ready to receive
          * the checkpoint request on the read end of the socket. Then,
@@ -734,24 +750,27 @@ void coord_do_checkpoint(void)
          * allows them to complete their individual checkpoints (suspended)
          */
         total = coord_collective_prepare(COMM_BROADCAST);
-        if (unlikely(total == 0))
+        if (unlikely(total == 0)) {
+                sigprocmask(SIG_UNBLOCK, &set, NULL);
                 return;
-        coord_suspend_processes();
+        }
 
+        coord_suspend_processes();
         /**
          * Now that each process is suspended, create the checkpoint
          * directory, determine which processes are roots of their process
          * trees, and determine the number of total peers in the computation.
          */
-        err = xnd_ckptdir_create(coord_info.xnd_uuid, cur_epoch);
+        err = xnd_ckptdir_create(coord_info.xnd_uuid, epoch);
         if (err != 0) {
                 xnd_error("Failed to create checkpoint directory\n");
+                success = false;
                 goto out;
         }
-        
+
         coord_info.num_peers = proc_list->size;
         coord_determine_roots();
-        
+
         /**
          * Broadcast XND_CKPT_START to each process
          * (releasing pre-checkpoint barrier)
@@ -759,18 +778,18 @@ void coord_do_checkpoint(void)
         total = coord_collective_prepare(COMM_BROADCAST);
         xnd_assert(total == coord_info.num_peers);
         xnd_assert(coord_release_barrier(COORD_BARRIER_PRECKPT) == 0);
-        
+
         /**
          * Wait for every process to finish their checkpoint (and send
          * XND_CKPT_DONE).
          */
         coord_wait_for_ckpt_completions();
         coord_write_ckpt_manifest();
-        
+
         /**
          * All checkpoints are complete (each process is currently blocked
-         * in another coordinator barrier). 
-         * 
+         * in another coordinator barrier).
+         *
          * Now, broadcast XND_RESUME_AFTER_CKPT to allow each process
          * to continue.
          */
@@ -780,12 +799,26 @@ void coord_do_checkpoint(void)
          * Remove previous checkpoint directory
          *  (consider making this configurable)
          */
-        if (cur_epoch > 0)
-                xnd_ckptdir_unlink(coord_info.xnd_uuid, cur_epoch - 1);
+        if (epoch != 0)
+                xnd_ckptdir_unlink(coord_info.xnd_uuid, epoch - 1);
 
         coord_info.epoch++;
         TIMER_POP();
 out:
+        if (success) {
+                char base[XND_CKPTDIR_BASELEN];
+                char sub[XND_CKPTDIR_SUBLEN];
+                xnd_ckptdir_name(base, sub, coord_info.xnd_uuid, epoch);
+                xnd_printf("Checkpoint complete: %s/%s\n", base, sub);
+        } else {
+                xnd_error("Checkpoint failed\n");
+                /**
+                 * Unlink contents and remove checkpoint directory
+                 * if checkpoint files were not written successfully
+                 */
+                xnd_ckptdir_unlink(coord_info.xnd_uuid, epoch);
+        }
+
         sigprocmask(SIG_UNBLOCK, &set, NULL);
 }
 
@@ -837,37 +870,46 @@ found:
 
 void coord_do_restart(void)
 {
-        struct xnd_msg  msg;
-        int             fd, ready;
+        pid_t	ppid;
+        int	total;
 
         TIMER_PUSH(Restart);
-        for (;;) {
-                fd = accept(coord_info.listen_fd, NULL, NULL);
-                if (fd < 0) {
-                        xnd_error("accept: %s\n", strerror(errno));
+        if ((ppid = getppid()) == 1) {
+                xnd_error("Coordinator was orphaned unexpectedly\n");
+                coord_exit(COORD_EXIT_FAILURE);
+        }
+
+        do {
+                coord_wait_for_connection();
+                if (proc_list->size != 0)
+                        break;
+                if (kill(ppid, 0) != 0 && errno == ESRCH) {
+                        xnd_error("Restart process bailed\n");
                         coord_exit(COORD_EXIT_FAILURE);
                 }
+        } while (proc_list->size == 0);
 
-                xnd_assert(coord_recv_msg(fd, &msg) == 0);
-                xnd_assert(msg.hdr == XND_CONNECT_RESTART);
-
-                if (proc_list->size == 0) {
-                        coord_info.ckpt_interval = msg.ckpt_interval;
-                        coord_info.epoch = msg.epoch;
-                        coord_info.num_peers = msg.num_peers;
-                        memcpy(coord_info.xnd_uuid, msg.xnd_uuid,
-                               sizeof(uuid_t));
-                }
-
-                coord_connect_with_process_on_restart(fd, &msg);
-                if (proc_list->size == coord_info.num_peers) {
+        while (proc_list->size < coord_info.num_peers) {
+                coord_wait_for_connection();
+                if (proc_list->size == coord_info.num_peers)
                         break;
+                if (kill(ppid, 0) != 0 && errno == ESRCH) {
+                        xnd_error("Restart process bailed\n");
+                        coord_exit(COORD_EXIT_FAILURE);
                 }
         }
 
-        ready = coord_collective_prepare(COMM_BROADCAST);
-        xnd_assert(ready == coord_info.num_peers);
-        xnd_assert(coord_release_barrier(COORD_BARRIER_POSTRESTART) == 0);
+        total = coord_collective_prepare(COMM_BROADCAST);
+        if (total != coord_info.num_peers) {
+                xnd_error("Not all peers arrived in barrier\n");
+                coord_exit(COORD_EXIT_FAILURE);
+        }
+
+        if (coord_release_barrier(COORD_BARRIER_POSTRESTART) != 0) {
+                xnd_error("Failed to release post-restart barrier\n");
+                coord_exit(COORD_EXIT_FAILURE);
+        }
+
         TIMER_POP();
 }
 

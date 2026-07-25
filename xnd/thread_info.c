@@ -90,9 +90,7 @@ void thread_list_destroy(void)
 
         thread_list_acquire();
         for_each_thread_safe(th, next, &thread_list) {
-                pthread_mutex_destroy(&th->lock);
-                pthread_cond_destroy(&th->cond);
-                free(th);
+                thread_reap(th);
         }
         thread_list_release();
         pthread_mutex_destroy(&thread_list.lock);
@@ -282,13 +280,13 @@ void zombie_list_init(void)
 void zombie_list_destroy(void)
 {
         struct thread_info *th, *next;
-        
+
         zombie_list_acquire();
         for_each_thread_safe(th, next, &zombie_list) {
                 thread_reap(th);
         }
         zombie_list_release();
-        
+
         pthread_mutex_destroy(&zombie_list.lock);
 }
 
@@ -315,7 +313,7 @@ void zombie_list_release(void)
 void zombie_list_filter(void)
 {
         struct thread_info *th, *next;
-        
+
         zombie_list_acquire();
         for_each_thread_safe(th, next, &zombie_list) {
                 if (th->joined)
@@ -330,14 +328,14 @@ void zombie_list_add(struct thread_info *th)
                 thread_reap(th);
                 return;
         }
-        
+
         zombie_list_acquire();
         th->next = zombie_list.head;
         th->prev = NULL;
 
         if (th->next)
                 th->next->prev = th;
-        
+
         zombie_list.head = th;
         zombie_list_release();
 }
@@ -382,7 +380,7 @@ struct thread_info *thread_init(void *(*fn)(void *), void *arg)
 
         new = calloc(1, sizeof(struct thread_info));
         xnd_assert(new != NULL);
-        
+
         new->fn = fn;
         new->arg = arg;
         new->state = ST_EMBRYO;
@@ -400,7 +398,6 @@ struct thread_info *thread_init(void *(*fn)(void *), void *arg)
  */
 void thread_reap(struct thread_info *th)
 {
-        xnd_assert(th->joined);
         pthread_mutex_destroy(&th->lock);
         pthread_cond_destroy(&th->cond);
         free(th);
@@ -410,7 +407,7 @@ __noreturn void thread_exit(void *exit_value)
 {
         xnd_assert(myself);
         xnd_assert(pthread_mutex_lock(&myself->lock) == 0);
-        
+
         tlv_exit();
         myself->exiting = 1;
 

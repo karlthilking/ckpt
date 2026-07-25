@@ -81,10 +81,9 @@ int connect_to_coord(void)
         struct timespec         ts = { 0, 2 * 100000 };
         bool			retry;
 
-        fd = socket(AF_UNIX, SOCK_STREAM, 0);
-        if (fd < 0) {
+        if ((fd = socket(AF_UNIX, SOCK_STREAM, 0)) < 0) {
                 xnd_perror("socket");
-                xnd_abort();
+                return -1;
         }
 
         bzero(&addr, sizeof(addr));
@@ -101,11 +100,22 @@ int connect_to_coord(void)
                                 continue;
                         }
                         xnd_perror("connect");
-                        xnd_abort();
+                        goto out;
                 }
         } while (err != 0);
 
+        err = fcntl(fd, F_SETFD, FD_CLOEXEC);
+        if (err != 0) {
+                xnd_perror("fcntl");
+                goto out;
+        }
         xnd_trace("%s (path: %s, fd: %d)\n", __func__, XND_COORD_PATH, fd);
+
+out:
+        if (err) {
+                close(fd);
+                return -1;
+        }
         return fd;
 }
 
@@ -116,7 +126,10 @@ int send_command_to_coord(enum xnd_cmd cmd)
 
         msg.hdr = XND_COMMAND;
         msg.cmd = cmd;
-        fd = connect_to_coord();
+        if ((fd = connect_to_coord()) < 0) {
+                xnd_error("Failed to connect to coordinator\n");
+                return -1;
+        }
 
         err = send_msg_to_coord(fd, &msg);
         if (err != 0) {
@@ -130,7 +143,11 @@ int send_command_to_coord(enum xnd_cmd cmd)
                 goto out;
         }
 
-        xnd_assert(msg.hdr == XND_COORD_ACK && msg.ret == XND_SUCCESS);
+        if (msg.hdr != XND_COORD_ACK || msg.ret != XND_SUCCESS) {
+                xnd_error("Command failed: %s\n", xnd_cmd_string(cmd));
+                err = -1;
+        }
+
 out:
         close(fd);
         return err;
@@ -140,14 +157,11 @@ int send_msg_to_coord(int fd, struct xnd_msg *msg)
 {
         ssize_t bytes;
 
-#if DEVELOPMENT || DEBUG
-        xnd_trace("Sending message to coordinator: %s\n",
-                  xnd_msghdr_string(msg->hdr));
-#endif
-
         xnd_assert(fd != -1);
-        bytes = writeall(fd, msg, sizeof(struct xnd_msg));
-        if (bytes != sizeof(struct xnd_msg)) {
+        bytes = writeall(fd, msg, sizeof(*msg));
+        if (bytes != sizeof(*msg)) {
+                xnd_error("Failed to send %s\n",
+                          xnd_msghdr_string(msg->hdr));
                 return -1;
         }
 
@@ -159,15 +173,12 @@ int recv_msg_from_coord(int fd, struct xnd_msg *msg)
         ssize_t bytes;
 
         xnd_assert(fd != -1);
-        bytes = readall(fd, msg, sizeof(struct xnd_msg));
-        if (bytes != sizeof(struct xnd_msg)) {
+        bytes = readall(fd, msg, sizeof(*msg));
+        if (bytes != sizeof(*msg)) {
+                xnd_error("Failed to receive %s\n",
+                          xnd_msghdr_string(msg->hdr));
                 return -1;
         }
-
-#if DEVELOPMENT || DEBUG
-        xnd_trace("Received message from coordinator: %s\n",
-                  xnd_msghdr_string(msg->hdr));
-#endif
 
         return 0;
 }

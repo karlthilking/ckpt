@@ -19,22 +19,6 @@
 extern u64 epoch;
 extern u32 xnd_pid;
 
-static __always_inline void report_ckpt_success(uuid_t uuid, bool use_zlib)
-{
-        char path[XND_CKPTPATH_MAXLEN];
-
-        xnd_ckptpath_name(path, uuid, epoch, xnd_pid, use_zlib);
-        xnd_printf("Checkpoint complete: %s\n", path);
-}
-
-static __always_inline void report_ckpt_failure(uuid_t uuid, bool use_zlib)
-{
-        char path[XND_CKPTPATH_MAXLEN];
-
-        xnd_ckptpath_name(path, uuid, epoch, xnd_pid, use_zlib);
-        xnd_error("Checkpoint failed: %s\n", path);
-}
-
 int write_vm_page(int fd, struct xnd_vm_region *region,
                   struct xnd_vm_page *page)
 {
@@ -50,7 +34,7 @@ int write_vm_page(int fd, struct xnd_vm_region *region,
         bytes = writeall(fd, addr, VM_PAGE_SIZE);
         if (bytes != VM_PAGE_SIZE) {
                 xnd_error("Failed to write vm page (%p-%p %s/%s)\n",
-                          region->start + page->offset, 
+                          region->start + page->offset,
                           region->start + page->offset + VM_PAGE_SIZE,
                           VM_PROT_STRING(region->prot),
                           VM_PROT_STRING(region->max_prot));
@@ -223,23 +207,18 @@ int write_ckpt(struct xnd_ckpt_header *header,
                 }
         }
 
-        if (use_zlib) {
-                if (xnd_compress_ckpt(dirfd, ckptfile) != 0) {
-                        goto bad;
-                }
-        }
+	if (use_zlib) {
+		if (xnd_compress_ckpt(dirfd, ckptfile) != 0)
+			goto bad;
+	}
 
-        report_ckpt_success(header->xnd_uuid, use_zlib);
         close(dirfd);
         close(fd);
         return 0;
 bad:
-        report_ckpt_failure(header->xnd_uuid, use_zlib);
-        if (dirfd != -1) {
-                close(dirfd);
-        }
-        if (fd != -1) {
-                close(fd);
-        }
+	if (dirfd != -1)
+		close(dirfd);
+	if (fd != -1)
+		close(fd);
         return -1;
 }

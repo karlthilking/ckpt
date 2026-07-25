@@ -22,22 +22,22 @@
 extern mach_port_t task_self_trap(void);
 extern mach_port_t host_self_trap(void);
 
-void xnd_ckptpath_name(char *buf, uuid_t uuid, u64 epoch, 
+void xnd_ckptpath_name(char *buf, uuid_t uuid, u64 epoch,
                        u32 xnd_pid, bool use_zlib)
 {
         char    uuid_str[37];
         size_t  len = XND_CKPTPATH_MAXLEN;
-        
+
         bzero(buf, len);
         uuid_unparse(uuid, uuid_str);
         snprintf(buf, len, XND_CKPTPATH_FMT, uuid_str, epoch, xnd_pid);
-        
+
         if (use_zlib) {
                 strncat(buf, XND_COMPRESSED_SUFFIX, len - strlen(buf));
         }
 }
 
-void xnd_ckptdir_name(char *basedir, char *subdir, 
+void xnd_ckptdir_name(char *basedir, char *subdir,
                       const uuid_t uuid, u64 epoch)
 {
         uuid_unparse(uuid, basedir);
@@ -72,7 +72,7 @@ int xnd_ckptdir_create(uuid_t uuid, u64 epoch)
                 close(fd);
                 return -1;
         }
-        
+
         close(fd);
         return 0;
 }
@@ -82,7 +82,7 @@ int xnd_ckptdir_open(const uuid_t uuid, u64 epoch)
         int     err, fd;
         char    base[XND_CKPTDIR_BASELEN], sub[XND_CKPTDIR_SUBLEN];
         char    path[PATH_MAX];
-        
+
         xnd_ckptdir_name(base, sub, uuid, epoch);
         err = xnd_path_join(path, sizeof(path), base, sub);
         if (err != 0) {
@@ -139,7 +139,7 @@ int xnd_ckptdir_unlink(const uuid_t uuid, u64 epoch)
                 xnd_error("open(%s): %s\n", path, strerror(errno));
                 return -1;
         }
-        
+
         err = unlinkat(dirfd, sub, AT_REMOVEDIR);
         if (unlikely(err != 0)) {
                 xnd_error("unlinkat(%s): %s\n", sub, strerror(errno));
