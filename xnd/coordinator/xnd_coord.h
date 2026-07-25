@@ -43,8 +43,6 @@ enum coord_comm_type {
 };
 
 void proc_exit_callback(struct proc *);
-pid_t coord_next_virt_pid(void);
-u32 coord_next_xnd_pid(void);
 
 void coord_work(void);
 void coord_init(void);

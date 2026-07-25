@@ -28,6 +28,9 @@ pid_t launch_coordinator(bool restarting)
         pid_t   coord_pid;
         int     err;
 
+        if (access(XND_COORD_PATH, F_OK) == 0)
+                xnd_assert(unlink(XND_COORD_PATH) == 0);
+
         coord_pid = fork();
         switch (coord_pid) {
         case -1: {
@@ -36,15 +39,10 @@ pid_t launch_coordinator(bool restarting)
         }
         case 0: {
                 xnd_exe_dir(buf, sizeof(buf));
-                xnd_path_join(exe, sizeof(exe), buf, "xnd_coordinator");
-
-                if (restarting) {
-                        err = execl(exe, exe, XND_COORD_RESTART_FLAG, NULL);
-                } else {
-                        err = execl(exe, exe, NULL);
-                }
-
-                if (err != 0) {
+                xnd_path_join(exe, PATH_MAX, buf, "xnd_coordinator");
+                char *argv[] = { exe, exe, NULL, NULL };
+                argv[2] = (restarting ? XND_COORD_RESTART_FLAG : NULL);
+                if (execvp(argv[0], argv) != 0) {
                         xnd_error("execl(%s): %s\n", exe, strerror(errno));
                         exit(XND_EXIT_FAILURE);
                 }
@@ -52,7 +50,7 @@ pid_t launch_coordinator(bool restarting)
         default:
                 break;
         }
-        
+
         snprintf(buf, sizeof(buf), "%d", coord_pid);
         xnd_assert(setenv("XND_COORD_PID", buf, 1) == 0);
 
@@ -65,9 +63,8 @@ pid_t get_coord_pid(void)
         char            *pid_str = NULL;
 
         if (coord_pid == -1) {
-                if ((pid_str = getenv("XND_COORD_PID")) != NULL) {
+                if ((pid_str = getenv("XND_COORD_PID")))
                         coord_pid = atoi(pid_str);
-                }
         }
 
         return coord_pid;
@@ -77,11 +74,12 @@ int connect_to_coord(void)
 {
         int                     fd, err, tries;
         struct sockaddr_un      addr;
-        struct timespec         ts = { 0, 10 * 100000 };
+        struct timespec         ts = { 0, 2 * 100000 };
+        bool			retry;
 
         fd = socket(AF_UNIX, SOCK_STREAM, 0);
         if (fd < 0) {
-                xnd_error("socket: %s\n", strerror(errno));
+                xnd_perror("socket");
                 xnd_abort();
         }
 
@@ -90,22 +88,20 @@ int connect_to_coord(void)
         strncpy(addr.sun_path, XND_COORD_PATH, sizeof(addr.sun_path) - 1);
 
         tries = 0;
-again:
-        err = connect(fd, (struct sockaddr *)&addr, sizeof(addr));
-        if (err != 0) {
-                if (errno == ECONNREFUSED) {
-                        xnd_assert(tries++ < 100);
-                        nanosleep(&ts, NULL);
-                        goto again;
-                } else {
-                        xnd_error("connect: %s\n", strerror(errno));
+        do {
+                err = connect(fd, (struct sockaddr *)&addr, sizeof(addr));
+                if (err != 0) {
+                        retry = (errno == ENOENT || errno == ECONNREFUSED);
+                        if (retry && tries++ < 100) {
+                                nanosleep(&ts, NULL);
+                                continue;
+                        }
+                        xnd_perror("connect");
                         xnd_abort();
                 }
-        }
+        } while (err != 0);
 
-        xnd_trace("Connect with coordinator (path: %s, fd: %d)\n",
-                  XND_COORD_PATH, fd);
-
+        xnd_trace("%s (path: %s, fd: %d)\n", __func__, XND_COORD_PATH, fd);
         return fd;
 }
 
@@ -113,11 +109,11 @@ int send_command_to_coord(enum xnd_cmd cmd)
 {
         int             fd, err;
         struct xnd_msg  msg;
-        
+
         msg.hdr = XND_COMMAND;
         msg.cmd = cmd;
         fd = connect_to_coord();
-        
+
         err = send_msg_to_coord(fd, &msg);
         if (err != 0) {
                 xnd_error("Failed to send command to coordinator\n");

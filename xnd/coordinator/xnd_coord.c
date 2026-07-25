@@ -34,28 +34,27 @@ static struct coord_info coord_info = {
 
 void proc_exit_callback(struct proc *p)
 {
-        if (p->fd != -1) {
+        if (p->fd != -1)
                 close(p->fd);
-        }
-
-        if (p->oob_fd != -1) {
+        if (p->oob_fd != -1)
                 close(p->oob_fd);
-        }
 
         pid_table_erase(p->virt_pid);
 }
 
-pid_t coord_next_virt_pid(void)
+static inline pid_t coord_next_virt_pid(void)
 {
-        pid_t next_virt;
+        pid_t next = coord_info.next_virt_pid++;
 
-        next_virt = coord_info.next_virt_pid++;
-        xnd_assert(pid_table_virtual_pid_exists(next_virt) == false);
+        if (unlikely(pid_table_virtual_pid_exists(next))) {
+                xnd_error("Virtual pid already exists: %d\n", next);
+                coord_exit(COORD_EXIT_FAILURE);
+        }
 
-        return next_virt;
+        return next;
 }
 
-u32 coord_next_xnd_pid(void)
+static inline u32 coord_next_xnd_pid(void)
 {
         return coord_info.next_xnd_pid++;
 }
@@ -69,9 +68,8 @@ void coord_work(void)
 
         while (proc_list->size == 0) {
                 err = kill(getppid(), 0);
-                if (err != 0 && errno == ESRCH) {
+                if (err != 0 && errno == ESRCH)
                         coord_exit(COORD_EXIT_FAILURE);
-                }
                 coord_wait_for_connection();
         }
 
@@ -86,7 +84,7 @@ void coord_work(void)
                 coord_wait_for_connection();
                 coord_wait_for_msg();
 
-                if (coord_info.ckpt_interval) {
+                if (coord_info.ckpt_interval != 0) {
                         gettimeofday(&tv_end, NULL);
                         elapsed = tv_end.tv_sec - tv_start.tv_sec;
                         if (elapsed >= coord_info.ckpt_interval) {
@@ -95,7 +93,9 @@ void coord_work(void)
                         }
                 }
 
-                if (COORD_CHECK_HEARTBEAT(iter++)) {
+                if (proc_list->size == 0) {
+                        break;
+                } else if (COORD_CHECK_HEARTBEAT(iter++)) {
                         proc_list_filter(proc_list);
                         if (proc_list->size == 0)
                                 break;
@@ -123,14 +123,7 @@ void coord_init(void)
         addr.sun_family = AF_UNIX;
         strncpy(addr.sun_path, XND_COORD_PATH, sizeof(addr.sun_path) - 1);
 
-        if (access(XND_COORD_PATH, F_OK) == 0) {
-                err = unlink(XND_COORD_PATH);
-                if (err != 0) {
-                        xnd_error("unlink: %s\n", strerror(errno));
-                        coord_exit(COORD_EXIT_FAILURE);
-                }
-        }
-
+        xnd_assert(access(XND_COORD_PATH, F_OK) != 0);
         err = bind(fd, (struct sockaddr *)&addr, sizeof(addr));
         if (err != 0) {
                 xnd_error("bind: %s\n", strerror(errno));
@@ -142,7 +135,7 @@ void coord_init(void)
                 xnd_error("listen: %s\n", strerror(errno));
                 coord_exit(COORD_EXIT_FAILURE);
         }
-        
+
         coord_info.listen_fd = fd;
         coord_info.ckpt_interval = env_get_ckpt_interval();
 
@@ -154,15 +147,13 @@ void coord_cleanup(void)
 {
         proc_list_destroy(proc_list);
         if (coord_info.listen_fd != -1) {
-                if (close(coord_info.listen_fd) != 0) {
-                        xnd_error("close: %s\n", strerror(errno));
-                }
+                if (close(coord_info.listen_fd) != 0)
+                        xnd_perror("close");
         }
 
         if (access(XND_COORD_PATH, F_OK) == 0) {
-                if (unlink(XND_COORD_PATH) != 0) {
-                        xnd_error("unlink: %s\n", strerror(errno));
-                }
+                if (unlink(XND_COORD_PATH) != 0)
+                        xnd_perror("unlink");
         }
 }
 
@@ -182,17 +173,14 @@ __noreturn void coord_exit(int status)
 
 void coord_setup_handler(int sig)
 {
-        int                     err;
-        struct sigaction        sa;
+        struct sigaction sa;
 
         sigfillset(&sa.sa_mask);
         sa.sa_flags = SA_RESETHAND;
         sa.sa_handler = coord_handler;
 
-        err = sigaction(sig, &sa, NULL);
-        if (err != 0) {
-                xnd_error("sigaction: %s\n", strerror(errno));
-        }
+        if (sigaction(sig, &sa, NULL) != 0)
+                xnd_perror("sigaction");
 }
 
 void coord_handler(int sig)
@@ -215,7 +203,7 @@ void coord_broadcast_kill(void)
         proc_foreach(p, proc_list) {
                 kill(p->real_pid, SIGKILL);
         }
-        
+
         coord_exit(COORD_EXIT_SUCCESS);
 }
 
@@ -253,7 +241,7 @@ void coord_handle_msg(int fd, struct xnd_msg *msg)
                 if (p) {
                         proc_list_remove(proc_list, p);
                 } else {
-                        xnd_error("Couldn't find exited process (pid: %d)",
+                        xnd_error("Exited process not found (pid: %d)\n",
                                   msg->real_pid);
                 }
                 break;
@@ -940,15 +928,15 @@ void coord_atfork(int fd, struct xnd_msg *parent_msg)
                           child->virt_ppid);
                 coord_exit(COORD_EXIT_FAILURE);
         }
-        
-        /* Wait for child to connect (and do handshake) */ 
+
+        /* Wait for child to connect (and do handshake) */
         err = coord_recv_msg(fd, &child_msg);
         if (err != 0) {
                 xnd_error("Failed to receive child's message "
                           "(virtual pid: %d)\n", child->virt_pid);
                 coord_exit(COORD_EXIT_FAILURE);
         }
-        
+
         xnd_assert(child_msg.hdr == XND_ATFORK_CHILD);
         child->real_pid = child_msg.real_pid;
         child->real_ppid = child_msg.real_ppid;
