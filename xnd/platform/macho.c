@@ -18,12 +18,6 @@ static inline bool binary_is_arm64e(void *);
 static inline void *fat_arm64e_to_arm64(void *);
 static inline void *macho_arm64e_to_arm64(void *);
 
-static inline u32 macho_next_offset(struct macho_info *, u32, bool);
-static inline void macho_skip_threaded_opcode(u8 **);
-static u8 *macho_serialize_opcodes(struct macho_info *, u32);
-static int arm64e_with_dyld_info_to_arm64(int, void *, size_t,
-                                          struct dyld_info_command *);
-
 static inline bool fat_is_arm64e(void *fh_addr)
 {
         struct fat_header  *fh;
@@ -149,310 +143,28 @@ static inline void *macho_arm64e_to_arm64(void *addr)
         return (void *)mh;
 }
 
-static inline u32 macho_next_offset(struct macho_info *info, u32 curr,
-                                    bool has_opcodes)
-{
-        struct dyld_info_command        *cmd = info->cmd;
-        u32                             next = UINT32_MAX;
-
-        if (has_opcodes) {
-                if (curr == cmd->bind_off)
-                        next = cmd->bind_off + cmd->bind_size;
-                else if (curr == cmd->weak_bind_off)
-                        next = cmd->weak_bind_off + cmd->weak_bind_size;
-                else if (curr == cmd->lazy_bind_off)
-                        next = cmd->lazy_bind_off + cmd->lazy_bind_size;
-        } else {
-                if (cmd->bind_off && cmd->bind_off >= curr)
-                        next = min(next, cmd->bind_off);
-                if (cmd->weak_bind_off && cmd->weak_bind_off >= curr)
-                        next = min(next, cmd->weak_bind_off);
-                if (cmd->lazy_bind_off && cmd->lazy_bind_off >= curr)
-                        next = min(next, cmd->lazy_bind_off);
-        }
-
-        if (unlikely(next == UINT32_MAX)) {
-                xnd_error("Error finding next offset: 0x%x\n", curr);
-                xnd_abort();
-        }
-
-        return next;
-}
-
-static inline void macho_append_offset_binds(u8 *op_start, u8 *op_end,
-                                             u8 *buf, u32 *bytesp)
-{
-        u32 idx, step, bytes = *bytesp;
-        u8 op, imm, *next, *itr = op_start;
-
-        while (op_start < op_end) {
-                op = *itr & BIND_OPCODE_MASK;
-                imm = *itr & BIND_IMMEDIATE_MASK;
-                if (op != BIND_OPCODE_THREADED)
-                        itr++;
-                switch (op) {
-                case BIND_OPCODE_DONE:
-                        goto done;
-                case BIND_OPCODE_SET_SYMBOL_TRAILING_FLAGS_IMM:
-                        while (*itr != '\0')
-                                itr++;
-                        itr++;
-                        break;
-                case BIND_OPCODE_SET_ADDEND_SLEB:
-                        itr = decode_sleb128(itr, NULL);
-                        break;
-                case BIND_OPCODE_SET_DYLIB_ORDINAL_ULEB:
-                case BIND_OPCODE_ADD_ADDR_ULEB:
-                case BIND_OPCODE_DO_BIND_ADD_ADDR_ULEB:
-                        itr = decode_uleb128(itr, NULL);
-                        break;
-                case BIND_OPCODE_DO_BIND_ULEB_TIMES_SKIPPING_ULEB:
-                        itr = decode_uleb128(itr, NULL);
-                        itr = decode_uleb128(itr, NULL);
-                        break;
-                case BIND_OPCODE_THREADED:
-                        macho_skip_threaded_opcode(&itr);
-                        break;
-                case BIND_OPCODE_SET_SEGMENT_AND_OFFSET_ULEB:
-                        /**
-                         * Append segment and offset bind info to
-                         * end of buffer
-                         */
-                        *(buf + bytes++) = op | imm;
-                        next = decode_uleb128(itr, NULL);
-                        step = next - itr;
-                        for (idx = 0; idx < step; idx++)
-                                *(buf + bytes++) = *itr++;
-                        break;
-                default:
-                        break;
-                }
-        }
-
-done:
-        *bytesp = bytes;
-        return;
-}
-
-static inline void macho_skip_threaded_opcode(u8 **p)
-{
-        u8 *next, *itr, op, imm;
-
-        itr = *p;
-        op = *itr & BIND_OPCODE_MASK;
-        if (unlikely(op != BIND_OPCODE_THREADED)) {
-                xnd_error("Not BIND_OPCODE_THREADED: 0x%x\n", op);
-                xnd_abort();
-        }
-
-        imm = *itr & BIND_IMMEDIATE_MASK;
-        itr++;
-        switch (imm) {
-        case BIND_SUBOPCODE_THREADED_SET_BIND_ORDINAL_TABLE_SIZE_ULEB:
-                next = decode_uleb128(itr, NULL);
-                break;
-        case BIND_SUBOPCODE_THREADED_APPLY:
-                next = itr;
-                break;
-        default:
-                xnd_error("Unknown threaded bind subopcode: 0x%x\n", imm);
-                xnd_abort();
-                unreachable();
-        }
-
-        *p = next;
-}
-
-static u8 *macho_serialize_opcodes(struct macho_info *info, u32 bind_off)
-{
-        struct dyld_info_command *cmd = info->cmd;
-        u8 *buf, *op_start, *op_end, *itr, *next, imm, op;
-        u32 idx, step, bind_size, bytes = 0;
-        bool first_bind = true;
-
-        if (bind_off == cmd->bind_off) {
-                bind_size = cmd->bind_size;
-        } else if (bind_off == cmd->weak_bind_off) {
-                bind_size = cmd->weak_bind_off;
-        } else if (bind_off == cmd->lazy_bind_off) {
-                bind_size = cmd->lazy_bind_off;
-        } else {
-                xnd_error("No bind info for offset 0x%x\n", bind_off);
-                return NULL;
-        }
-
-        if ((buf = malloc(bind_size)) == NULL) {
-                xnd_error("malloc: %s\n", strerror(errno));
-                return NULL;
-        }
-
-        op_start = (u8 *)info->mh + bind_off;
-        op_end = op_start + bind_size;
-        itr = op_start;
-        while (itr != op_end && bytes != bind_size) {
-                op = *itr & BIND_OPCODE_MASK;
-                imm = *itr & BIND_IMMEDIATE_MASK;
-                switch (op) {
-                case BIND_OPCODE_DONE:
-                        *(buf + bytes++) = *itr++;
-                        goto done;
-                case BIND_OPCODE_DO_BIND:
-                        if (first_bind) {
-                                macho_append_offset_binds(op_start, op_end,
-                                                          buf, &bytes);
-                                first_bind = false;
-                        }
-                        *(buf + bytes++) = *itr++;
-                        break;
-                case BIND_OPCODE_SET_DYLIB_ORDINAL_IMM:
-                case BIND_OPCODE_SET_DYLIB_SPECIAL_IMM:
-                case BIND_OPCODE_SET_TYPE_IMM:
-                case BIND_OPCODE_DO_BIND_ADD_ADDR_IMM_SCALED:
-                        /* No extra data */
-                        *(buf + bytes++) = *itr++;
-                        break;
-                case BIND_OPCODE_SET_SYMBOL_TRAILING_FLAGS_IMM:
-                        /* Copy string to buffer */
-                        *(buf + bytes++) = *itr++;
-                        while (*itr != '\0')
-                                *(buf + bytes++) = *itr++;
-                        *(buf + bytes++) = *itr++;
-                        break;
-                case BIND_OPCODE_SET_ADDEND_SLEB:
-                        /* Copy encoded sleb128 to buffer */
-                        *(buf + bytes++) = *itr++;
-                        next = decode_sleb128(itr, NULL);
-                        step = next - itr;
-                        for (idx = 0; idx < step; idx++)
-                                *(buf + bytes++) = *itr++;
-                        break;
-                case BIND_OPCODE_SET_DYLIB_ORDINAL_ULEB:
-                case BIND_OPCODE_ADD_ADDR_ULEB:
-                case BIND_OPCODE_DO_BIND_ADD_ADDR_ULEB:
-                        /* Copy uleb128 */
-                        *(buf + bytes++) = *itr++;
-                        next = decode_uleb128(itr, NULL);
-                        step = next - itr;
-                        for (idx = 0; idx < step; idx++)
-                                *(buf + bytes++) = *itr++;
-                        break;
-                case BIND_OPCODE_DO_BIND_ULEB_TIMES_SKIPPING_ULEB:
-                        /* Consume two encoded uleb128's */
-                        *(buf + bytes++) = *itr++;
-                        next = decode_uleb128(itr, NULL);
-                        step = next - itr;
-                        for (idx = 0; idx < step; idx++)
-                                *(buf + bytes++) = *itr++;
-                        next = decode_uleb128(itr, NULL);
-                        step = next - itr;
-                        for (idx = 0; idx < step; idx++)
-                                *(buf + bytes++) = *itr++;
-                        break;
-                case BIND_OPCODE_THREADED:
-                        /**
-                         * Skip over threaded opcodes including any
-                         * extra data associated with the opcode
-                         */
-                        macho_skip_threaded_opcode(&itr);
-                        break;
-                case BIND_OPCODE_SET_SEGMENT_AND_OFFSET_ULEB:
-                        /**
-                         * Already appended before first
-                         * BIND_OPCODE_DO_BIND, skip over here
-                         */
-                        itr = decode_uleb128(itr, NULL);
-                        break;
-                default:
-                        xnd_error("Unknown bind opcode: 0x%x\n", op | imm);
-                        return NULL;
-                }
-        }
-
-done:
-        /* Pad buffer */
-        while (bytes < bind_size)
-                *(buf + bytes++) = BIND_OPCODE_DONE;
-
-        return buf;
-}
-
-static int arm64e_with_dyld_info_to_arm64(int outfd, void *mh, size_t size,
-                                          struct dyld_info_command *cmd)
-{
-        struct macho_info       info = { .mh = mh, .cmd = cmd };
-        int                     err;
-        u8                      *buf;
-        u32                     idx, vec[2], len = 0;
-        bool                    has_opcodes;
-        void                    *addr;
-        size_t                  nbyte;
-
-        if (cmd->bind_off)
-                len++;
-        if (cmd->weak_bind_off)
-                len++;
-        if (cmd->lazy_bind_off)
-                len++;
-
-        len = (len << 1) | 1;
-        for (idx = 0; idx < len; idx++) {
-                has_opcodes = (idx & 0x1);
-                vec[0] = (idx == 0 ? 0 : vec[1]);
-                vec[1] = (idx + 1 == len ? size :
-                          macho_next_offset(&info, vec[0], has_opcodes));
-                nbyte = (size_t)(vec[1] - vec[0]);
-                if (has_opcodes) {
-                        xnd_assert(vec[1] != size);
-                        buf = macho_serialize_opcodes(&info, vec[0]);
-                        if (!buf) {
-                                xnd_error("macho_serialize opcodes error\n");
-                                return -1;
-                        }
-                        err = (writeall(outfd, buf, nbyte) != nbyte);
-                        free(buf);
-                        if (err) {
-                                xnd_error("Error writing bind opcodes\n");
-                                return -1;
-                        }
-                } else {
-                        addr = (void *)((char *)mh + vec[0]);
-                        if (writeall(outfd, addr, nbyte) != nbyte) {
-                                xnd_error("Error writing executable data\n");
-                                return -1;
-                        }
-                }
-        }
-
-        return 0;
-}
-
 int binary_arm64e_to_arm64(char *path, char *tmp)
 {
-        int srcfd = -1, dstfd = -1;
-        int err, ret = ARM64E_TO_ARM64_SUCCESS;
-        struct load_command *lc;
+        int srcfd = -1, dstfd = -1, ret = ARM64E_TO_ARM64_FAILURE;
         void *mh, *addr = NULL;
         size_t size, nbyte;
         off_t off;
         u32 magic;
 
         if ((srcfd = open(path, O_RDONLY)) < 0) {
-                xnd_error("open: %s\n", strerror(errno));
-                ret = ARM64E_TO_ARM64_FAILURE;
+                xnd_perror("open");
                 goto out;
         }
 
         if ((off = lseek(srcfd, 0, SEEK_END)) < 0) {
-                xnd_error("lseek: %s\n", strerror(errno));
-                ret = ARM64E_TO_ARM64_FAILURE;
+                xnd_perror("lseek");
                 goto out;
         }
 
         size = (size_t)off;
-        addr = mmap (NULL, size, PROT_READ | PROT_WRITE, MAP_PRIVATE, srcfd, 0);
+        addr = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_PRIVATE, srcfd, 0);
         if (addr == MAP_FAILED) {
-                xnd_error ("mmap: %s\n", strerror (errno));
-                ret = ARM64E_TO_ARM64_FAILURE;
+                xnd_perror("mmap");
                 goto out;
         }
 
@@ -463,8 +175,7 @@ int binary_arm64e_to_arm64(char *path, char *tmp)
         }
 
         if ((dstfd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC, 0755)) < 0) {
-                xnd_error("open: %s\n", strerror(errno));
-                ret = ARM64E_TO_ARM64_FAILURE;
+                xnd_perror("open");
                 goto out;
         }
 
@@ -474,8 +185,7 @@ int binary_arm64e_to_arm64(char *path, char *tmp)
         } else if (HEADER_IS_FAT(magic)) {
                 mh = fat_arm64e_to_arm64(addr);
         } else {
-                xnd_warn("Unrecognized binary format: %s\n", path);
-                ret = ARM64E_TO_ARM64_FAILURE;
+                xnd_error("Couldn't identify executable: %s\n", path);
                 goto out;
         }
 
@@ -488,20 +198,20 @@ int binary_arm64e_to_arm64(char *path, char *tmp)
         nbyte = size - (size_t)((char *)mh - (char *)addr);
 
         /**
-         * If executable uses LC_DYLD_INFO(_ONLY) instead of
-         * LC_DYLD_CHAINED_FIXUPS and LC_DYLD_EXPORTS_TRIE, bind
-         * information needs to be filtered to remove arm64e specific
-         * bind opcodes.
+         * Hard fail if arm64e executable uses LC_DYLD_INFO(_ONLY)
+         * as threaded bind opcodes will be unhandled by dyld if
+         * we modify cpu subtype to CPU_SUBTYPE_ARM64_ALL
          */
-        if ((lc = macho_find_load_command(mh, LC_DYLD_INFO)) ||
-            (lc = macho_find_load_command(mh, LC_DYLD_INFO_ONLY))) {
-                struct dyld_info_command *cmd = (struct dyld_info_command *)lc;
-                err = arm64e_with_dyld_info_to_arm64(dstfd, mh, nbyte, cmd);
-                if (err != 0)
-                        ret = ARM64E_TO_ARM64_FAILURE;
-        } else {
-                if (writeall(dstfd, mh, nbyte) != nbyte)
-                        ret = ARM64E_TO_ARM64_FAILURE;
+        if (macho_find_load_command(mh, LC_DYLD_INFO) ||
+            macho_find_load_command(mh, LC_DYLD_INFO_ONLY)) {
+                xnd_error("Executable uses LC_DYLD_INFO_ONLY: %s\n", path);
+                goto out;
+        }
+
+        /* Write temporary arm64 executable to disk */
+        if (writeall(dstfd, mh, nbyte) == nbyte) {
+                ret = ARM64E_TO_ARM64_SUCCESS;
+                xnd_trace("Wrote temporary arm64 executable: %s\n", tmp);
         }
 
 out:
