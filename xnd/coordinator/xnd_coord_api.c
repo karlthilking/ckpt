@@ -26,7 +26,6 @@ pid_t launch_coordinator(bool restarting)
 {
         char    buf[PATH_MAX], exe[PATH_MAX];
         pid_t   coord_pid;
-        int     err;
 
         if (access(XND_COORD_PATH, F_OK) == 0)
                 xnd_assert(unlink(XND_COORD_PATH) == 0);

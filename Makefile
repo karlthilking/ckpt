@@ -2,19 +2,26 @@ ARCH            ?= arm64
 BUILD           ?= .
 TIMING          ?= 0
 DEVELOPMENT     ?= 1
+DEBUG           ?= 0
 
 CC      := clang
 CXX     := clang++
 
+ifeq ($(DEBUG),1)
+OPTFLAGS := -O0
+else
+OPTFLAGS := -O2
+endif
+
 CFLAGS := \
 	-std=c17 -Wall -Wno-deprecated-declarations \
-	-DDEVELOPMENT=$(DEVELOPMENT) -DTIMING=$(TIMING) \
-	-g -O2 -arch $(ARCH) -iquote . -iquote ./include
+	-DDEVELOPMENT=$(DEVELOPMENT) -DTIMING=$(TIMING) -DDEBUG=$(DEBUG) \
+	-g $(OPTFLAGS) -arch $(ARCH) -iquote . -iquote ./include
 
 CXXFLAGS := \
 	-std=c++20 -Wall -Wno-deprecated-declarations \
-	-DDEVELOPMENT=$(DEVELOPMENT) -DTIMING=$(TIMING) \
-	-g -O2 -arch $(ARCH) -iquote . -iquote ./include
+	-DDEVELOPMENT=$(DEVELOPMENT) -DTIMING=$(TIMING) -DDEBUG=$(DEBUG) \
+	-g $(OPTFLAGS) -arch $(ARCH) -iquote . -iquote ./include
 
 LIBXND_OBJECTS := \
         $(BUILD)/xnd_lib.o \
@@ -60,25 +67,25 @@ XND_RESTART_INTERNAL_SOURCES := \
         xnd/util/path.c \
         xnd/util/io.c
 
-XND_LAUNCH_SOURCES := \
-        xnd/xnd_launch.c \
-        xnd/ckptfile.c \
-        xnd/platform/exe.c \
-        xnd/platform/macho.c \
-        xnd/util/path.c \
-        xnd/shared_cache.c \
-        xnd/util/io.c \
-        xnd/util/log.c \
-        xnd/util/env.c \
-        xnd/coordinator/xnd_coord_api.c
+XND_LAUNCH_OBJECTS := \
+        $(BUILD)/xnd_launch.o \
+        $(BUILD)/ckptfile.o \
+        $(BUILD)/exe.o \
+        $(BUILD)/macho.o \
+        $(BUILD)/path.o \
+        $(BUILD)/shared_cache.o \
+        $(BUILD)/io.o \
+        $(BUILD)/log.o \
+        $(BUILD)/env.o \
+        $(BUILD)/xnd_coord_api.o
 
-XND_COMMAND_SOURCES := \
-        xnd/xnd_command.c \
-        xnd/util/log.c \
-        xnd/util/path.c \
-        xnd/util/io.c \
-        xnd/platform/exe.c \
-        xnd/coordinator/xnd_coord_api.c
+XND_COMMAND_OBJECTS := \
+	$(BUILD)/xnd_command.o \
+	$(BUILD)/log.o \
+	$(BUILD)/path.o \
+	$(BUILD)/io.o \
+	$(BUILD)/exe.o \
+	$(BUILD)/xnd_coord_api.o
 
 XND_COORD_OBJECTS := \
         $(BUILD)/shared_cache.o \
@@ -130,37 +137,28 @@ ALL := \
 
 all: $(ALL)
 
+debug:
+	$(MAKE) clean
+	$(MAKE) DEBUG=1 all
+
+release:
+	$(MAKE) clean
+	$(MAKE) DEBUG=0 all
+
 $(BUILD):
 	mkdir -p $@
 
-$(BUILD)/%.o: xnd/%.c | $(BUILD)
+vpath %.c xnd xnd/util xnd/platform xnd/platform/ucontext xnd/coordinator xnd/pid xnd/wrappers
+vpath %.cpp xnd xnd/pid
+vpath %.s xnd/platform/ucontext
+
+$(BUILD)/%.o: %.c | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD)/%.o: xnd/%.cpp | $(BUILD)
+$(BUILD)/%.o: %.cpp | $(BUILD)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
-$(BUILD)/%.o: xnd/util/%.c | $(BUILD)
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(BUILD)/%.o: xnd/platform/%.c | $(BUILD)
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(BUILD)/%.o: xnd/platform/ucontext/%.c | $(BUILD)
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(BUILD)/%.o: xnd/platform/ucontext/%.s | $(BUILD)
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(BUILD)/%.o: xnd/coordinator/%.c | $(BUILD)
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(BUILD)/%.o: xnd/pid/%.c | $(BUILD)
-	$(CC) $(CFLAGS) -c $< -o $@
-
-$(BUILD)/%.o: xnd/pid/%.cpp | $(BUILD)
-	$(CXX) $(CXXFLAGS) -c $< -o $@
-
-$(BUILD)/%.o: xnd/wrappers/%.c | $(BUILD)
+$(BUILD)/%.o: %.s | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD)/libxnd.dylib: $(LIBXND_OBJECTS) | $(BUILD)
@@ -190,14 +188,17 @@ $(BUILD)/xnd_restart: $(XND_RESTART_OBJECTS) | $(BUILD)
 	$(CXX) $(CXXFLAGS) -lz -o $@ $^
 	dsymutil $@
 
-$(BUILD)/xnd_launch: $(XND_LAUNCH_SOURCES) | $(BUILD)
+$(BUILD)/xnd_launch: $(XND_LAUNCH_OBJECTS) | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ $^
+	dsymutil $@
 
 $(BUILD)/xnd_print: $(XND_PRINT_OBJECTS) | $(BUILD)
 	$(CC) $(CFLAGS) -lz -o $@ $^
+	dsymutil $@
 
-$(BUILD)/xnd_command: $(XND_COMMAND_SOURCES) | $(BUILD)
+$(BUILD)/xnd_command: $(XND_COMMAND_OBJECTS) | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ $^
+	dsymutil $@
 
 $(BUILD)/xnd_coordinator: $(XND_COORD_OBJECTS) | $(BUILD)
 	$(CXX) $(CXXFLAGS) -o $@ $^
