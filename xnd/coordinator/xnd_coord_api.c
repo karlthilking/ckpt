@@ -39,12 +39,17 @@ pid_t launch_coordinator(bool restarting)
         case 0: {
                 xnd_exe_dir(buf, sizeof(buf));
                 xnd_path_join(exe, PATH_MAX, buf, "xnd_coordinator");
-                char *argv[] = { exe, exe, NULL, NULL };
-                argv[2] = (restarting ? XND_COORD_RESTART_FLAG : NULL);
+
+                char *argv[] = { exe, NULL, NULL };
+                if (restarting)
+                        argv[1] = XND_COORD_RESTART_FLAG;
+
                 if (execvp(argv[0], argv) != 0) {
-                        xnd_error("execl(%s): %s\n", exe, strerror(errno));
+                        xnd_perror("execvp");
                         exit(XND_EXIT_FAILURE);
                 }
+
+                unreachable();
         }
         default:
                 break;

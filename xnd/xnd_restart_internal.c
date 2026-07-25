@@ -23,7 +23,7 @@ __noreturn noinline void restart(int fd)
 {
         int                     retval;
         struct xnd_ckpt_header  header;
-        
+
         retval = ckpt_vm_mark_regions();
         if (retval < 0) {
                 xnd_warn("Failed to mark restart regions\n");
@@ -67,7 +67,7 @@ __noreturn void jump(int fd)
         void                    *sp;
         const mach_vm_size_t    size = 1024 * 1024;
         mach_vm_address_t       addr = XND_RESTART_STACK;
-        
+
         xnd_trace("Allocating temporary stack 0x%llx-0x%llx\n",
                   addr, addr + size);
         /**
@@ -80,14 +80,14 @@ __noreturn void jump(int fd)
                           VM_MAKE_TAG(VM_MEMORY_RESTART_STACK),
                           MEMORY_OBJECT_NULL, 0, FALSE, VM_PROT_DEFAULT,
                           VM_PROT_ALL, VM_INHERIT_NONE);
-        
+
         if (ret != KERN_SUCCESS) {
                 xnd_error("mach_vm_map: %s\n", mach_error_string(ret));
                 exit(XND_EXIT_FAILURE);
         }
-        
+
         sp = (void *)(addr + size);
-        
+
         /* Switch to temporary stack and call restart function */
         asm volatile(
                 "mov    sp, %[sp]       \n"
@@ -104,24 +104,24 @@ __noreturn void jump(int fd)
 __noreturn int main(int argc, char **argv)
 {
         int fd;
-        
+
         if (argc != 2) {
                 xnd_error("restart should not be invoked directly!\n"
                           "Usage: ./xnd_run -r <ckpt-file>\n");
                 exit(XND_EXIT_FAILURE);
         }
-        
+
 #if DEVELOPMENT || DEBUG
         xnd_log_mach_port_info();
         xnd_log_shared_cache_info();
 #endif
-        
+
         fd = open(argv[1], O_RDONLY);
         if (fd < 0) {
                 xnd_error("open(%s, ...): %s\n", argv[1], strerror(errno));
                 exit(XND_EXIT_FAILURE);
         }
-        
+
         xnd_printf("Restarting from %s (pid=%d)\n", argv[1], getpid());
         jump(fd);
 

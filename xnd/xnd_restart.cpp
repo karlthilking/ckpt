@@ -86,7 +86,6 @@ static int restore_parent_setup(void)
 {
         int                     err;
         short                   flags;
-        pid_t                   pid;
         posix_spawnattr_t       attr;
 
         xnd_log_mach_port_info();
@@ -99,7 +98,7 @@ static int restore_parent_setup(void)
         }
 
         char *argv[] = { info->restart, this->path_to_ckpt(), nullptr };
-        err = posix_spawn(&pid, info->restart, nullptr, &attr, argv, environ);
+        err = posix_spawn(nullptr, argv[0], nullptr, &attr, argv, environ);
         if (err != 0) {
                 posix_spawnattr_destroy(&attr);
                 xnd_error("posix_spawn: %s\n", strerror(err));
@@ -275,13 +274,13 @@ int main(int argc, char *argv[])
                         xnd_perror("waitpid");
                         goto fail;
                 } else if (WIFEXITED(stat)) {
-                        code = WEXITSTATUS(stat);
-                        xnd_trace("%d exited: %d\n", child, code);
+                        if ((code = WEXITSTATUS(stat)) != 0)
+                                xnd_warn("%d exited: %d\n", child, code);
                         break;
                 } else {
                         xnd_assert(WIFSIGNALED(stat));
                         code = 128 + WTERMSIG(stat);
-                        xnd_trace("%d signaled: %d\n", child, code - 128);
+                        xnd_warn("%d signaled: %d\n", child, code - 128);
                         break;
                 }
         } while (true);

@@ -445,7 +445,7 @@ void coord_wait_for_connection(void)
                 xnd_error("accept: %s\n", strerror(errno));
                 return;
         }
-        
+
         xnd_assert(coord_recv_msg(fd, &msg) == 0);
         switch (msg.hdr) {
         case XND_CONNECT_LAUNCH: {
@@ -816,7 +816,7 @@ void coord_send_real_to_virt(int fd, struct xnd_msg *msg)
 {
         pid_t           virt, real = msg->real_pid;
         struct xnd_msg  resp = { .hdr = XND_COORD_ACK, .ret = XND_SUCCESS };
-        
+
         if ((virt = pid_table_real_to_virtual(real)) != -1) {
                 goto found;
         }
@@ -839,7 +839,7 @@ void coord_do_restart(void)
 {
         struct xnd_msg  msg;
         int             fd, ready;
-        
+
         TIMER_PUSH(Restart);
         for (;;) {
                 fd = accept(coord_info.listen_fd, NULL, NULL);
@@ -864,7 +864,7 @@ void coord_do_restart(void)
                         break;
                 }
         }
-        
+
         ready = coord_collective_prepare(COMM_BROADCAST);
         xnd_assert(ready == coord_info.num_peers);
         xnd_assert(coord_release_barrier(COORD_BARRIER_POSTRESTART) == 0);
@@ -873,14 +873,9 @@ void coord_do_restart(void)
 
 bool coord_is_restart(int argc, char **argv)
 {
-        if (argc < 2) {
+        if (argc < 2 || strcmp(argv[1], XND_COORD_RESTART_FLAG))
                 return false;
-        }
 
-        if (strcmp(argv[1], XND_COORD_RESTART_FLAG)) {
-                return false;
-        }
-        
         return true;
 }
 
@@ -889,7 +884,7 @@ void coord_atfork(int fd, struct xnd_msg *parent_msg)
         struct xnd_msg  resp, child_msg;
         struct proc     *child, *parent;
         int             err;
-        
+
         child = malloc(sizeof(struct proc));
         xnd_assert(child != NULL);
 
@@ -903,7 +898,7 @@ void coord_atfork(int fd, struct xnd_msg *parent_msg)
         child->oob_fd = -1;
         child->virt_pid = coord_next_virt_pid();
         child->xnd_pid = coord_next_xnd_pid();
-        
+
         resp.hdr = XND_COORD_ACK;
         resp.ret = XND_SUCCESS;
         resp.virt_pid = child->virt_pid;
@@ -954,9 +949,9 @@ void coord_atfork(int fd, struct xnd_msg *parent_msg)
 int main(int argc, char *argv[])
 {
         coord_init();
-        if (coord_is_restart(argc, argv)) {
+
+        if (coord_is_restart(argc, argv))
                 coord_do_restart();
-        }
 
         coord_work();
         coord_exit(COORD_EXIT_SUCCESS);

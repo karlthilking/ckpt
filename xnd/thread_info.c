@@ -211,7 +211,7 @@ void thread_list_atfork_child(void)
                 free(th);
         }
 
-        for_each_thread_safe(th, next, &thread_list) {
+        for_each_thread_safe(th, next, &zombie_list) {
                 free(th);
         }
 
