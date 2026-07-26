@@ -1,32 +1,39 @@
-CC      := clang
-CFLAGS  := -Wall -g3 -O0 -arch arm64
+CC		:= clang
+CXX		:= clang++
+CFLAGS		:= -Wall -g -O0 -arch arm64
+CXXFLAGS	:= -std=c++20 -Wall -g -O0 -arch arm64
+BUILD		:= bin
 
 TESTS := \
-        01_conjugate_gradient \
-        02_heat_diffusion \
-        03_nbody \
-        04_jacobi \
-        06_tree \
-        08_pac
+	01_conjugate_gradient \
+	02_heat_diffusion \
+	03_nbody \
+	04_jacobi
 
-all: $(TESTS)
+ALL := $(addprefix $(BUILD)/,$(TESTS))
 
-OPENMP_INCLUDE  := /opt/homebrew/opt/libomp/include
-OPENMP_LIB      := /opt/homebrew/opt/libomp/lib
+all: $(ALL)
+
+$(BUILD):
+	mkdir -p $@
+
+OPENMP_INCLUDE	:= /opt/homebrew/opt/libomp/include
+OPENMP_LIB	:= /opt/homebrew/opt/libomp/lib
 OPENMP_FLAGS	:= -Xpreprocessor -fopenmp -lomp \
 		   -I$(OPENMP_INCLUDE) -L$(OPENMP_LIB)
 
-02_heat_diffusion: 02_heat_diffusion.c
+$(BUILD)/02_heat_diffusion: 02_heat_diffusion.c | $(BUILD)
 	$(CC) -arch arm64 -g -O2 $(OPENMP_FLAGS) -o $@ $<
 
-08_pac: 08_pac.c
-	$(CC) -arch arm64e -g3 -O0 -o $@ $<
-
-%: %.c
+$(BUILD)/%: %.c | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ $<
 
-%: %.cpp
-	clang++ -std=c++20 $(CFLAGS) -o $@ $<
+$(BUILD)/%: %.cpp | $(BUILD)
+	$(CXX) $(CXXFLAGS) -o $@ $<
 
 clean:
-	rm -rf $(TESTS) *.dSYM *.o
+	rm -f $(ALL)
+	rm -rf $(ALL:%=%.dSYM)
+	rm -rf *-checkpoints xnd.log __pycache__
+
+.PHONY: clean all

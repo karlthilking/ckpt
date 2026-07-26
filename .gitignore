@@ -5,7 +5,7 @@
 *.dat
 *.ckpt
 *~
-\#*\#\
+\#*\#
 .#*
 tmp/
 build/
@@ -16,3 +16,7 @@ xnd_command
 xnd_coordinator
 xnd_coordinator_v0
 xnd.log
+test/bin/
+test/inputs/
+__pycache__/
+benchmarks/

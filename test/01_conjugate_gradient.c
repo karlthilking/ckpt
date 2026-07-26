@@ -9,7 +9,15 @@
 
 typedef unsigned long ulong;
 
-void *xmalloc(size_t n)
+static void usage(void)
+{
+        printf("Usage: ./01_conjugate_gradient [options]\n"
+               " -i, --iterations NUMBER (default: 10000)\n"
+               " -e, --epochs NUMBER (default: 20)\n"
+               " -h, --help\n");
+}
+
+static void *xmalloc(size_t n)
 {
 	void *p = malloc(n);
 
@@ -19,7 +27,7 @@ void *xmalloc(size_t n)
 	return p;
 }
 
-void gen_spd(double *A, ulong N)
+static void gen_spd(double *A, ulong N)
 {
 	double *M = xmalloc(N * N * sizeof(double));
 
@@ -41,7 +49,7 @@ void gen_spd(double *A, ulong N)
 	free(M);
 }
 
-void matvec(const double *A, const double *x, double *y, ulong N)
+static void matvec(const double *A, const double *x, double *y, ulong N)
 {
 	for (ulong i = 0; i < N; i++) {
 		double sum = 0;
@@ -51,7 +59,7 @@ void matvec(const double *A, const double *x, double *y, ulong N)
 	}
 }
 
-double dot(const double *a, const double *b, ulong N)
+static double dot(const double *a, const double *b, ulong N)
 {
 	double sum = 0;
 
@@ -61,7 +69,7 @@ double dot(const double *a, const double *b, ulong N)
 	return sum;
 }
 
-void cg(ulong N, int iters, double tolerance)
+static void cg(ulong N, int iters, double tolerance)
 {
 	double *A = xmalloc(N * N * sizeof(double));
 	double *b = xmalloc(N * sizeof(double));
@@ -122,13 +130,36 @@ void cg(ulong N, int iters, double tolerance)
 
 int main(int argc, char *argv[])
 {
-	int    iters = 10000, epochs;
+	int    iters = 10000, epochs = 20;
 	ulong  N = 1u << 10;
 	double tolerance;
 
-	epochs = (argc > 1) ? atoi(argv[1]) : 20;
+        argv++;
+        argc--;
+        while (argc) {
+                if (strcmp(argv[0], "-i") == 0 ||
+                    strcmp(argv[0], "--iterations") == 0) {
+                        iters = atoi(argv[1]);
+                        argv++; argv++;
+                        argc--; argc--;
+                } else if (strcmp(argv[0], "-e") == 0 ||
+                           strcmp(argv[0], "--epochs") == 0) {
+                        epochs = atoi(argv[1]);
+                        argv++; argv++;
+                        argc--; argc--;
+                } else if (strcmp(argv[0], "-h") == 0 ||
+                           strcmp(argv[0], "--help") == 0) {
+                        usage();
+                        exit(0);
+                } else {
+                        printf("Unrecognized argument: %s\n", argv[0]);
+                        usage();
+                        exit(0);
+                }
+        }
+
 	srand48(time(NULL));
-	printf("Running CG solver for %d epochs\n", epochs);
+        printf("CG solver (epoch=%d, iterations=%d)\n", epochs, iters);
 
 	for (int i = 0; i < epochs; i++) {
 		tolerance = fmod(drand48(), 1e-11);

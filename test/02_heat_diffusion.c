@@ -8,7 +8,16 @@
 
 typedef unsigned long ulong;
 
-void *xmalloc(size_t n)
+static void usage(void)
+{
+        printf("Usage: ./02_heat_diffusion [options]\n"
+               " -g, --grid X,Y (default: 512, 512)\n"
+               " -s, --steps N (default: 100000)\n"
+               " -t, --threads N (default: omp_get_max_threads())\n"
+               " -h, --help\n");
+}
+
+static void *xmalloc(size_t n)
 {
 	void *p = malloc(n);
 	if (!p) {
@@ -77,14 +86,53 @@ static void compute_stats(const double *grid,
 
 int main(int argc, char *argv[])
 {
-	ulong nx, ny, steps;
+	ulong nx = 1 << 9, ny = 1 << 9, steps = 100000;
+        int nthreads = omp_get_max_threads();
 
-	nx = ny = 1 << 9;
-	steps = (argc > 1) ? strtoul(argv[1], NULL, 10) : 100000u;
+        argv++;
+        argc--;
+        while (argc) {
+                if (strcmp(argv[0], "-g") == 0 ||
+                    strcmp(argv[0], "--grid") == 0) {
+                        char *endp;
+                        if (!argv[1]) {
+                                printf("No dimensions specified\n");
+                                usage();
+                                exit(0);
+                        } else if (!(endp = strchr(argv[1], ','))) {
+                                printf("No y dimension specified\n");
+                                usage();
+                                exit(0);
+                        }
+                        nx = strtoul(argv[1], &endp, 10);
+                        ny = strtoul(endp + 1, NULL, 10);
+                        argv++; argv++;
+                        argc--; argc--;
+                } else if (strcmp(argv[0], "-s") == 0 ||
+                           strcmp(argv[0], "--steps") == 0) {
+                        steps = strtoul(argv[1], NULL, 10);
+                        argv++; argv++;
+                        argc--; argc--;
+                } else if (strcmp(argv[0], "-t") == 0 ||
+                           strcmp(argv[0], "--threads") == 0) {
+                        nthreads = atoi(argv[1]);
+                        omp_set_num_threads(nthreads);
+                        argv++; argv++;
+                        argc--; argc--;
+                } else if (strcmp(argv[0], "-h") == 0 ||
+                           strcmp(argv[0], "--help") == 0) {
+                        usage();
+                        exit(0);
+                } else {
+                        printf("Unrecognized argument: %s\n", argv[0]);
+                        usage();
+                        exit(0);
+                }
+        }
 
-	printf("Heat diffusion: %lu x %lu grid, %lu steps\n", nx, ny, steps);
-	printf("# of threads: %d\n", omp_get_max_threads());
-	fflush(stdout);
+        printf("Heat Diffusion "
+               "(grid: %lu x %lu, steps: %lu, threads: %d)\n",
+               nx, ny, steps, nthreads);
 
 	double *grid_a = xmalloc(nx * ny * sizeof(double));
 	double *grid_b = xmalloc(nx * ny * sizeof(double));
