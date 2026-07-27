@@ -34,9 +34,9 @@ int __pthread_create_hook(pthread_t *p, const pthread_attr_t *attr,
 {
         int                     retval;
         struct thread_info      *new;
-         
+
         new = thread_init(start_routine, arg);
-        
+
         unsafe_enter();
         retval = pthread_create(p, attr, thread_start, new);
         if (retval != 0) {
@@ -44,14 +44,14 @@ int __pthread_create_hook(pthread_t *p, const pthread_attr_t *attr,
                 free(new);
                 return retval;
         }
-        
+
         xnd_assert(pthread_mutex_lock(&new->lock) == 0);
         while (new->state == ST_EMBRYO) {
                 pthread_cond_wait(&new->cond, &new->lock);
         }
         xnd_assert(pthread_mutex_unlock(&new->lock) == 0);
         unsafe_exit();
-        
+
         /**
          * Set pthread_t to be an opaque pointer to a libckpt internal
          * thread descriptor struct instead of the thread struct within
@@ -70,19 +70,19 @@ int __pthread_join_hook(pthread_t p, void **value_ptr)
 {
         int                     err;
         struct thread_info      *th;
-        
+
         if (validate_pthread(p)) {
                 th = decode_pthread(p);
         } else {
                 return ESRCH;
         }
-        
+
         xnd_assert(pthread_mutex_lock(&th->lock) == 0);
         while (!th->exiting) {
                 xnd_assert(pthread_cond_wait(&th->cond, &th->lock) == 0);
         }
         xnd_assert(pthread_mutex_unlock(&th->lock) == 0);
-        
+
         unsafe_enter();
         err = pthread_join(th->self, value_ptr);
         th->joined = 1;
@@ -98,14 +98,15 @@ void __pthread_exit_hook(void *value_ptr)
 
 pthread_t __pthread_self_hook(void)
 {
-        struct thread_info *self = thread_self_or_null();
-        
-        if (unlikely(self == NULL)) {
-                if (tlv_ok()) {
-                        xnd_error("thread_self returned null\n");
-                        xnd_abort();
-                }
+        struct thread_info *self;
+
+        if (!tlv_ok())
                 return pthread_self();
+
+        self = thread_self_or_null();
+        if (!self) {
+                xnd_error("Self thread descriptor is NULL\n");
+                xnd_abort();
         }
 
         return encode_pthread(self);
@@ -134,11 +135,11 @@ int __pthread_kill_hook(pthread_t p, int sig)
                 xnd_warn("signal %d is reserved\n", sig);
                 return EINVAL;
         }
-        
+
         /**
-         * pthread_kill uses __pthread_kill internally which uses a mach 
-         * port to identify the target thread, so pthread_kill is not safe 
-         * to restart after a checkpoint (the mach port will be invalid 
+         * pthread_kill uses __pthread_kill internally which uses a mach
+         * port to identify the target thread, so pthread_kill is not safe
+         * to restart after a checkpoint (the mach port will be invalid
          * by then).
          */
         th = decode_pthread(p);
@@ -157,7 +158,7 @@ int __pthread_detach_hook(pthread_t p)
         if (!validate_pthread(p)) {
                 return ESRCH;
         }
-        
+
         th = decode_pthread(p);
         unsafe_enter();
         err = pthread_detach(th->self);
@@ -166,12 +167,12 @@ int __pthread_detach_hook(pthread_t p)
         return err;
 }
 
-int __pthread_setschedparam_hook(pthread_t p, int policy, 
+int __pthread_setschedparam_hook(pthread_t p, int policy,
                                  const struct sched_param *param)
 {
         struct thread_info      *th;
         int                     err;
-        
+
         if (!validate_pthread(p)) {
                 return ESRCH;
         }
@@ -195,7 +196,7 @@ int __pthread_getschedparam_hook(pthread_t p, int *policy,
         }
 
         th = decode_pthread(p);
-        
+
         unsafe_enter();
         err = pthread_getschedparam(th->self, policy, param);
         unsafe_exit();
@@ -216,7 +217,7 @@ void *__pthread_get_stackaddr_np_hook(pthread_t p)
         if (th == thread_self_or_null() || th == main_thread()) {
                 return pthread_get_stackaddr_np(th->self);
         }
-        
+
         unsafe_enter();
         retval = pthread_get_stackaddr_np(th->self);
         unsafe_exit();
@@ -243,11 +244,11 @@ size_t __pthread_get_stacksize_np_hook(pthread_t p)
                  */
                 return pthread_get_stacksize_np(th->self);
         }
-        
+
         unsafe_enter();
         retval = pthread_get_stacksize_np(th->self);
         unsafe_exit();
-        
+
         return retval;
 }
 

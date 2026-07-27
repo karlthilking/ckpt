@@ -162,16 +162,11 @@ static void prepare_args(int argc, char **argv, char **new_argv)
 
 static __noreturn void launch(int argc, char **argv)
 {
-        /**
-         * DLYD_INSERT_LIBRARIES=libxnd.dylib
-         * XND_PROGRAM=<binary>
-         * <binary> <args> ...
-         */
         char    libxnd_path[PATH_MAX];
         char    *new_argv[argc + 1];
         int     err;
         pid_t   coord_pid;
-        
+
         prepare_args(argc, argv, new_argv);
         if ((coord_pid = launch_coordinator(false)) == -1) {
                 xnd_error("Failed to launch coordinator\n");
@@ -196,9 +191,10 @@ static __noreturn void launch(int argc, char **argv)
         xnd_printf("Executing %s (pid=%d)\n", new_argv[0], getpid());
         err = execvp(new_argv[0], new_argv);
         if (err != 0) {
-                xnd_error("execvp(%s): %s\n", new_argv[0], strerror(errno));
+                xnd_error("execvp(%s): %s\n",
+                          new_argv[0], strerror(errno));
                 xnd_exit(XND_EXIT_FAILURE);
         }
-        
+
         unreachable();
 }

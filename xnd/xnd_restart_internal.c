@@ -69,6 +69,7 @@ __noreturn void jump(int fd)
 
         xnd_trace("Allocating temporary stack 0x%llx-0x%llx\n",
                   addr, addr + size);
+
         /**
          * Make VM object purgable and associate VM_REGION_RESTART_STACK
          * user_tag with mapping s.t. memory region checkpoint path

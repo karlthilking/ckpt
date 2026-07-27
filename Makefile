@@ -169,18 +169,49 @@ $(BUILD)/libxnd.dylib: $(LIBXND_OBJECTS) | $(BUILD)
 	$(CXX) $(CXXFLAGS) -dynamiclib -fPIC -lz -o $@ $^
 	dsymutil $@
 
-RESTART_TEXT		:= 0x500000000000
-RESTART_DATA		:= 0x50000000c000
-RESTART_DATA_CONST	:= 0x500000010000
-RESTART_LINKEDIT	:= 0x500000014000
-RESTART_STACK_SIZE	:= 0x000000100000
-RESTART_STACK		:= 0x500000118000
+# If changes to xnd_restart_internal.c or any of the other compilation
+# units it links against force one of xnd_restart_internal's segments
+# to exceed their defined size, update the Make variable so the linker
+# flags reserve enough space for each segment.
+# (otool -lv xnd_restart_internal and look at vmsize of each segment)
+
+RESTART_TEXT_SIZE := 0xc000
+RESTART_TEXT := 0x500000000000
+
+RESTART_DATA_SIZE := 0x4000
+RESTART_DATA := $(shell printf "0x%X" \
+	$$(( $(RESTART_TEXT)+$(RESTART_TEXT_SIZE) )))
+
+RESTART_DATA_CONST_SIZE := 0x4000
+RESTART_DATA_CONST := $(shell printf "0x%X" \
+	$$(( $(RESTART_DATA)+$(RESTART_DATA_SIZE) )))
+
+RESTART_LINKEDIT_SIZE := 0x4000
+RESTART_LINKEDIT := $(shell printf "0x%X" \
+	$$(( $(RESTART_DATA_CONST)+$(RESTART_DATA_CONST_SIZE) )))
+
+# With DYLD_SHARED_REGION=private, /usr/lib/dyld will map itself above
+# the main executable instead of residing in the dyld shared cache.
+# As of macOS 26.5.2, dyld will occupy 80 16KB pages in virtual memory
+# above the main executable, so to be on the safe side, reserve 100 pages
+# of memory for dyld between xnd_restart_internal's __LINKEDIT and the
+# bottom of the restart stack.
+
+DYLD_RESERVE_SIZE := 0x190000
+DYLD_START := $(shell printf "0x%X" \
+	$$(( $(RESTART_LINKEDIT)+$(RESTART_LINKEDIT_SIZE) )))
+DYLD_END := $(shell printf "0x%X" \
+	$$(( $(DYLD_START)+$(DYLD_RESERVE_SIZE) )))
+
+RESTART_STACK_SIZE := 0x100000
+RESTART_STACK_BOTTOM := $(DYLD_END)
+RESTART_STACK_TOP := $(shell printf "0x%X" \
+	$$(( $(RESTART_STACK_BOTTOM)+$(RESTART_STACK_SIZE) )))
 
 $(BUILD)/xnd_restart_internal: $(XND_RESTART_INTERNAL_SOURCES) | $(BUILD)
 	$(CC) $(CFLAGS) -fno-stack-protector \
-	-DXND_RESTART_STACK=$(RESTART_STACK) \
+	-DXND_RESTART_STACK=$(RESTART_STACK_BOTTOM) \
 	-DXND_RESTART_STACK_SIZE=$(RESTART_STACK_SIZE) \
-	-DXND_RESTART_TEXT=$(RESTART_TEXT) \
 	-Wl,-segaddr,__TEXT,$(RESTART_TEXT) \
 	-Wl,-segaddr,__DATA,$(RESTART_DATA) \
 	-Wl,-segaddr,__DATA_CONST,$(RESTART_DATA_CONST) \
