@@ -8,7 +8,7 @@
 static __always_inline void env_set_pid(const char *var, pid_t pid)
 {
         char buf[11];
-        
+
         snprintf(buf, sizeof(buf), "%d", pid);
         xnd_assert(setenv(var, buf, 1) == 0);
 }
@@ -17,20 +17,20 @@ static __always_inline pid_t env_get_pid(const char *var)
 {
         char    *value;
         pid_t   pid;
-        
+
         xnd_assert((value = getenv(var)) != NULL);
         pid = atoi(value);
 
         return pid;
 }
 
-void env_set_pid_info(pid_t virt_pid, pid_t real_pid, 
+void env_set_pid_info(pid_t virt_pid, pid_t real_pid,
                       pid_t virt_ppid, pid_t real_ppid)
 {
         if (virt_pid != -1) {
                 env_set_pid(XND_VIRTUAL_PID_ENV, virt_pid);
         }
-        
+
         if (real_pid != -1) {
                 env_set_pid(XND_REAL_PID_ENV, real_pid);
         }
@@ -38,7 +38,7 @@ void env_set_pid_info(pid_t virt_pid, pid_t real_pid,
         if (virt_ppid != -1) {
                 env_set_pid(XND_VIRTUAL_PPID_ENV, virt_ppid);
         }
-        
+
         if (real_ppid != -1) {
                 env_set_pid(XND_REAL_PPID_ENV, real_ppid);
         }
@@ -60,7 +60,7 @@ void env_get_pid_info(pid_t *virt_pid, pid_t *real_pid,
         }
 
         if (real_ppid) {
-                *real_ppid = env_get_pid(XND_REAL_PPID_ENV); 
+                *real_ppid = env_get_pid(XND_REAL_PPID_ENV);
         }
 }
 
@@ -100,9 +100,9 @@ bool env_should_unlink_tmp_binary(void)
 {
         char *value;
 
-        if ((value = getenv(XND_UNLINK_TMP_ENV)) != NULL) {
+        value = getenv(XND_UNLINK_TMP_ENV);
+        if (value)
                 return (strcmp(value, "0") != 0);
-        }
 
         return true;
 }
@@ -119,11 +119,8 @@ int env_get_ckpt_signal(void)
         static int      sig = -1;
 
         if (unlikely(sig == -1)) {
-                if ((value = getenv(XND_CKPT_SIGNAL_ENV)) != NULL) {
-                        sig = atoi(value);
-                } else {
-                        sig = XND_DEFAULT_CKPT_SIGNAL;
-                }
+                value = getenv(XND_CKPT_SIGNAL_ENV);
+                sig = (value ? atoi(value) : XND_DEFAULT_CKPT_SIGNAL);
         }
 
         return sig;
@@ -147,7 +144,7 @@ char *env_get_dyld_shared_region(void)
 bool env_dyld_shared_region_is_private(void)
 {
         char *value;
-        
+
         value = getenv("DYLD_SHARED_REGION");
         if (value == NULL || strcmp(value, "private")) {
                 return false;

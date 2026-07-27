@@ -2,7 +2,6 @@
 #ifndef XND_LOG_H
 #define XND_LOG_H
 
-#define _XOPEN_SOURCE
 #include "xnd/xnd.h"
 #include <stdio.h>
 #include <unistd.h>

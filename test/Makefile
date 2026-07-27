@@ -1,6 +1,6 @@
 CC		:= clang
 CXX		:= clang++
-CFLAGS		:= -Wall -g -O0 -arch arm64
+CFLAGS		:= -Wall -g -O2 -arch arm64
 CXXFLAGS	:= -std=c++20 -Wall -g -O0 -arch arm64
 BUILD		:= bin
 
@@ -17,13 +17,13 @@ all: $(ALL)
 $(BUILD):
 	mkdir -p $@
 
-OPENMP_INCLUDE	:= /opt/homebrew/opt/libomp/include
-OPENMP_LIB	:= /opt/homebrew/opt/libomp/lib
-OPENMP_FLAGS	:= -Xpreprocessor -fopenmp -lomp \
-		   -I$(OPENMP_INCLUDE) -L$(OPENMP_LIB)
+OMP_INCLUDE 	:= /opt/homebrew/opt/libomp/include
+OMP_LIB		:= /opt/homebrew/opt/libomp/lib
+OMP_FLAGS	:= -Xpreprocessor -fopenmp -lomp \
+		   -I$(OMP_INCLUDE) -L$(OMP_LIB)
 
 $(BUILD)/02_heat_diffusion: 02_heat_diffusion.c | $(BUILD)
-	$(CC) -arch arm64 -g -O2 $(OPENMP_FLAGS) -o $@ $<
+	$(CC) $(CFLAGS) $(OMP_FLAGS) -o $@ $<
 
 $(BUILD)/%: %.c | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ $<

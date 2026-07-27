@@ -3,7 +3,6 @@
 #include "xnd/pac.h"
 #include "xnd/platform/signal.h"
 
-#define _XOPEN_SOURCE
 #include <signal.h>
 #include <ucontext.h>
 
@@ -19,8 +18,8 @@ __noreturn void __xnd_sigreturn(ucontext_t *uctx, int ctxstyle,
         unreachable();
 }
 
-__noreturn void __xnd_sigtramp(union __sigaction_u __sigaction_u, 
-                               int sigstyle, int sig, siginfo_t *info, 
+__noreturn void __xnd_sigtramp(union __sigaction_u __sigaction_u,
+                               int sigstyle, int sig, siginfo_t *info,
                                ucontext_t *uctx, uintptr_t token)
 {
         sa_sigaction(sig, info, uctx);
@@ -29,7 +28,7 @@ __noreturn void __xnd_sigtramp(union __sigaction_u __sigaction_u,
 }
 
 int __xnd_sigaction(int sig, const struct sigaction *act,
-                     struct sigaction *oact)
+                    struct sigaction *oact)
 {
         struct __sigaction      nsv, osv;
         int                     err;

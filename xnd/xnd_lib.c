@@ -1,5 +1,4 @@
 /* libckpt.c */
-#define _XOPEN_SOURCE
 #include "xnd.h"
 #include "xnd_lib.h"
 #include "writeckpt.h"
@@ -79,17 +78,22 @@ void xnd_postrestart(void)
         epoch++;
         connect_to_coord_on_restart();
         enter_coord_barrier(COORD_BARRIER_POSTRESTART);
-        
+
         thread_sig_fixup(_pthread_ptr_munge_token);
         ckpt_vm_deallocate_regions();
         pid_table_postrestart();
         fd_table_restore();
+        sig_state_restore();
 
+        /**
+         * If using compressed checkpoints, then we have to inflate
+         * the most recent checkpoint when we restarted. This is safe
+         * to remove now as the compressed version is still on disk.
+         */
         if (env_use_zlib_compression()) {
                 dirfd = xnd_ckptdir_open(xnd_uuid, epoch - 1);
-                if (dirfd != -1) {
+                if (dirfd != -1)
                         xnd_ckptfile_unlinkat(dirfd, xnd_pid);
-                }
         }
 
 #if DEBUG || DEVELOPMENT
@@ -168,7 +172,7 @@ void xnd_register_fork_handlers(void)
         if (xnd_atfork_registered) {
                 return;
         }
-        
+
         child = xnd_atfork_child;
         parent = xnd_atfork_parent;
         prepare = xnd_atfork_prepare;
@@ -181,17 +185,11 @@ void xnd_register_fork_handlers(void)
         xnd_atfork_registered = true;
 }
 
-/**
- * setup():
- *  Block SIGUSR2 process-wide so it only arrives for the
- *  checkpoint thread, then enable thread_handler to run
- *  on SIGUSR1 for user threads.
- */
 static __constructor(101) void xnd_setup(void)
 {
         struct sigaction        sa;
         sigset_t                set;
-        int                     err, sig;
+        int                     sig;
         char                    *tmp;
 
         connect_to_coord_on_launch();
@@ -199,14 +197,13 @@ static __constructor(101) void xnd_setup(void)
         sigfillset(&set);
         sa.sa_flags = SA_SIGINFO;
         sa.sa_sigaction = thread_sighandler;
-        
+
         sig = env_get_ckpt_signal();
-        err = __xnd_sigaction(sig, &sa, NULL);
-        if (err != 0) {
+        if (__xnd_sigaction(sig, &sa, NULL) != 0) {
                 xnd_error("__xnd_sigaction failed!\n");
                 xnd_abort();
         }
-        
+
         fd_table_init();
         thread_list_init();
 
@@ -231,10 +228,10 @@ static __constructor(101) void xnd_setup(void)
 static __destructor() void xnd_cleanup(void)
 {
         set_xnd_state(XND_EXITING);
-        
+
         fd_table_destroy();
         thread_list_destroy();
-        
+
         xnd_log_cleanup();
         disconnect_from_coord();
 }

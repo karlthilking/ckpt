@@ -696,15 +696,16 @@ void coord_suspend_processes(void)
 
 void coord_wait_for_ckpt_completions(void)
 {
-        int             err, total;
+        int             err, total, expected = coord_info.num_peers;
         struct proc     *p;
         struct xnd_msg  msg;
 
         total = coord_collective_prepare(COMM_REDUCE);
-        if (unlikely(total != coord_info.num_peers)) {
-                xnd_error("  Pending checkpoint done messages: %d\n"
-                          "  Expected checkpoint participants: %d\n",
-                          total, coord_info.num_peers);
+        if (total != expected) {
+                xnd_error("Less checkpoint participants than expected\n"
+                          "    Total checkpoint participants: %d\n"
+                          " Expected checkpoint participants: %d\n",
+                          total, expected);
                 coord_exit(COORD_EXIT_FAILURE);
         }
 
@@ -718,10 +719,11 @@ void coord_wait_for_ckpt_completions(void)
                 }
         }
 
-        if (unlikely(total != coord_info.num_peers)) {
-                xnd_error("     Total checkpoint completions: %d\n"
-                          "  Expected checkpoint completions: %d\n",
-                          total, coord_info.num_peers);
+        if (total != expected) {
+                xnd_error("Less checkpoint completions than expected\n"
+                          "    Total checkpoint completions: %d\n"
+                          " Expected checkpoint completions: %d\n",
+                          total, expected);
                 coord_exit(COORD_EXIT_FAILURE);
         }
 }

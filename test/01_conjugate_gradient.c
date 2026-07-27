@@ -19,12 +19,12 @@ static void usage(void)
 
 static void *xmalloc(size_t n)
 {
-	void *p = malloc(n);
+        void *ptr;
 
-	if (!p)
-		err(EXIT_FAILURE, "malloc");
+        if ((ptr = malloc(n)) == NULL)
+                err(EXIT_FAILURE, "malloc");
 
-	return p;
+        return ptr;
 }
 
 static void gen_spd(double *A, ulong N)

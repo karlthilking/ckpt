@@ -51,9 +51,8 @@ extern "C" pid_t pid_table_virtual_to_real(pid_t virt)
 {
         pid_t real;
 
-        if (pid_table->virtual_to_real(virt, real)) {
+        if (pid_table->virtual_to_real(virt, real))
                 return real;
-        }
 
         return -1;
 }
@@ -62,9 +61,8 @@ extern "C" pid_t pid_table_real_to_virtual(pid_t real)
 {
         pid_t virt;
 
-        if (pid_table->real_to_virtual(real, virt)) {
+        if (pid_table->real_to_virtual(real, virt))
                 return virt;
-        }
 
         return -1;
 }

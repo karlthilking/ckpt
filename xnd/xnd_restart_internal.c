@@ -6,8 +6,8 @@
 #include "xnd/shared_cache.h"
 #include "xnd/util/io.h"
 #include "xnd/util/log.h"
+#include "xnd/platform/ucontext/ucontext.h"
 
-#define _XOPEN_SOURCE
 #include <ucontext.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -51,8 +51,7 @@ __noreturn noinline void restart(int fd)
         }
 
         pac_resign_frames((u64 *)get_ucontext_fp(&uctx));
-        pac_patch_context(&uctx);
-        setcontext(&uctx);
+        xnd_setcontext(&uctx);
 
         unreachable();
 }

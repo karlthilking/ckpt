@@ -15,11 +15,13 @@ endif
 
 CFLAGS := \
 	-std=c17 -Wall -Wno-deprecated-declarations \
+	-D_XOPEN_SOURCE \
 	-DDEVELOPMENT=$(DEVELOPMENT) -DTIMING=$(TIMING) -DDEBUG=$(DEBUG) \
 	-g $(OPTFLAGS) -arch $(ARCH) -iquote . -iquote ./include
 
 CXXFLAGS := \
 	-std=c++20 -Wall -Wno-deprecated-declarations \
+	-D_XOPEN_SOURCE \
 	-DDEVELOPMENT=$(DEVELOPMENT) -DTIMING=$(TIMING) -DDEBUG=$(DEBUG) \
 	-g $(OPTFLAGS) -arch $(ARCH) -iquote . -iquote ./include
 
@@ -65,7 +67,9 @@ XND_RESTART_INTERNAL_SOURCES := \
         xnd/shared_cache.c \
         xnd/util/log.c \
         xnd/util/path.c \
-        xnd/util/io.c
+        xnd/util/io.c \
+        xnd/platform/ucontext/setcontext.c \
+        xnd/platform/ucontext/_setcontext.s
 
 XND_LAUNCH_OBJECTS := \
         $(BUILD)/xnd_launch.o \

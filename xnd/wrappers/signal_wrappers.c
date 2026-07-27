@@ -3,11 +3,11 @@
 #include "xnd/xnd.h"
 #include "xnd/pac.h"
 #include "xnd/xnd_lib.h"
+#include "xnd/thread_info.h"
 #include "xnd/util/env.h"
 #include "xnd/platform/signal.h"
 #include "xnd/platform/ucontext/ucontext.h"
 
-#define _XOPEN_SOURCE
 #include <ucontext.h>
 #include <signal.h>
 #include <stdlib.h>
@@ -20,7 +20,15 @@ static struct sigaction sa_table[NSIG];
 
 void sig_state_save(void)
 {
-        int sig;
+        int sig, ckpt_sig;
+        struct sigaction *ckpt_sa;
+
+        ckpt_sig = env_get_ckpt_signal();
+        if (ckpt_sig <= 0 || ckpt_sig >= NSIG ||
+            ckpt_sig == SIGKILL || ckpt_sig == SIGSTOP) {
+                xnd_error("Illegal checkpoint signal: %d\n", ckpt_sig);
+                xnd_abort();
+        }
 
         for (sig = 1; sig < NSIG; sig++) {
                 if (sig == SIGKILL || sig == SIGSTOP)
@@ -31,11 +39,39 @@ void sig_state_save(void)
                         bzero(&sa_table[sig], sizeof(sa_table[sig]));
                 }
         }
+
+        ckpt_sa = &sa_table[ckpt_sig];
+        if (ckpt_sa->sa_sigaction != thread_sighandler) {
+                xnd_warn("Invalid checkpoint signal action:\n"
+                         "(thread_sighandler: %p, current: %p)\n",
+                         thread_sighandler, ckpt_sa->sa_sigaction);
+                ckpt_sa->sa_sigaction = thread_sighandler;
+        }
 }
 
 void sig_state_restore(void)
 {
-        int sig;
+        int sig, ckpt_sig;
+        struct sigaction *ckpt_sa;
+
+        /**
+         * Validate checkpoint signal and current signal handler
+         * being used for the checkpoint signal
+         */
+        ckpt_sig = env_get_ckpt_signal();
+        if (ckpt_sig <= 0  || ckpt_sig >= NSIG ||
+            ckpt_sig == SIGKILL || ckpt_sig == SIGSTOP) {
+                xnd_error("Illegal checkpoint signal: %d\n", ckpt_sig);
+                xnd_abort();
+        }
+
+        ckpt_sa = &sa_table[ckpt_sig];
+        if (ckpt_sa->sa_sigaction != thread_sighandler) {
+                xnd_warn("Invalid checkpoint signal action:\n"
+                         "(thread_sighandler: %p, current: %p)\n",
+                         thread_sighandler, ckpt_sa->sa_sigaction);
+                ckpt_sa->sa_sigaction = thread_sighandler;
+        }
 
         for (sig = 1; sig < NSIG; sig++) {
                 if (sig == SIGKILL || sig == SIGSTOP)

@@ -1,5 +1,4 @@
 /* writeckpt.c */
-#define _XOPEN_SOURCE
 #include "xnd/xnd.h"
 #include "writeckpt.h"
 #include "ckptfile.h"
@@ -25,10 +24,9 @@ int write_vm_page(int fd, struct xnd_vm_region *region,
         ssize_t bytes;
         void    *addr;
 
-        bytes = writeall(fd, page, sizeof(struct xnd_vm_page));
-        if (bytes != sizeof(struct xnd_vm_page)) {
-                return -1;
-        }
+	bytes = writeall(fd, page, sizeof(*page));
+	if (bytes != sizeof(*page))
+		return -1;
 
         addr = region->start + page->offset;
         bytes = writeall(fd, addr, VM_PAGE_SIZE);
@@ -52,7 +50,7 @@ int write_vm_region_pages(int fd, struct xnd_vm_region *region)
         size_t                  vec_len, idx;
         ssize_t                 bytes;
         uint                    dirty;
-        
+
         addr = (mach_vm_address_t)region->start;
         size = (mach_vm_size_t)region->size;
 
@@ -68,19 +66,18 @@ int write_vm_region_pages(int fd, struct xnd_vm_region *region)
                           mach_error_string(kr));
                 return -1;
         }
-        
+
         xnd_assert(vec_len == region->size / VM_PAGE_SIZE);
         for (idx = 0, dirty = 0; idx < vec_len; idx++) {
                 if (vec[idx] & VM_PAGE_QUERY_PAGE_DIRTY) {
                         dirty++;
                 }
         }
-        
+
         region->pages_dirtied = dirty;
-        bytes = writeall(fd, region, sizeof(struct xnd_vm_region));
-        if (bytes != sizeof(struct xnd_vm_region)) {
+	bytes = writeall(fd, region, sizeof(*region));
+	if (bytes != sizeof(*region))
                 return -1;
-        }
 
         struct xnd_vm_page pages[dirty], *pg = pages;
         for (idx = 0; idx < vec_len; idx++) {
@@ -96,7 +93,7 @@ int write_vm_region_pages(int fd, struct xnd_vm_region *region)
                         pg++;
                 }
         }
-        
+
         xnd_assert(pg == pages + dirty);
         return 0;
 }
@@ -111,11 +108,12 @@ int write_vm_region(int fd, struct xnd_vm_region *region)
                 return write_vm_region_pages(fd, region);
         }
 
-        bytes = writeall(fd, region, sizeof(struct xnd_vm_region));
-        if (bytes != sizeof(struct xnd_vm_region)) {
+	bytes = writeall(fd, region, sizeof(*region));
+	if (bytes != sizeof(*region)) {
+                xnd_error("Failed to write region info\n");
                 return -1;
         }
-        
+
         /**
          * Write vm region contents. If the region has no protection
          * bits, temporarily grant read permission in order to save
@@ -123,32 +121,38 @@ int write_vm_region(int fd, struct xnd_vm_region *region)
          */
         if (region->prot == VM_PROT_NONE &&
             ckpt_vm_protect(region, false, VM_PROT_READ) < 0) {
+                xnd_error("Failed to get read protect vm region\n"
+                          "(%p-%p %zu %s/%s)\n",
+                          region->start, region->start + region->size,
+                          region->size, VM_PROT_STRING(region->prot),
+                          VM_PROT_STRING(region->max_prot));
                 return -1;
         }
-        
+
         bytes = writeall(fd, region->start, region->size);
         if (bytes != region->size) {
+               xnd_error("Failed to write vm region contents\n"
+                         "(%p-%p %zu %s/%s)\n",
+                         region->start, region->start + region->size,
+                         region->size, VM_PROT_STRING(region->prot),
+                         VM_PROT_STRING(region->max_prot));
                 return -1;
         }
-        
+
         if (region->prot == VM_PROT_NONE &&
             ckpt_vm_protect(region, false, VM_PROT_NONE) < 0) {
-                return -1;
+                xnd_warn("Failed to restore region protections\n");
         }
 
         return 0;
 }
 
-int write_context(int fd, ucontext_t *ctx)
+int write_context(int fd, ucontext_t *uctx)
 {
-        ssize_t bytes;
-        
-        bytes = writeall(fd, ctx, sizeof(*ctx));
-        if (bytes != sizeof(*ctx)) {
-                return -1;
-        }
+	if (writeall(fd, uctx, sizeof(*uctx)) != sizeof(*uctx))
+		return -1;
 
-        return 0;
+	return 0;
 }
 
 int write_ckpt(struct xnd_ckpt_header *header,
@@ -156,7 +160,7 @@ int write_ckpt(struct xnd_ckpt_header *header,
                struct xnd_vm_region *regions,
                ucontext_t *uctx)
 {
-        int                     err, fd = -1, dirfd = -1;
+        int                     fd = -1, dirfd = -1;
         char                    ckptfile[XND_CKPTFILE_MAXLEN];
         struct xnd_vm_region    *rgn = regions;
         ssize_t                 bytes;
@@ -177,7 +181,7 @@ int write_ckpt(struct xnd_ckpt_header *header,
         }
 
         bytes = writeall(fd, header, sizeof(struct xnd_ckpt_header));
-        if (bytes != sizeof(struct xnd_ckpt_header)) {
+        if (bytes != sizeof(*header)) {
                 xnd_error("Failed to write checkpoint header\n");
                 goto bad;
         }
@@ -190,20 +194,27 @@ int write_ckpt(struct xnd_ckpt_header *header,
 
                 switch (entries[i]) {
                 case XND_VM_REGION_ENTRY:
-                        err = write_vm_region(fd, rgn);
+			if (write_vm_region(fd, rgn) != 0) {
+				xnd_error("Failed to write vm region:\n"
+					  "(%p-%p %zu %s/%s)\n",
+					  rgn->start,
+					  rgn->start + rgn->size,
+					  rgn->size,
+					  VM_PROT_STRING(rgn->prot),
+					  VM_PROT_STRING(rgn->max_prot));
+				goto bad;
+			}
                         rgn++;
                         break;
                 case XND_UCONTEXT_ENTRY:
-                        err = write_context(fd, uctx);
+			if (write_context(fd, uctx) != 0) {
+				xnd_error("Failed to write ucontext\n");
+				goto bad;
+			}
                         break;
                 default:
-                        /* Unrecognized header */
+			xnd_error("Unrecognized checkpoint entry\n");
                         xnd_abort();
-                }
-
-                if (err < 0) {
-                        xnd_error("Failed to write checkpoint data\n");
-                        goto bad;
                 }
         }
 

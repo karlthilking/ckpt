@@ -6,7 +6,6 @@
 #include "xnd/vm_region.h"
 #include "xnd/ckptfile.h"
 
-#define _XOPEN_SOURCE
 #include <ucontext.h>
 
 #ifdef __cplusplus

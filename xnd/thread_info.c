@@ -12,7 +12,6 @@
 #include "wrappers/pthread_wrappers.h"
 #include "platform/ucontext/ucontext.h"
 
-#define _XOPEN_SOURCE
 #include <ucontext.h>
 #include <stdlib.h>
 #include <signal.h>
@@ -520,7 +519,6 @@ void *ckpt_thread_work(void *wait)
 
                 thread_restore_tls();
                 thread_restore_sig_state();
-                sig_state_restore();
 
                 zombie_list_filter();
                 barrier_release();
@@ -645,7 +643,7 @@ again:
                         thread_list_remove(th);
                         continue;
                 }
-                
+
                 pthread_mutex_lock(&th->lock);
                 if (th->state == ST_RUNNING &&
                     thread_state_cas(th, ST_RUNNING, ST_SIGNALED)) {
@@ -677,14 +675,14 @@ again:
                 }
                 pthread_mutex_unlock(&th->lock);
         }
-        
+
         pthread_mutex_unlock(&ckpt_mtx);
         thread_list_release();
         if (rescan) {
                 usleep(50);
                 goto again;
         }
-        
+
         threads_expected = suspended;
 }
 
@@ -695,7 +693,7 @@ void restore_threads(void)
 
         thread_list_acquire();
         pthread_mutex_lock(&ckpt_mtx);
-        
+
         threads_arrived = 0;
         threads_expected = 0;
 
@@ -736,7 +734,7 @@ again:
                                    th->state == ST_SUSPINPROG);
                 }
         }
-        
+
         thread_list_release();
         if (exiting != killed) {
                 usleep(50);
@@ -761,7 +759,7 @@ void thread_barrier(void)
         if (threads_arrived == threads_expected) {
                 pthread_cond_signal(&cond_arrived);
         }
-        
+
         /**
          * Wait until state = XND_RUNNING (user threads can resume)
          */
@@ -920,29 +918,43 @@ __noreturn void thread_restore_context(void)
 
 void thread_save_sig_state(void)
 {
-        int err;
+        int err, ckpt_sig = env_get_ckpt_signal();
+        sigset_t *blocked = &myself->sigblocked;
+        bool is_ckpt_thread = (myself == &ckpt_thread);
 
-        err = pthread_sigmask(SIG_SETMASK, NULL, &myself->sigblocked);
+        err = pthread_sigmask(SIG_SETMASK, NULL, blocked);
         if (err != 0) {
-                sigemptyset(&myself->sigblocked);
+                sigemptyset(blocked);
                 xnd_warn("pthread_sigmask: %s\n", strerror(err));
+        }
+
+        if (is_ckpt_thread && !sigismember(blocked, ckpt_sig)) {
+                xnd_warn("Checkpoint signal not blocked by checkpoint thread");
+                sigaddset(blocked, ckpt_sig);
         }
 
         if (sigaltstack(NULL, &myself->ss) != 0) {
                 myself->ss.ss_flags = SS_DISABLE;
-                xnd_warn("sigaltstack: %s\n", strerror(errno));
+                xnd_perror("sigaltstack");
         }
 }
 
 void thread_restore_sig_state(void)
 {
-        int err;
+        int err, ckpt_sig = env_get_ckpt_signal();
+        sigset_t *blocked = &myself->sigblocked;
+        bool is_ckpt_thread = (myself == &ckpt_thread);
 
-        err = pthread_sigmask(SIG_SETMASK, &myself->sigblocked, NULL);
+        if (is_ckpt_thread && !sigismember(blocked, ckpt_sig)) {
+                xnd_warn("Checkpoint signal isn't in checkpoint thread's blocked signal set");
+                sigaddset(blocked, ckpt_sig);
+        }
+
+        err = pthread_sigmask(SIG_SETMASK, blocked, NULL);
         if (err != 0)
                 xnd_warn("pthread_sigmask: %s\n", strerror(err));
 
-        if (myself->ss.ss_sp == NULL || (myself->ss.ss_flags & SS_DISABLE))
+        if (!myself->ss.ss_sp || (myself->ss.ss_flags & SS_DISABLE))
                 return;
 
         myself->ss.ss_flags &= ~SS_ONSTACK;

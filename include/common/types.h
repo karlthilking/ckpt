@@ -1,7 +1,6 @@
 /* types.h */
 #ifndef TYPES_H
 #define TYPES_H
-#define _XOPEN_SOURCE
 #include <stdint.h>
 #include <stddef.h>
 #include <ucontext.h>

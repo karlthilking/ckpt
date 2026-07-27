@@ -1,13 +1,10 @@
 /* pac.c */
-#define _XOPEN_SOURCE
 #include "xnd/xnd.h"
 #include "xnd/pac.h"
 #include "xnd/util/log.h"
 
 #include <ucontext.h>
 #include <stdlib.h>
-#include <stdio.h>
-#include <err.h>
 
 static __always_inline u64 *first_signed_frame(u64 *fp)
 {
@@ -38,12 +35,11 @@ static __always_inline u64 *next_signed_frame(u64 *fp)
 
 static __always_inline void uctx_populate_mctx(ucontext_t *uctx)
 {
-        if (uctx->uc_mcontext == &uctx->__mcontext_data) {
-                return;
+        if (uctx->uc_mcontext != &uctx->__mcontext_data) {
+                memcpy(&uctx->__mcontext_data, uctx->uc_mcontext,
+                       sizeof(struct __darwin_mcontext64));
+                uctx->uc_mcontext = &uctx->__mcontext_data;
         }
-        memcpy(&uctx->__mcontext_data, uctx->uc_mcontext,
-               sizeof(struct __darwin_mcontext64));
-        uctx->uc_mcontext = &uctx->__mcontext_data;
 }
 
 /**
@@ -133,12 +129,12 @@ void pac_patch_context(ucontext_t *uctx)
         XPACD(fp);
         PACDA(fp, FP_DISCRIMINATOR);
         set_ucontext_fp(uctx, fp);
-        
+
         sp = get_ucontext_sp(uctx);
         XPACD(sp);
         PACDA(sp, SP_DISCRIMINATOR);
         set_ucontext_sp(uctx, sp);
-        
+
         uctx_populate_mctx(uctx);
 }
 

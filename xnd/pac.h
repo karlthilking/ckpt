@@ -4,15 +4,14 @@
 
 #include "xnd/xnd.h"
 
-#define _XOPEN_SOURCE
 #include <ucontext.h>
 #include <mach/mach.h>
 #include <mach/arm/_structs.h>
 
 #if __DARWIN_OPAQUE_ARM_THREAD_STATE64
 /**
- * Access/modify ucontext_t, mcontext_t register values for 
- * arm64e version of struct __darwin_arm_thread_state64 
+ * Access/modify ucontext_t, mcontext_t register values for
+ * arm64e version of struct __darwin_arm_thread_state64
  * in struct __darwin_mcontext64
  */
 #define get_ucontext_lr(__uctx) \
@@ -57,7 +56,7 @@
  * of struct __darwin_arm_thread_state64 in struct __darwin_mcontext64
  */
 #define get_ucontext_lr(__uctx) \
-        ((__uctx)->uc_mcontext->__ss.__lr) 
+        ((__uctx)->uc_mcontext->__ss.__lr)
 #define get_ucontext_fp(__uctx) \
         ((__uctx)->uc_mcontext->__ss.__fp)
 #define get_ucontext_sp(__uctx) \
@@ -97,10 +96,14 @@
 /**
  * Constant discriminator values used for signing and authenticating
  * saved/restored registers in getcontext() and setcontext()
+ *
+ *  FP_DISCRIMINATOR = ptrauth_string_discriminator("fp") = 17687
+ *  SP_DISCRIMINATOR = ptrauth_string_discriminator("sp") = 52205
+ *  LR_DISCRIMINATOR = ptrauth_string_discriminator("lr") = 30675
  */
-#define FP_DISCRIMINATOR        ((u64)0x4517)   // =17687
-#define SP_DISCRIMINATOR        ((u64)0xcbed)   // =52205
-#define LR_DISCRIMINATOR        ((u64)0x77d3)   // =30675
+#define FP_DISCRIMINATOR ((u64)0x4517)
+#define SP_DISCRIMINATOR ((u64)0xcbed)
+#define LR_DISCRIMINATOR ((u64)0x77d3)
 
 /**
  * Flag values/bits in struct __darwin_arm_thread_state64 to manipulate

@@ -4,7 +4,6 @@
 
 #include "xnd/xnd.h"
 
-#define _XOPEN_SOURCE
 #include <signal.h>
 #include <ucontext.h>
 

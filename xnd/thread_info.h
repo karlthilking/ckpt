@@ -4,7 +4,6 @@
 
 #include "xnd/xnd.h"
 
-#define _XOPEN_SOURCE
 #include <ucontext.h>
 #include <stdatomic.h>
 #include <stdbool.h>

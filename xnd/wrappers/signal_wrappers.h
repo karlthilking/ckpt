@@ -6,7 +6,6 @@
 #include "xnd/inject.h"
 #include "xnd/platform/signal.h"
 
-#define _XOPEN_SOURCE
 #include <signal.h>
 #include <ucontext.h>
 

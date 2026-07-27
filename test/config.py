@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import os
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 CWD = Path(__file__).resolve().parent
 BIN = CWD / "bin"
@@ -85,7 +85,7 @@ CONFIG = {
     },
 }
 
-def config_display():
+def display():
     for test_id in TESTS:
         cfg = CONFIG[test_id]
         input = "None" if cfg["input"] is None else cfg["input"]
@@ -97,22 +97,32 @@ def config_display():
             f"  input: {input}\n"
         )
 
-def config_prepare_test(test_id: str):
+def prepare_test(test_id: str):
+    if not os.path.exists(CONFIG[test_id]["path"]):
+        os.system(f"cd {CWD} && make -j8")
     if test_id == "openssl_enc" and not OPENSSL_INPUT.exists():
         INPUTS.mkdir(parents=True, exist_ok=True)
         os.system(f"dd if=/dev/urandom of={OPENSSL_INPUT} "
                   f"bs=1m count={OPENSSL_INPUT_MB} 2>/dev/null")
 
-def config_cleanup_test(test_id: str):
+def cleanup_test(test_id: str):
+    path = CONFIG[test_id]["path"]
+    if os.path.exists(path) and str(CWD) in path:
+        os.system(f"cd {CWD} && make clean")
     if test_id == "openssl_enc" and OPENSSL_INPUT.exists():
         os.system(f"rm -f {OPENSSL_INPUT}")
 
-def config_get_test_argv(test_id: str) -> List[str]:
+def get_test_argv(test_id: str) -> List[str]:
     cfg = CONFIG[test_id]
     return [cfg["path"]] + cfg["args"]
 
-def config_xnd_executables() -> Dict[str, str]:
-    found: Dict[str, str] = {}
+def is_xnd_root(xnd_dir: str) -> bool:
+    for entry in Path(xnd_dir).iterdir():
+        if entry.is_dir() and ".git" == entry.name:
+            return True
+    return False
+
+def get_xnd_root() -> Optional[str]:
     search = [".", ".."] + os.getenv("PATH", "").split(":")
     idx = 0
     while idx < len(search):
@@ -121,15 +131,33 @@ def config_xnd_executables() -> Dict[str, str]:
         if not s:
             continue
         d = Path(s)
+        if d.name == "xnd" and is_xnd_root(s):
+            return s
         try:
             for entry in d.iterdir():
                 if entry.is_dir() and "xnd" in str(entry):
+                    if is_xnd_root(str(entry)):
+                        return str(entry)
                     search.append(str(entry))
-                    continue
-                name = entry.name
-                if name in XND_EXECUTABLES and name not in found \
-                        and entry.is_file() and os.access(entry, os.X_OK):
-                    found[name] = "./" + str(entry) if s == "." else str(entry)
-        except OSError:
+        except:
             continue
+    return None
+
+def get_xnd_executables() -> Dict[str, str]:
+    found: Dict[str, str] = {}
+    search = [".", ".."] + os.getenv("PATH", "").split(":")
+    idx = 0
+    xnd_root = get_xnd_root()
+    if xnd_root is None:
+        return {}
+
+    paths = [str(xnd_root + "/" + name) for name in XND_EXECUTABLES]
+    if not all(os.path.exists(p) for p in paths):
+        os.system(f"cd {xnd_root} && make -j8")
+
+    for name in XND_EXECUTABLES:
+        path = xnd_root + "/" + name
+        if os.path.exists(path):
+            found[name] = path
+
     return found

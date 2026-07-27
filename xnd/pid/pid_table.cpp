@@ -6,6 +6,7 @@
 #include "pid.h"
 #include "pid_table.h"
 #include <sys/types.h>
+#include <vector>
 
 using namespace xnd;
 
@@ -41,23 +42,24 @@ extern "C" void pid_table_postrestart(void)
         xnd_assert(_virt_pid != -1 && _virt_ppid != -1);
         pid_table->update(_virt_pid, _real_pid);
         pid_table->update(_virt_ppid, _real_ppid);
-        
-        /**
-         * Update all virtual -> real mappings by asking coordinator
-         * for new real pid.
-         */
+
+        std::vector<pid_t> erased;
         auto &table = virtual_id_table<pid_t>::get();
-        for (auto &[virt, real] : table) {
+        for (auto [virt, real] : table) {
                 if (virt == _virt_pid || virt == _virt_ppid)
                         continue;
                 new_real = virt_to_real_pid_from_coord(virt);
                 if (new_real == -1) {
-                        xnd_warn("pid translation failed: virt=%d\n", virt);
-                        pid_table->erase(virt);
+                        xnd_warn("Virtual to real pid translation failed "
+                                 "(virtual pid: %d)\n", virt);
+                        erased.push_back(virt);
                 } else {
                         pid_table->update(virt, new_real);
                 }
         }
+
+        for (pid_t virt : erased)
+                pid_table->erase(virt);
 
         pid_table->release();
 }

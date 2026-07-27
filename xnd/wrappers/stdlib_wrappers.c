@@ -6,7 +6,6 @@
 #include "xnd/thread_info.h"
 #include "stdlib_wrappers.h"
 
-#define _XOPEN_SOURCE
 #include <stdlib.h>
 #include <stdio.h>
 

@@ -42,13 +42,10 @@ def kill_process_group(pgid: int):
 def verify(test_id: str, ckpt_interval: int, iterations: int,
            xnd: Dict[str, str]) -> bool:
     name = config.CONFIG[test_id]["name"]
-    config.config_prepare_test(test_id)
-    argv = config.config_get_test_argv(test_id)
+    config.prepare_test(test_id)
+    argv = config.get_test_argv(test_id)
 
-    print(
-        f"[{name}] launching {' '.join(argv)}\n"
-        f"(checkpoint interval: {ckpt_interval}s)\n"
-    )
+    print(f"Launch {name} (interval: {ckpt_interval}s)")
 
     master_fd, slave_fd = pty.openpty()
     proc = subprocess.Popen(
@@ -141,7 +138,7 @@ if __name__ == "__main__":
             print(USAGE)
             sys.exit(0)
         elif arg in ("-s", "--show"):
-            config.config_display()
+            config.display()
             sys.exit(0)
         else:
             print(f"Unrecognized argument: {arg}")
@@ -153,7 +150,7 @@ if __name__ == "__main__":
         print(f"Unknown test id(s): {', '.join(unknown)}")
         sys.exit(-1)
 
-    xnd = config.config_xnd_executables()
+    xnd = config.get_xnd_executables()
     missing = [n for n in config.XND_EXECUTABLES if n not in xnd]
     if missing:
         print(f"Failed to find: {', '.join(missing)}")
@@ -172,6 +169,6 @@ if __name__ == "__main__":
         failed += not passed
         print(f"  [{'PASS' if passed else 'FAIL'}] "
               f"{config.CONFIG[test_id]['name']} ({test_id})")
-        config.config_cleanup_test(test_id)
+        config.cleanup_test(test_id)
 
     sys.exit(1 if failed else 0)
