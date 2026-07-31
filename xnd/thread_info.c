@@ -202,7 +202,7 @@ void thread_list_atfork_child(void)
 {
         int                     err;
         struct thread_info      *th, *next;
-        
+
         set_xnd_state(XND_ATFORK);
         for_each_thread_safe(th, next, &thread_list) {
                 free(th);
@@ -234,10 +234,10 @@ void thread_list_atfork_child(void)
                 xnd_error("pthread_mutex_init: %s\n", strerror(err));
                 xnd_abort();
         }
-        
+
         xnd_assert(pthread_cond_init(&cond_arrived, NULL) == 0);
         xnd_assert(pthread_cond_init(&cond_released, NULL) == 0);
-        
+
         /* Allow checkpoint thread to resume */
         pthread_mutex_lock(&ckpt_thread.lock);
         set_xnd_state(XND_RUNNING);
@@ -510,14 +510,15 @@ void *ckpt_thread_work(void *wait)
         if (restart) {
                 xnd_postrestart();
 
-                tlv_init();
+                thread_restore_tls(&ckpt_thread);
+		tlv_init();
+
                 myself = &ckpt_thread;
                 myself->self = pthread_self();
 
                 restore_threads();
                 barrier_arrival_wait();
 
-                thread_restore_tls();
                 thread_restore_sig_state();
 
                 zombie_list_filter();
@@ -531,8 +532,9 @@ void *ckpt_thread_work(void *wait)
                  * Wait until coordinator sends XND_CKPT_REQUEST, and
                  * transition from XND_RUNNING to XND_CKPTPENDING.
                  *
-                 * Now that a checkpoint is pending, enter global coordinator
-                 * barrier until coordinator sends XND_CKPT_START
+                 * Now that a checkpoint is pending, enter a global
+		 * coordinator barrier until the coordinator
+		 * responds with XND_CKPT_START.
                  */
                 ckpt_thread_wait();
                 enter_coord_barrier(COORD_BARRIER_PRECKPT);
@@ -669,7 +671,7 @@ again:
                 } else if (th->state == ST_SUSPENDED ||
                            th->state == ST_SUSPINPROG) {
                         suspended++;
-                } else if (th->state == ST_UNSAFE || 
+                } else if (th->state == ST_UNSAFE ||
                            th->state == ST_EMBRYO) {
                         rescan = true;
                 }
@@ -714,32 +716,36 @@ void restore_threads(void)
 void wait_for_exiting_threads(void)
 {
         struct thread_info      *th, *next;
-        int                     exiting, killed;
+        int                     err, exiting, killed;
 
-again:
-        thread_list_acquire();
-        killed = 0;
-        exiting = 0;
-        for_each_thread_safe(th, next, &thread_list) {
-                if (th->joined) {
-                        thread_list_remove(th);
-                } else if (th->exiting) {
-                        exiting++;
-                        if (pthread_kill(th->self, 0) == ESRCH) {
-                                thread_list_remove(th);
-                                killed++;
-                        }
-                } else {
-                        xnd_assert(th->state == ST_SUSPENDED ||
-                                   th->state == ST_SUSPINPROG);
-                }
-        }
+	do {
+		thread_list_acquire();
+		killed = 0;
+		exiting = 0;
+		for_each_thread_safe(th, next, &thread_list) {
+			if (!(th->joined || th->exiting)) {
+				xnd_assert(th->state == ST_SUSPENDED ||
+					   th->state == ST_SUSPINPROG);
+				continue;
+			}
 
-        thread_list_release();
-        if (exiting != killed) {
-                usleep(50);
-                goto again;
-        }
+			if (th->joined) {
+				thread_list_remove(th);
+			} else if (th->exiting) {
+				exiting++;
+				err = pthread_kill(th->self, 0);
+				if (err == ESRCH) {
+					thread_list_remove(th);
+					killed++;
+				}
+			}
+		}
+
+		thread_list_release();
+		if (exiting != killed) {
+			usleep(50);
+		}
+	} while (exiting != killed);
 }
 
 void thread_barrier(void)
@@ -842,7 +848,7 @@ __noreturn void *thread_restart(void *thread)
         myself->state = ST_RUNNING;
 
         /* Restore tls/tsd and signal state */
-        thread_restore_tls();
+        thread_restore_tls(myself);
         thread_restore_sig_state();
 
         /**
@@ -857,14 +863,53 @@ __noreturn void *thread_restart(void *thread)
 
 void thread_save_tls(void)
 {
-        assert(myself != NULL);
-        asm volatile("mrs %0, tpidrro_el0" : "=r" (myself->tls) :: "memory");
+	uintptr_t tls;
+
+        xnd_assert(myself != NULL);
+	asm volatile("mrs %0, tpidrro_el0" : "=r" (tls) :: "memory");
+
+	if (myself->state != ST_CKPT_THREAD) {
+		xnd_assert(myself != &ckpt_thread);
+		myself->tls = tls;
+		return;
+	}
+
+	/**
+	 * If checkpoint thread is saving tls for the first time,
+	 * save the tls register directly so tsd pointers can be
+	 * copied to new tls on restart.
+	 */
+	xnd_assert(myself == &ckpt_thread);
+	if (myself->tls == 0) {
+		myself->tls = tls;
+		return;
+	}
+
+	/**
+	 * Otherwise, this is not the first time the checkpoint thread
+	 * is saving its tls register, i.e. we have restarted one or
+	 * more times. In order to save tls, reuse the first tls
+	 * buffer instead of saving the current tls register. Rebase
+	 * tsd pointers on top of the old tls buffer that was not in
+	 * use during this restart cycle.
+	 *
+	 * [ The checkpoint thread's thread descriptor will always be
+	 *   at the same address after restart, so we can not copy tls;
+	 *   the addresses will be indentical. Thus, in order to
+	 *   restore tls, we keep the original tls up-to-date and
+	 *   continue copying from there for each restart. ]
+	 */
+	void **src = (void **)tls;
+	void **dst = (void **)myself->tls;
+	for (uint slot = 20; slot < 768; slot++) {
+		dst[slot] = src[slot];
+	}
 }
 
 /**
  * thread_restore_tls:
  *  TPIDRRO_EL0 can not be written to directly. Instead, restore tsd
- *  slots 125-209 and 256-767 for thread locals.
+ *  slots 20-767 for thread locals.
  *  Also restore per-thread cleanup stack that was located in the
  *  thread's previous struct pthread_s.
  *
@@ -882,36 +927,35 @@ void thread_save_tls(void)
  *      Keys 90-94 for JavaScriptCore Collection
  *      Keys 95 for CoreText
  *      Keys 100-109 are for the Swift runtime
- *      Keys 110-115 for libmalloc
- *      Keys 115-120 for libdispatch workgroups
+ *      Keys 110-114 for libmalloc
+ *      Keys 115-124 for libdispatch workgroups
  *      125 - 209 for shared cache dylibs __thread support
  */
-void thread_restore_tls(void)
+void thread_restore_tls(struct thread_info *th)
 {
-        uintptr_t       tls;
-        void            **dst, **src;
+        uintptr_t tls;
+        void **dst, **src;
 
+        xnd_assert(th != NULL);
         asm volatile("mrs %0, tpidrro_el0" : "=r" (tls) :: "memory");
         set_thread_cleanup_stack(NULL);
 
         dst = (void **)tls;
-        src = (void **)myself->tls;
-        for (uint slot = 30; slot < 768; slot++) {
-                if (dst[slot] == NULL && src[slot] != NULL)
-                        dst[slot] = src[slot];
-                else if (dst[slot] != NULL && src[slot] == NULL)
-                        dst[slot] = NULL;
-        }
+        src = (void **)th->tls;
+	for (uint slot = 20; slot < 768; slot++) {
+		dst[slot] = src[slot];
+	}
 }
 
 __noreturn void thread_restore_context(void)
 {
+	u64 *fp = (u64 *)get_ucontext_fp(&myself->uctx);
 
-        pac_resign_frames((u64 *)get_ucontext_fp(&myself->uctx));
-        /**
-         * The user context does not need to be probed for pac-signed
-         * pointers, xnd_setcontext will handle this transparently.
-         */
+	/**
+	 * Re-sign link register saved on stack frames, and call
+	 * xnd_setcontext to switch to the saved user context.
+	 */
+	ptrauth_resign_frames(fp);
         xnd_setcontext(&myself->uctx);
         unreachable();
 }

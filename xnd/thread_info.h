@@ -104,7 +104,7 @@ void *thread_start(void *);
 void *thread_restart(void *);
 
 void thread_save_tls(void);
-void thread_restore_tls(void);
+void thread_restore_tls(struct thread_info *);
 void thread_restore_context(void);
 void thread_save_sig_state(void);
 void thread_restore_sig_state(void);

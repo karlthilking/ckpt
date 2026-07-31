@@ -1,6 +1,6 @@
 /* tls.h */
-#ifndef __CKPT_TLS_H__
-#define __CKPT_TLS_H__
+#ifndef XND_TLS_H
+#define XND_TLS_H
 #include "xnd/xnd.h"
 #include "xnd/pac.h"
 #include "xnd/thread_info.h"
@@ -134,4 +134,4 @@ static __always_inline void thread_sig_fixup(uintptr_t munge_token)
         }
 }
 
-#endif // __CKPT_TLS_H__
+#endif /* XND_TLS_H */
