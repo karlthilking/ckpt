@@ -7,15 +7,18 @@
 #include <ucontext.h>
 
 __noreturn void __xnd_sigreturn(ucontext_t *uctx, int ctxstyle,
-                                uintptr_t token)
+				uintptr_t token)
 {
-        pac_patch_siguctx(uctx);
-        pac_resign_frames((u64 *)get_ucontext_fp(uctx));
-        __sigreturn(uctx, ctxstyle, token);
+	u64 *fp = (u64 *)get_ucontext_fp(uctx);
 
-        xnd_error("__sigreturn failed!\n");
-        xnd_abort();
-        unreachable();
+	ptrauth_patch_siguctx(uctx);
+	ptrauth_resign_frames(fp);
+
+	__sigreturn(uctx, ctxstyle, token);
+	xnd_error("fatal error: __sigreturn fallthrough\n");
+
+	xnd_abort();
+	unreachable();
 }
 
 __noreturn void __xnd_sigtramp(union __sigaction_u __sigaction_u,

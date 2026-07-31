@@ -6,7 +6,7 @@
 #include "xnd/inject.h"
 #include <stdlib.h>
 
-#define __CLEANUP_PAC_DISCRIMINATOR 0x211B
+#define CLEANUP_PTRAUTH_DISCRIMINATOR (0x000000000000211BULL)
 
 void    __exit_hook(int);
 void    __abort_hook(void);

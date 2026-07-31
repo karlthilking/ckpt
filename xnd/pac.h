@@ -14,82 +14,82 @@
  * arm64e version of struct __darwin_arm_thread_state64
  * in struct __darwin_mcontext64
  */
-#define get_ucontext_lr(__uctx) \
-        ((u64)((__uctx)->uc_mcontext->__ss.__opaque_lr))
-#define get_ucontext_fp(__uctx) \
-        ((u64)((__uctx)->uc_mcontext->__ss.__opaque_fp))
-#define get_ucontext_sp(__uctx) \
-        ((u64)((__uctx)->uc_mcontext->__ss.__opaque_sp))
-#define get_ucontext_flags(__uctx) \
-        ((u32)((__uctx)->uc_mcontext->__ss.__opaque_flags))
+#define get_ucontext_lr(uctx) \
+	((u64)((uctx)->uc_mcontext->__ss.__opaque_lr))
+#define get_ucontext_fp(uctx) \
+        ((u64)((uctx)->uc_mcontext->__ss.__opaque_fp))
+#define get_ucontext_sp(uctx) \
+        ((u64)((uctx)->uc_mcontext->__ss.__opaque_sp))
+#define get_ucontext_flags(uctx) \
+        ((u32)((uctx)->uc_mcontext->__ss.__opaque_flags))
 
-#define set_ucontext_lr(__uctx, __lr) \
-        ((__uctx)->uc_mcontext->__ss.__opaque_lr = (void *)(__lr))
-#define set_ucontext_fp(__uctx, __fp) \
-        ((__uctx)->uc_mcontext->__ss.__opaque_fp = (void *)(__fp))
-#define set_ucontext_sp(__uctx, __sp) \
-        ((__uctx)->uc_mcontext->__ss.__opaque_sp = (void *)(__sp))
-#define set_ucontext_flags(__uctx, __flags) \
-        ((__uctx)->uc_mcontext->__ss.__opaque_flags = (u32)(__flags))
+#define set_ucontext_lr(uctx,lr) \
+        ((uctx)->uc_mcontext->__ss.__opaque_lr = (void *)(lr))
+#define set_ucontext_fp(uctx, fp) \
+        ((uctx)->uc_mcontext->__ss.__opaque_fp = (void *)(fp))
+#define set_ucontext_sp(uctx, sp) \
+        ((uctx)->uc_mcontext->__ss.__opaque_sp = (void *)(sp))
+#define set_ucontext_flags(uctx, flags) \
+        ((uctx)->uc_mcontext->__ss.__opaque_flags = (u32)(flags))
 
-#define get_mcontext_lr(__mctx) \
-        ((u64)((__mctx)->__ss.__opaque_lr))
-#define get_mcontext_fp(__mctx) \
-        ((u64)((__mctx)->__ss.__opaque_fp))
-#define get_mcontext_sp(__mctx) \
-        ((u64)((__mctx)->__ss.__opaque_sp))
-#define get_mcontext_flags(__mctx)      \
-        ((u32)((__mctx)->__ss.__opaque_flags))
+#define get_mcontext_lr(mctx) \
+        ((u64)((mctx)->__ss.__opaque_lr))
+#define get_mcontext_fp(mctx) \
+        ((u64)((mctx)->__ss.__opaque_fp))
+#define get_mcontext_sp(mctx) \
+        ((u64)((mctx)->__ss.__opaque_sp))
+#define get_mcontext_flags(mctx)      \
+        ((u32)((mctx)->__ss.__opaque_flags))
 
-#define set_mcontext_lr(__mctx, __lr) \
-        ((__mctx)->__ss.__opaque_lr = (void *)(__lr))
-#define set_mcontext_fp(__mctx, __fp) \
-        ((__mctx)->__ss.__opaque_fp = (void *)(__fp))
-#define set_mcontext_sp(__mctx, __sp) \
-        ((__mctx)->__ss.__opaque_sp = (void *)(__sp))
-#define set_mcontext_flags(__mctx, __flags) \
-        ((__mctx)->__ss.__opaque_flags = (u32)(__flags))
+#define set_mcontext_lr(mctx, lr) \
+        ((mctx)->__ss.__opaque_lr = (void *)(lr))
+#define set_mcontext_fp(mctx, fp) \
+        ((mctx)->__ss.__opaque_fp = (void *)(fp))
+#define set_mcontext_sp(mctx, sp) \
+        ((mctx)->__ss.__opaque_sp = (void *)(sp))
+#define set_mcontext_flags(mctx, flags) \
+        ((mctx)->__ss.__opaque_flags = (u32)(flags))
 
-#else // __arm64e_ || __ARM_FEATURE_PAUTH
+#else /* !__DARWIN_OPAQUE_ARM_THREAD_STATE64 */
 /**
  * Access/modify ucontext_t, mcontext_t register values for arm64 version
  * of struct __darwin_arm_thread_state64 in struct __darwin_mcontext64
  */
-#define get_ucontext_lr(__uctx) \
-        ((__uctx)->uc_mcontext->__ss.__lr)
-#define get_ucontext_fp(__uctx) \
-        ((__uctx)->uc_mcontext->__ss.__fp)
-#define get_ucontext_sp(__uctx) \
-        ((__uctx)->uc_mcontext->__ss.__sp)
-#define get_ucontext_flags(__uctx) \
-        ((__uctx)->uc_mcontext->__ss.__pad)
+#define get_ucontext_lr(uctx) \
+        ((uctx)->uc_mcontext->__ss.__lr)
+#define get_ucontext_fp(uctx) \
+        ((uctx)->uc_mcontext->__ss.__fp)
+#define get_ucontext_sp(uctx) \
+        ((uctx)->uc_mcontext->__ss.__sp)
+#define get_ucontext_flags(uctx) \
+        ((uctx)->uc_mcontext->__ss.__pad)
 
-#define set_ucontext_lr(__uctx, lr) \
-        ((__uctx)->uc_mcontext->__ss.__lr = (u64)(lr))
-#define set_ucontext_fp(__uctx, fp) \
-        ((__uctx)->uc_mcontext->__ss.__fp = (u64)(fp))
-#define set_ucontext_sp(__uctx, sp) \
-        ((__uctx)->uc_mcontext->__ss.__sp = (u64)(sp))
-#define set_ucontext_flags(__uctx, flags) \
-        ((__uctx)->uc_mcontext->__ss.__pad = (u32)(flags))
+#define set_ucontext_lr(uctx, lr) \
+        ((uctx)->uc_mcontext->__ss.__lr = (u64)(lr))
+#define set_ucontext_fp(uctx, fp) \
+        ((uctx)->uc_mcontext->__ss.__fp = (u64)(fp))
+#define set_ucontext_sp(uctx, sp) \
+        ((uctx)->uc_mcontext->__ss.__sp = (u64)(sp))
+#define set_ucontext_flags(uctx, flags) \
+        ((uctx)->uc_mcontext->__ss.__pad = (u32)(flags))
 
-#define get_mcontext_lr(__mctx) \
-        ((__mctx)->__ss.__lr)
-#define get_mcontext_fp(__mctx) \
-        ((__mctx)->__ss.__fp)
-#define get_mcontext_sp(__mctx) \
-        ((__mctx)->__ss.__sp)
-#define get_mcontext_flags(__mctx) \
-        ((__mctx)->__ss.__pad)
+#define get_mcontext_lr(mctx) \
+        ((mctx)->__ss.__lr)
+#define get_mcontext_fp(mctx) \
+        ((mctx)->__ss.__fp)
+#define get_mcontext_sp(mctx) \
+        ((mctx)->__ss.__sp)
+#define get_mcontext_flags(mctx) \
+        ((mctx)->__ss.__pad)
 
-#define set_mcontext_lr(__mctx, lr) \
-        ((__mctx)->__ss.__lr = (u64)(lr))
-#define set_mcontext_fp(__mctx, fp) \
-        ((__mctx)->__ss.__fp = (u64)(fp))
-#define set_mcontext_sp(__mctx, sp) \
-        ((__mctx)->__ss.__sp = (u64)(sp))
-#define set_mcontext_flags(__mctx, flags) \
-        ((__mctx)->__ss.__pad = (u32)(flags))
+#define set_mcontext_lr(mctx, lr) \
+        ((mctx)->__ss.__lr = (u64)(lr))
+#define set_mcontext_fp(mctx, fp) \
+        ((mctx)->__ss.__fp = (u64)(fp))
+#define set_mcontext_sp(mctx, sp) \
+        ((mctx)->__ss.__sp = (u64)(sp))
+#define set_mcontext_flags(mctx, flags) \
+        ((mctx)->__ss.__pad = (u32)(flags))
 
 #endif
 
@@ -122,177 +122,55 @@
 #define __DARWIN_ARM_THREAD_STATE64_FLAGS_KERNEL_SIGNED_LR      0x8
 #define __DARWIN_ARM_THREAD_STATE64_USER_DIVERSIFIER_MASK       0xff000000
 
-#if defined(__arm64e__) || defined(__ARM_FEATURE_PAUTH)
-# define PAC_ENABLED 1
-#endif
+#define PTRAUTH_BIT_MASK (0xFF7F800000000000ULL)
+#define PTRAUTH_SIGNED(ptr) \
+	(!!((u64)(ptr) & PTRAUTH_BIT_MASK))
 
-#define PAC_BIT_MASK   (0xFF7F000000000000ULL)
+#define PTRAUTH_XPACI(ptr)	      \
+	do {			      \
+		__asm__ __volatile__( \
+			"xpaci %0"    \
+			: "+r" (ptr)  \
+			:	      \
+			: "memory"    \
+			);	      \
+	} while (0)
 
-/**
- * Determine if pointer is signed (high bits other than bit 55 are set).
- * Bit 55 is not written by PAC signature to determine between userspace
- * and kernel space addresses.
- */
-#define PTRAUTH_SIGNED(__ptr) \
-        (((__ptr) & ~(1ull << 55)) & PAC_BIT_MASK)
+#define PTRAUTH_PACIB(ptr, mod)		 \
+	do {				 \
+		__asm__ __volatile__(	 \
+			"pacib %0, %1"	 \
+			: "+r" (ptr)	 \
+			: "r" ((u64)mod) \
+			: "memory"	 \
+			);		 \
+	} while (0)
 
-/* If bits 62-61 are 10 or 01, aut* instruction failed */
-#define PTRAUTH_FAILED(__ptr) \
-        (((__ptr) >> 61) == 0b01 || ((__ptr) >> 62) == 0b10)
+#define PTRAUTH_AUTIB(ptr, mod)		 \
+	do {				 \
+		__asm__ __volatile__(	 \
+			"autib %0, %1"	 \
+			: "+r" (ptr)	 \
+			: "r" ((u64)mod) \
+			: "memory"	 \
+			);		 \
+	} while (0)
 
-#define pac_strip_conditional(__ptr) do {       \
-        if (PTRAUTH_SIGNED((__ptr)))            \
-                XPACI(__ptr);                   \
-} while (0)
+#define FRAME_FOR_EACH(fp) \
+	for (; (fp) != NULL; (fp) = (u64 *)(fp)[0])
 
-/**
- * PAC instruction macros for:
- *
- *  xpaci, strip PAC signature for pointer to instr address
- *  xpacd, strip PAC signature for pointer to data address
- *
- *  pacia, sign pointer with IA key + modifier
- *  pacib, sign pointer with IB key + modifier
- *  pacda, sign pointer with DA key + modifier
- *  pacdb, sign pointer with DB key + modifier
- *
- *  autia, authenticate with IA key + modifier
- *  autib, authenticate with IB key + modifier
- *  autda, authenticate with DA key + modifier
- *  autdb, authenticate with DB key + modifier
- */
-
-#define XPACI(__ptr) do {               \
-        __asm__ __volatile__ (          \
-                "xpaci %[ptr]"          \
-                : [ptr] "+r" (__ptr)    \
-                :                       \
-                : "memory"              \
-        );                              \
-} while (0)
-
-#define XPACD(__ptr) do {               \
-        __asm__ __volatile__ (          \
-                "xpacd %[ptr]"          \
-                : [ptr] "+r" (__ptr)    \
-                :                       \
-                : "memory"              \
-        );                              \
-} while (0)
-
-#define PACIA(__ptr, __mod) do {        \
-        __asm__ __volatile__ (          \
-                "pacia %[ptr], %[mod]"  \
-                : [ptr] "+r" (__ptr)    \
-                : [mod] "r" (__mod)     \
-                : "memory"              \
-        );                              \
-} while (0)
-
-#define PACIB(__ptr, __mod) do {        \
-        __asm__ __volatile__ (          \
-                "pacib %[ptr], %[mod]"  \
-                : [ptr] "+r" (__ptr)    \
-                : [mod] "r" (__mod)     \
-                : "memory"              \
-        );                              \
-} while (0)
-
-#define PACDA(__ptr, __mod) do {        \
-        __asm__ __volatile__ (          \
-                "pacda %[ptr], %[mod]"  \
-                : [ptr] "+r" (__ptr)    \
-                : [mod] "r" (__mod)     \
-                : "memory"              \
-        );                              \
-} while (0)
-
-#define PACDB(__ptr, __mod) do {        \
-        __asm__ __volatile__ (          \
-                "pacdb %[ptr], %[mod]"  \
-                : [ptr] "+r" (__ptr)    \
-                : [mod] "r" (__mod)     \
-                : "memory"              \
-        );                              \
-} while (0)
-
-#define AUTIA(__ptr, __mod) do {        \
-        __asm__ __volatile__ (          \
-                "autia %[ptr], %[mod]"  \
-                : [ptr] "+r" (__ptr)    \
-                : [mod] "r" (__mod)     \
-                : "memory"              \
-        );                              \
-} while (0)
-
-#define AUTIB(__ptr, __mod) do {        \
-        __asm__ __volatile__ (          \
-                "autib %[ptr], %[mod]"  \
-                : [ptr] "+r" (__ptr)    \
-                : [mod] "r" (__mod)     \
-                : "memory"              \
-        );                              \
-} while (0)
-
-#define AUTDA(__ptr, __mod) do {        \
-        __asm__ __volatile__ (          \
-                "autda %[ptr], %[mod]"  \
-                : [ptr] "+r" (__ptr)    \
-                : [mod] "r" (__mod)     \
-                : "memory"              \
-        );                              \
-} while (0)
-
-#define AUTDB(__ptr, __mod) do {        \
-        __asm__ __volatile__ (          \
-                "autdb %[ptr], %[mod]"  \
-                : [ptr] "+r" (__ptr)    \
-                : [mod] "r" (__mod)     \
-                : "memory"              \
-        );                              \
-} while (0)
-
-enum {
-        APIAKey = 0,
-        APIBKey = 1,
-        APDAKey = 2,
-        APDBKey = 4,
-};
-
-#define pac_strip_resign(__ptr, __key, __constant, __blend) do { \
-        u64 __mod, __result;                                     \
-        if ((__key) == APIBKey)                                  \
-                XPACI((__ptr));                                  \
-        else if ((__key) == APDBKey)                             \
-                XPACD((__ptr));                                  \
-        if ((__blend) != 0) {                                    \
-                __mod =  (u64)&(__ptr);                          \
-                __mod |= ((u64)(__constant) << 48);              \
-        } else                                                   \
-                __mod = (__constant);                            \
-        __result = (u64)(__ptr);                                 \
-        if ((__key) == APIBKey)                                  \
-                PACIB(__result, __mod);                          \
-        else if ((__key) == APDBKey)                             \
-                PACDB(__result, __mod);                          \
-        *(u64 *)&(__ptr) = __result;                             \
-} while (0)
-
-#define for_each_frame(__fp) \
-        for (; __fp != NULL; __fp = (u64 *)__fp[0])
-
-#define for_each_signed_frame(__fp) \
-        for (__fp = first_signed_frame(__fp); __fp != NULL; \
-             __fp = next_signed_frame(__fp))
+#define FRAME_FOR_EACH_SIGNED(fp)	    \
+	for ((fp) = first_signed_frame(fp); \
+	     (fp) != NULL;		    \
+	     (fp) = next_signed_frame(fp))
 
 #ifdef __cplusplus
 extern "C" {
 #endif /* __cplusplus */
 
-void pac_strip_uctx(ucontext_t *);
-void pac_patch_siguctx(ucontext_t *);
-void pac_patch_context(ucontext_t *);
-void pac_resign_frames(u64 *);
+void ptrauth_strip_uctx(ucontext_t *);
+void ptrauth_patch_siguctx(ucontext_t *);
+void ptrauth_resign_frames(u64 *);
 
 #ifdef __cplusplus
 }

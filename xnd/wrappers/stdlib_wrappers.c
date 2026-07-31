@@ -24,30 +24,53 @@ static __always_inline bool skip_interpose(void)
 
 extern void (*__cleanup)(void);
 
+/**
+ * ptrauth_check_cleanup_ptr:
+ *  The __cleanup function pointer invoked in libsystem before process
+ *  exit (exit(), abort()) will potentially have a stale PAC signature.
+ *
+ *  In order to mitigate a pointer authentication failure, strip and
+ *  resign the function pointer before allowing it to be using
+ *  internally in libsystem.
+ *
+ *  The PAC signature uses address discrimination and a constant value,
+ *  i.e. the signature uses a modifier equal to the address of the
+ *  pointer is the low bits, and a constant discriminator in the high
+ *  16 bits:
+ *
+ *    low48 = (u64)&__cleanup;
+ *    high16 = CLEANUP_PTRAUTH_DISCRIMINATOR
+ *    modifier = low48 | (high16 << 48)
+ *    pacib __cleanup, modifier
+ */
+static inline void ptrauth_check_cleanup_ptr(void)
+{
+	u64 mod;
+
+	if (PTRAUTH_SIGNED(__cleanup)) {
+		mod = (u64)&__cleanup;
+		mod |= (CLEANUP_PTRAUTH_DISCRIMINATOR << 48);
+		PTRAUTH_XPACI(__cleanup);
+		PTRAUTH_PACIB(__cleanup, mod);
+	}
+}
+
 void __exit_hook(int status)
 {
-        if (PTRAUTH_SIGNED((uintptr_t)__cleanup)) {
-                pac_strip_resign(__cleanup, APIBKey,
-                                 __CLEANUP_PAC_DISCRIMINATOR, 1);
-        }
-        
+	ptrauth_check_cleanup_ptr();
         exit(status);
 }
 
 void __abort_hook(void)
 {
-        if (PTRAUTH_SIGNED((uintptr_t)__cleanup)) {
-                pac_strip_resign(__cleanup, APIBKey,
-                                 __CLEANUP_PAC_DISCRIMINATOR, 1);
-        }
-
+	ptrauth_check_cleanup_ptr();
         abort();
 }
 
 void *__calloc_hook(size_t count, size_t size)
 {
         void *retval;
-        
+
         if (skip_interpose()) {
                 return calloc(count, size);
         }

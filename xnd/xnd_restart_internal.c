@@ -6,6 +6,8 @@
 #include "xnd/shared_cache.h"
 #include "xnd/util/io.h"
 #include "xnd/util/log.h"
+#include "xnd/pid/pid.h"
+#include "xnd/syscall.h"
 #include "xnd/platform/ucontext/ucontext.h"
 
 #include <ucontext.h>
@@ -21,36 +23,42 @@
 
 __noreturn noinline void restart(int fd)
 {
-        int                     retval;
-        struct xnd_ckpt_header  header;
+        int ret;
+        ssize_t bread;
+        struct xnd_ckpt_header header;
 
-        retval = ckpt_vm_mark_regions();
-        if (retval < 0) {
+        if (ckpt_vm_mark_regions() < 0)
                 xnd_warn("Failed to mark restart regions\n");
-        }
 
-        retval = readall(fd, &header, sizeof(header));
-        if (retval < 0) {
+        bread = sys_readall(fd, &header, sizeof(header));
+        if (bread != sizeof(header)) {
                 xnd_error("Failed to read checkpoint header\n");
                 exit(XND_EXIT_FAILURE);
         }
 
-        if (!xnd_ckptfile_valid(&header)) {
-                xnd_error("Checkpoint file is invalid\n");
+        if (strcmp(header.magic, XND_HEADER_MAGIC)) {
+                xnd_error("Checkpoint header is invalid\n"
+                          "magic: %s, expected: %s\n",
+                          header.magic, XND_HEADER_MAGIC);
                 exit(XND_EXIT_FAILURE);
         }
 
-        enum xnd_ckpt_entry     entries[header.entry_count];
-        struct xnd_vm_region    regions[header.region_count];
-        ucontext_t              uctx;
+        // int DEBUG_ON=1;
+        // printf("Pausing for debugging (lldb -p %d)\n", _real_getpid());
+        // while (DEBUG_ON) {
+        // }
 
-        retval = read_ckpt(fd, &header, entries, regions, &uctx);
-        if (retval < 0) {
-                xnd_error("Failed to read checkpoint file, aborting...\n");
+        ucontext_t uctx;
+        enum xnd_ckpt_entry entries[header.entry_count];
+        struct xnd_vm_region regions[header.region_count];
+
+        ret = read_ckpt(fd, &header, entries, regions, &uctx);
+        if (ret < 0) {
+                xnd_error("Failed to read checkpoint file\n");
                 exit(XND_EXIT_FAILURE);
         }
 
-        pac_resign_frames((u64 *)get_ucontext_fp(&uctx));
+        ptrauth_resign_frames((u64 *)get_ucontext_fp(&uctx));
         xnd_setcontext(&uctx);
 
         unreachable();
@@ -66,9 +74,6 @@ __noreturn void jump(int fd)
         void                    *sp;
         const mach_vm_size_t    size = 1024 * 1024;
         mach_vm_address_t       addr = XND_RESTART_STACK;
-
-        xnd_trace("Allocating temporary stack 0x%llx-0x%llx\n",
-                  addr, addr + size);
 
         /**
          * Make VM object purgable and associate VM_REGION_RESTART_STACK
@@ -104,10 +109,25 @@ __noreturn void jump(int fd)
 __noreturn int main(int argc, char **argv)
 {
         int fd;
+        mach_vm_address_t ubc_addr;
+        mach_vm_size_t ubc_size;
 
         if (argc != 2) {
-                xnd_error("restart should not be invoked directly!\n"
-                          "Usage: ./xnd_run -r <ckpt-file>\n");
+                exit(XND_EXIT_FAILURE);
+        }
+
+        ubc_addr = ckpt_vm_find_ubc_region(&ubc_size);
+        if (ubc_addr && ubc_addr < DYLD_SHARED_CACHE_BASE) {
+                xnd_assert(ubc_addr >= PAGEZERO_END);
+                xnd_error("UBC region at fatal address: "
+                          "0x%016llx-0x%016llx %llu\n",
+                          ubc_addr, ubc_addr + ubc_size, ubc_size);
+                exit(XND_EXIT_FAILURE);
+        }
+
+        if (ckpt_vm_remove_xnd_guard() < 0) {
+                xnd_error("Failed to remove guard: 0x%016llx-0x%016llx\n",
+                          XND_GUARD_ADDR, XND_GUARD_ADDR + XND_GUARD_SIZE);
                 exit(XND_EXIT_FAILURE);
         }
 
@@ -118,7 +138,7 @@ __noreturn int main(int argc, char **argv)
 
         fd = open(argv[1], O_RDONLY);
         if (fd < 0) {
-                xnd_error("open(%s, ...): %s\n", argv[1], strerror(errno));
+                xnd_error("open(%s): %s\n", argv[1], strerror(errno));
                 exit(XND_EXIT_FAILURE);
         }
 
