@@ -76,7 +76,7 @@ int xnd_path_dirname(const char *path, char *out, size_t outlen)
 int xnd_path_basename(const char *path, char *out, size_t outlen)
 {
         char *base, *rslash;
-        
+
         rslash = strrchr(path, '/');
         if (rslash)
                 base = rslash + 1;
@@ -91,83 +91,88 @@ int xnd_path_basename(const char *path, char *out, size_t outlen)
         return 0;
 }
 
-/**
- * file.txt -> file 
+/*
+ * xnd_path_stem:
+ *  Extract filename stem from filename or pathname
  */
-int xnd_path_stem(const char *path, char *out, size_t outlen)
+int xnd_path_stem(char *out, size_t outlen, const char *path)
 {
-        size_t  stemlen;
-        char    *dot;
-        
-        dot = strrchr(path, '.');
-        if (dot)
-                stemlen = dot - path;
-        else
-                stemlen = strlen(path);
+	const char *src;
+	char *dot;
+	size_t len;
 
-        if (outlen < stemlen + 1)
-                return -1;
+	dot = strrchr(path, '.');
+	src = (strrchr(path, '/') ? strrchr(path, '/') + 1 : path);
+	len = (dot != NULL ? dot - src : strlen(src));
 
-        strncpy(out, path, stemlen);
-        out[stemlen] = '\0';
-        return 0;
+	if (len >= outlen)
+		return -1;
+
+	strlcpy(out, src, len + 1);
+	return 0;
 }
 
-/**
- * file.txt -> txt
+/*
+ * xnd_path_ext:
+ *  Extract the extension from a pathname
  */
-int xnd_path_ext(const char *path, char *out, size_t outlen)
+int xnd_path_ext(char *out, size_t outlen, const char *path)
 {
-        char *ext, *dot;
+	char *ext, *dot;
 
-        dot = strrchr(path, '.');
-        if (!dot) {
-                if (!out || !outlen)
-                        return -1;
-                *out = '\0';
-                return 0;
-        }
+	if (out == NULL || outlen == 0)
+		return -1;
 
-        ext = dot + 1;
-        if (outlen < strlen(ext) + 1)
-                return -1;
+	dot = strrchr(path, '.');
+	if (dot == NULL) {
+		*out = '\0';
+		return 0;
+	}
 
-        strncpy(out, ext, strlen(ext));
-        out[strlen(ext)] = '\0';
-        return 0;
+	ext = dot + 1;
+	if (strlcpy(out, ext, outlen) >= outlen)
+		return -1;
+
+	return 0;
 }
 
-/**
- * xnd_path_join('/usr', 'bin/') -> /usr/bin/
+/*
+ * xnd_path_join:
+ *  Concatenate left hand side, l, with right hand side, r, and store
+ *  path string in out.
  */
-int xnd_path_join(char *out, size_t outlen, const char *a, const char *b)
+int xnd_path_join(char *out, size_t outlen, const char *l, const char *r)
 {
-        size_t len;
-        
-        bzero(out, outlen);
-        if (a[strlen(a)] == '/' && b[0] == '/') {
-                len = strlen(a) + strlen(b + 1) + sizeof('\0');
-                if (outlen < len)
-                        return -1;
-                strncpy(out, a, strlen(a));
-                strncpy(out + strlen(a), b + 1, strlen(b) - 1);
-                out[len - 1] = '\0';
-        } else if (a[strlen(a)] == '/' || b[0] == '/') {
-                len = strlen(a) + strlen(b) + sizeof('\0');
-                if (outlen < len)
-                        return -1;
-                strncpy(out, a, strlen(a));
-                strncpy(out + strlen(a), b, strlen(b));
-                out[len - 1] = '\0';
-        } else {
-                len = strlen(a) + sizeof('/') + strlen(b) + sizeof('\0');
-                if (outlen < len)
-                        return -1;
-                strncpy(out, a, strlen(a));
-                out[strlen(a)] = '/';
-                strncat(out, b, strlen(b));
-                out[len - 1] = '\0';
-        }
+	size_t len, llen, rlen;
 
-        return 0;
+	if (l == NULL || r == NULL)
+		return -1;
+
+	llen = strlen(l);
+	rlen = strlen(r);
+
+	if (l[llen - 1] == '/' && r[0] == '/') {
+		/*
+		 * Truncate path delimiter from l when copying l to out,
+		 * then concatenate out with r.
+		 */
+		len = llen - sizeof('/') + rlen + sizeof('\0');
+		if (outlen < len)
+			return -1;
+		strlcpy(out, l, llen);
+	} else if (l[llen - 1] == '/' || r[0] == '/') {
+		len = llen + rlen + sizeof('\0');
+		if (outlen < len)
+			return -1;
+		strlcpy(out, l, llen + 1);
+	} else {
+		len = llen + sizeof('/') + rlen + sizeof('\0');
+		if (outlen < len)
+			return -1;
+		strlcpy(out, l, llen + 1);
+		strlcat(out, "/", len);
+	}
+
+	strlcat(out, r, len);
+	return 0;
 }
