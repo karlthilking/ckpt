@@ -10,6 +10,14 @@
 # define typeof __typeof
 #endif
 
+#ifndef __has_include
+# define __has_include(x) (0)
+#endif
+
+#ifndef __has_builtin
+# define __has_builtin(x) (0)
+#endif
+
 #define min(x, y)                       \
         ({                              \
                 typeof(x) __x = (x);    \
@@ -40,7 +48,7 @@
                 __x > __y ? __x : __y;  \
         })
 
-#define array_len(a) (sizeof(a) / sizeof(a[0]))
+#define ARRAY_SIZE(a) (sizeof(a) / sizeof((a)[0]))
 
 #define concat(a, b) a##b
 

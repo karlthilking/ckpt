@@ -2,6 +2,7 @@
 #include "xnd/xnd.h"
 #include "xnd/util/io.h"
 #include "common/leb128.h"
+#include "common/byte_order.h"
 #include "macho.h"
 #include <errno.h>
 #include <fcntl.h>
@@ -27,21 +28,21 @@ static inline bool fat_is_arm64e(void *fh_addr)
         bool               bswap;
 
         fh = (struct fat_header *)fh_addr;
-        bswap = NEEDS_BSWAP(fh->magic);
         xnd_assert(!HEADER_IS_64BIT(fh->magic));
 
-        nfat_arch = fh->nfat_arch;
-        if (bswap)
-                nfat_arch = __builtin_bswap32(nfat_arch);
+        bswap = NEEDS_BSWAP(fh->magic);
+	nfat_arch = (bswap ? bswap32(fh->nfat_arch) : fh->nfat_arch);
 
         fa = (struct fat_arch *)((uchar *)fh_addr + sizeof(*fh));
         for (u32 idx = 0; idx < nfat_arch; idx++, fa++) {
-                cputype = fa->cputype;
-                subtype = fa->cpusubtype;
-                if (bswap) {
-                        cputype = __builtin_bswap32(cputype);
-                        subtype = __builtin_bswap32(subtype);
-                }
+		if (bswap) {
+			cputype = bswap32(fa->cputype);
+			subtype = bswap32(fa->cpusubtype);
+		} else {
+			cputype = fa->cputype;
+			subtype = fa->cpusubtype;
+		}
+
                 if (cputype != CPU_TYPE_ARM64)
                         continue;
                 else if (CPU_SUBTYPE_IS_ARM64E(subtype))
@@ -53,25 +54,15 @@ static inline bool fat_is_arm64e(void *fh_addr)
 
 static inline bool macho_is_arm64e(void *mh_addr)
 {
-        struct mach_header_64  *mh;
-        s32                    cputype, subtype;
+        struct mach_header_64 *mh;
 
         mh = (struct mach_header_64 *)mh_addr;
-        cputype = mh->cputype;
-        subtype = mh->cpusubtype;
+	xnd_assert(HEADER_IS_64BIT(mh->magic));
 
-        xnd_assert(HEADER_IS_64BIT(mh->magic));
-        if (NEEDS_BSWAP(mh->magic)) {
-                cputype = __builtin_bswap32(cputype);
-                subtype = __builtin_bswap32(subtype);
-        }
+	if (mh->cputype != CPU_TYPE_ARM64)
+		return false;
 
-        if (cputype != CPU_TYPE_ARM64)
-                return false;
-        else if (CPU_SUBTYPE_IS_ARM64E(subtype))
-                return true;
-
-        return false;
+	return CPU_SUBTYPE_IS_ARM64E(mh->cpusubtype);
 }
 
 static inline bool binary_is_arm64e(void *hdr)
@@ -92,54 +83,46 @@ static inline void *fat_arm64e_to_arm64(void *addr)
         struct fat_arch        *fa;
         struct mach_header_64  *mh;
         u32                    nfat_arch, offset;
-        s32                    cputype, subtype;
+        s32                    cputype;
         bool                   bswap;
 
         fh = (struct fat_header *)addr;
-        bswap = NEEDS_BSWAP(fh->magic);
-        xnd_assert(!HEADER_IS_64BIT(fh->magic));
+	xnd_assert(!HEADER_IS_64BIT(fh->magic));
 
-        nfat_arch = fh->nfat_arch;
-        subtype = CPU_SUBTYPE_ARM64_ALL;
-        if (bswap) {
-                nfat_arch = __builtin_bswap32(nfat_arch);
-                subtype = __builtin_bswap32(subtype);
-        }
+	bswap = NEEDS_BSWAP(fh->magic);
+	nfat_arch = (bswap ? bswap32(fh->nfat_arch) : fh->nfat_arch);
 
-        fa = (struct fat_arch *)((uchar *)addr + sizeof(*fh));
-        for (u32 idx = 0; idx < nfat_arch; idx++, fa++) {
-                cputype = fa->cputype;
-                if (bswap)
-                        cputype = __builtin_bswap32(cputype);
-                if (cputype == CPU_TYPE_ARM64)
-                        break;
-        }
+	fa = (struct fat_arch *)((char *)addr + sizeof(*fh));
+	for (u32 idx = 0; idx < nfat_arch; idx++, fa++) {
+		cputype = (bswap ? bswap32(fa->cputype) : fa->cputype);
+		if (cputype == CPU_TYPE_ARM64)
+			break;
+	}
 
-        offset = (bswap ? __builtin_bswap32(fa->offset) : fa->offset);
-        mh = (struct mach_header_64 *)((uchar *)addr + offset);
+	offset = (bswap ? bswap32(fa->offset) : fa->offset);
+	mh = (struct mach_header_64 *)((char *)addr + offset);
+	xnd_assert(HEADER_IS_MACHO(mh->magic));
 
-        xnd_assert(HEADER_IS_MACHO(mh->magic));
         return macho_arm64e_to_arm64((void *)mh);
 }
 
+/*
+ * macho_arm64e_to_arm64:
+ *  Change cpusubtype in mach header of arm64e executable from
+ *  CPU_SUBTYPE_ARM64E to CPU_SUBTYPE_ARM64_ALL to create a temporary
+ *  copy of the executable that will be loaded as arm64.
+ */
 static inline void *macho_arm64e_to_arm64(void *addr)
 {
-        struct mach_header_64  *mh;
-        s32                    cputype, subtype;
+        struct mach_header_64 *mh;
 
         mh = (struct mach_header_64 *)addr;
-        cputype = mh->cputype;
-        subtype = CPU_SUBTYPE_ARM64_ALL;
 
-        xnd_assert(HEADER_IS_64BIT(mh->magic));
-        if (NEEDS_BSWAP(mh->magic)) {
-                cputype = __builtin_bswap32(cputype);
-                subtype = __builtin_bswap32(subtype);
-        }
+	xnd_assert(HEADER_IS_64BIT(mh->magic));
+	xnd_assert(!NEEDS_BSWAP(mh->magic));
+	xnd_assert(mh->cputype == CPU_TYPE_ARM64);
 
-        xnd_assert(cputype == CPU_TYPE_ARM64);
-        mh->cpusubtype = subtype;
-
+        mh->cpusubtype = CPU_SUBTYPE_ARM64_ALL;
         return (void *)mh;
 }
 
@@ -245,7 +228,7 @@ struct load_command *macho_find_load_command(void *mh_addr, u32 cmd)
 
         mh = (struct mach_header *)mh_addr;
         bswap = NEEDS_BSWAP(mh->magic);
-        ncmds = (bswap ? __builtin_bswap32(mh->ncmds) : mh->ncmds);
+        ncmds = (bswap ? bswap32(mh->ncmds) : mh->ncmds);
 
         lc_start = (uintptr_t)mh_addr;
         lc_start += (HEADER_IS_64BIT(mh->magic) ?
@@ -298,13 +281,11 @@ void *macho_thin_from_fat(void *fh_addr, s32 arch)
 
         fh = (struct fat_header *)fh_addr;
         bswap = NEEDS_BSWAP(fh->magic);
-        nfat_arch = (bswap ? __builtin_bswap32(fh->nfat_arch) :
-                     fh->nfat_arch);
+        nfat_arch = (bswap ? bswap32(fh->nfat_arch) : fh->nfat_arch);
 
         fa = (struct fat_arch *)((char *)fh + sizeof(*fh));
         for (u32 idx = 0; idx < nfat_arch; idx++, fa++) {
-                cputype = (bswap ? __builtin_bswap32(fa->cputype) :
-                           fa->cputype);
+                cputype = (bswap ? bswap32(fa->cputype) : fa->cputype);
                 if (cputype == arch) {
                         found = true;
                         break;
@@ -316,6 +297,6 @@ void *macho_thin_from_fat(void *fh_addr, s32 arch)
                 return NULL;
         }
 
-        offset = (bswap ? __builtin_bswap32(fa->offset) : fa->offset);
+        offset = (bswap ? bswap32(fa->offset) : fa->offset);
         return (void *)((char *)fh + offset);
 }

@@ -37,13 +37,6 @@ struct macho_info {
         struct dyld_info_command  *cmd;
 };
 
-struct macho_bind_entry {
-
-};
-
-struct macho_rebase_entry {
-};
-
 #define ARM64E_TO_ARM64_SUCCESS      0
 #define ARM64E_TO_ARM64_FAILURE     -1
 #define ARM64E_TO_ARM64_NOT_ARM64E  -2
