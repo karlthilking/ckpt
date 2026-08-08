@@ -1,7 +1,7 @@
 CC		:= clang
 CXX		:= clang++
 CFLAGS		:= -Wall -g -O2 -arch arm64
-CXXFLAGS	:= -std=c++20 -Wall -g -O0 -arch arm64
+CXXFLAGS	:= -std=c++20 -Wall -g -O2 -arch arm64
 BUILD		:= bin
 
 TESTS := \

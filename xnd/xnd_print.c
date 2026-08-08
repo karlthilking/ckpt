@@ -293,11 +293,11 @@ static int read_ckpt(int fd, struct xnd_ckpt_header *header,
                      struct xnd_vm_region *regions,
                      ucontext_t *uctx)
 {
-        struct xnd_vm_region    *r;
-        int                     retval;
-        off_t                   off;
-        
-        r = regions;
+	int ret;
+	off_t off;
+	ssize_t bread;
+	struct xnd_vm_region *r = &regions[0];
+
         for (u32 i = 0; i < header->entry_count; i++) {
                 if (readall(fd, &entries[i], sizeof(entries[i])) < 0) {
                         xnd_error("Failed to read checkpoint entry!\n");
@@ -306,7 +306,11 @@ static int read_ckpt(int fd, struct xnd_ckpt_header *header,
 
                 switch (entries[i]) {
                 case XND_VM_REGION_ENTRY: {
-                        retval = readall(fd, r, sizeof(struct xnd_vm_region));
+			bread = readall(fd, r, sizeof(*r));
+			if (bread != sizeof(*r)) {
+				xnd_error("Failed to read vm region\n");
+				goto bad;
+			}
                         if (ONLY_RESTORE_DIRTY_PAGES(r)) {
                                 off = sizeof(struct xnd_vm_page);
                                 off += VM_PAGE_SIZE;
@@ -319,16 +323,15 @@ static int read_ckpt(int fd, struct xnd_ckpt_header *header,
                         break;
                 }
                 case XND_UCONTEXT_ENTRY: {
-                        retval = readall(fd, uctx, sizeof(ucontext_t));
+			ret = readall(fd, uctx, sizeof(*uctx));
+			if (ret != sizeof(*uctx)) {
+				xnd_error("Failed to read ucontext\n");
+				goto bad;
+			}
                         break;
                 }
                 default:
                         xnd_abort();
-                }
-
-                if (retval < 0) {
-                        xnd_error("Failed to read checkpoint data!\n");
-                        goto bad;
                 }
         }
 

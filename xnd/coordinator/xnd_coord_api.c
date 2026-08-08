@@ -157,30 +157,28 @@ int send_msg_to_coord(int fd, struct xnd_msg *msg)
 {
         ssize_t bytes;
 
-        xnd_assert(fd != -1);
-        bytes = writeall(fd, msg, sizeof(*msg));
-        if (bytes != sizeof(*msg)) {
-                xnd_error("Failed to send %s\n",
-                          xnd_msghdr_string(msg->hdr));
-                return -1;
-        }
+	if (fd == -1)
+		return -1;
+
+	bytes = writeall(fd, msg, sizeof(*msg));
+	if (bytes != sizeof(*msg))
+		return -1;
 
         return 0;
 }
 
 int recv_msg_from_coord(int fd, struct xnd_msg *msg)
 {
-        ssize_t bytes;
+	ssize_t bytes;
 
-        xnd_assert(fd != -1);
-        bytes = readall(fd, msg, sizeof(*msg));
-        if (bytes != sizeof(*msg)) {
-                xnd_error("Failed to receive %s\n",
-                          xnd_msghdr_string(msg->hdr));
-                return -1;
-        }
+	if (fd == -1)
+		return -1;
 
-        return 0;
+	bytes = readall(fd, msg, sizeof(*msg));
+	if (bytes != sizeof(*msg))
+		return -1;
+
+	return 0;
 }
 
 bool coord_exited(int fd)

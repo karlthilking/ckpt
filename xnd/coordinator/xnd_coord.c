@@ -274,24 +274,22 @@ int coord_send_msg(int fd, struct xnd_msg *msg)
 {
         ssize_t bytes;
 
-        bytes = writeall(fd, msg, sizeof(struct xnd_msg));
-        if (bytes == sizeof(struct xnd_msg)) {
-                return 0;
-        }
+	bytes = writeall(fd, msg, sizeof(*msg));
+	if (bytes != sizeof(*msg))
+		return -1;
 
-        return -1;
+	return 0;
 }
 
 int coord_recv_msg(int fd, struct xnd_msg *msg)
 {
         ssize_t bytes;
 
-        bytes = readall(fd, msg, sizeof(struct xnd_msg));
-        if (bytes == sizeof(struct xnd_msg)) {
-                return 0;
-        }
+	bytes = readall(fd, msg, sizeof(*msg));
+	if (bytes != sizeof(*msg))
+		return -1;
 
-        return -1;
+	return 0;
 }
 
 int coord_release_barrier(enum coord_barrier_type type)

@@ -84,9 +84,8 @@ int main(int argc, char *argv[])
         int fd, ret;
         struct stat st = {0};
 
-        if (argc < 2) {
+        if (argc < 2)
                 usage_and_exit(-1);
-        }
 
         argv++;
         argc--;
@@ -109,7 +108,7 @@ int main(int argc, char *argv[])
                         argc--;
                 } else if (ARG_PROT(argv[0])) {
                         if (set_seg_prot(argv[1]) < 0) {
-                                printf("Bad vm prot: %s\n", argv[1]);
+                                printf("Bad prot value: %s\n", argv[1]);
                                 exit(-1);
                         }
                         argv++; argv++;
@@ -292,7 +291,7 @@ static int segcreate(void)
                 .flags = S_ZEROFILL,
                 .reserved1 = 0,
                 .reserved2 = 0,
-                .reserved3 = 0,
+                .reserved3 = 0
         };
 
         seg.cmdsize = sizeof(seg) + sizeof(sect);
@@ -334,7 +333,8 @@ static int segedit(void)
                         continue;
 
                 seg = (struct segment_command_64 *)lc;
-                if (strncmp(seg->segname, segname, 16) == 0) {
+		if (strncmp(seg->segname, segname,
+			    sizeof(seg->segname)) == 0) {
                         found = true;
                         break;
                 }
@@ -365,13 +365,13 @@ static int segedit(void)
 
 static int set_seg_prot(const char *prot_str)
 {
-        if (strlen(prot_str) != 7 || prot_str[3] != '/')
-                return -1;
+	if (strlen(prot_str) != 7 || prot_str[3] != '/')
+		return -1;
 
         initprot = ((prot_str[0] == 'r' ? VM_PROT_READ : 0) |
                     (prot_str[1] == 'w' ? VM_PROT_WRITE : 0) |
                     (prot_str[2] == 'x' ? VM_PROT_EXECUTE : 0));
-        
+
         maxprot = ((prot_str[4] == 'r' ? VM_PROT_READ : 0) |
                    (prot_str[5] == 'w' ? VM_PROT_WRITE : 0) |
                    (prot_str[6] == 'x' ? VM_PROT_EXECUTE : 0));

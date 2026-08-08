@@ -14,59 +14,48 @@
 #include <time.h>
 #include <limits.h>
 
+static int log_fd = -1;
 static int log_level = XND_DEFAULT_LOG_LEVEL;
-static int level_to_fd[] = { 
-        XND_ERROR_FD, XND_WARN_FD, XND_DEBUG_FD, XND_TRACE_FD
-};
 
 void xnd_log_setup(void)
 {
-        char    *level_str;
-        int     level;
-        
-        level_str = getenv("XND_LOG_LEVEL");
-        if (level_str) {
-                level = min(atoi(level_str), XND_MAX_LOG_LEVEL);
-        } else {
-                level = XND_DEFAULT_LOG_LEVEL;
-        }
-        
-        xnd_log_setup_direct(level);
+	int fd;
+	char *level_str;
+
+	level_str = getenv("XND_LOG_LEVEL");
+	if (level_str != NULL) {
+		log_level = min(atoi(level_str), XND_MAX_LOG_LEVEL);
+	}
+
+	if (log_level < XND_TRACING) {
+		return;
+	}
+
+	fd = open("xnd.log", O_WRONLY | O_CREAT, O_APPEND, 0666);
+	if (fd != -1) {
+		log_fd = dup2(fd, XND_TRACE_FD);
+		close(fd);
+	}
+
+	if (log_fd != -1) {
+		dprintf(log_fd,
+			"+------------------------------+\n"
+			"| Start of log entry (pid: %d) |\n"
+			"+------------------------------+\n",
+			_real_getpid());
+	}
 }
 
 void xnd_log_cleanup(void)
 {
-        for (uint l = 0; l <= log_level; l++) {
-                if (l == XND_TRACING) {
-                        dprintf(XND_TRACE_FD, "[end of log entry]\n");
-                }
-                close(level_to_fd[l]);
-        }
-}
-
-void xnd_log_setup_direct(int level)
-{
-        int     logfd;
-        char    buf[PATH_MAX], path[PATH_MAX];
-        u32     size = sizeof(buf);
-        
-        log_level = level;
-        for (int l = 0; l <= min(log_level, XND_DEBUGGING); l++)
-                dup2(STDERR_FILENO, level_to_fd[l]);
-        
-        if (log_level < XND_TRACING) {
-                return;
-        }
-
-        logfd = open("xnd.log", O_WRONLY | O_CREAT | O_APPEND, 0666);
-        if (logfd != -1) {
-                xnd_assert(dup2(logfd, XND_TRACE_FD) == XND_TRACE_FD);
-                close(logfd);
-        }
-        
-        _NSGetExecutablePath(buf, &size);
-        xnd_path_basename(buf, path, sizeof(path));
-        xnd_trace("%s Log (%ld):\n", path, (long)time(NULL));
+	if (log_level >= XND_TRACING && log_fd != -1) {
+		dprintf(log_fd,
+			"+------------------------------+\n"
+			"|  End of log entry (pid: %d)  |\n"
+			"+------------------------------+\n",
+			_real_getpid());
+		close(log_fd);
+	}
 }
 
 void xnd_log_shared_cache_info(void)
@@ -79,8 +68,8 @@ void xnd_log_shared_cache_info(void)
         base = _dyld_get_shared_cache_range(&size);
 
         xnd_trace("dyld shared cache info:\n"
-                  "\tDYLD_SHARED_REGION=%s\n"
-                  "\tdyld shared cache range: %p-%p %zu\n",
+                  "      DYLD_SHARED_REGION=%s\n"
+                  " dyld shared cache range: %p-%p %zu\n",
                   dyld_env, base, base + size, size);
 }
 
@@ -88,7 +77,7 @@ void xnd_log_ckpt_thread_info(struct thread_info *ckpt_thread)
 {
         uintptr_t       tls, thread_self;
         mach_port_t     port;
-        
+
         thread_self = (uintptr_t)ckpt_thread->self;
         tls = thread_self + PTHREAD_T_TLS_OFFSET;
         port = (mach_port_t)(uintptr_t)((void **)tls)[__TSD_MACH_THREAD_SELF];
@@ -127,15 +116,15 @@ extern mach_port_t host_self_trap(void);
 void xnd_log_mach_port_info(void)
 {
         xnd_trace("Mach port info:\n"
-                  "\tmach_task_self(): %u\n"
-                  "\ttask_self_trap(): %u\n"
-                  "\tmach_task_self_: %u\n"
-                  "\t\n"
-                  "\tmach_host_self(): %u\n"
-                  "\thost_self_trap(): %u\n"
-                  "\t\n"
-                  "\tmach_thread_self(): %u\n"
-                  "\tthread_self_trap(): %u\n",
+                  " mach_task_self(): %u\n"
+                  " task_self_trap(): %u\n"
+                  " mach_task_self_: %u\n"
+                  "\n"
+                  " mach_host_self(): %u\n"
+                  " host_self_trap(): %u\n"
+                  "\n"
+                  " mach_thread_self(): %u\n"
+                  " thread_self_trap(): %u\n",
                   mach_task_self(), task_self_trap(), mach_task_self_,
                   mach_host_self(), host_self_trap(),
                   mach_thread_self(), thread_self_trap());

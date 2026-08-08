@@ -52,7 +52,7 @@ CONFIG = {
     },
     "spectral_pde": {
         "name": "Spectral PDE",
-        "path": "python3",
+        "path": "/usr/bin/python3",
         "input": None,
         "args": [str(CWD / "05_spectral_pde.py")],
     },
@@ -99,16 +99,13 @@ def display():
 
 def prepare_test(test_id: str):
     if not os.path.exists(CONFIG[test_id]["path"]):
-        os.system(f"cd {CWD} && make -j8")
+        os.system(f"cd {CWD} && make --quiet -j8")
     if test_id == "openssl_enc" and not OPENSSL_INPUT.exists():
         INPUTS.mkdir(parents=True, exist_ok=True)
         os.system(f"dd if=/dev/urandom of={OPENSSL_INPUT} "
                   f"bs=1m count={OPENSSL_INPUT_MB} 2>/dev/null")
 
 def cleanup_test(test_id: str):
-    path = CONFIG[test_id]["path"]
-    if os.path.exists(path) and str(CWD) in path:
-        os.system(f"cd {CWD} && make clean")
     if test_id == "openssl_enc" and OPENSSL_INPUT.exists():
         os.system(f"rm -f {OPENSSL_INPUT}")
 
@@ -153,7 +150,7 @@ def get_xnd_executables() -> Dict[str, str]:
 
     paths = [str(xnd_root + "/" + name) for name in XND_EXECUTABLES]
     if not all(os.path.exists(p) for p in paths):
-        os.system(f"cd {xnd_root} && make -j8")
+        os.system(f"cd {xnd_root} && make --quiet -j8")
 
     for name in XND_EXECUTABLES:
         path = xnd_root + "/" + name

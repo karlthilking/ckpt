@@ -6,7 +6,7 @@
 *.ckpt
 *~
 \#*\#
-.#*
+.\#*
 tmp/
 build/
 xnd_run

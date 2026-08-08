@@ -117,11 +117,11 @@ __noreturn int main(int argc, char **argv)
         }
 
         ubc_addr = ckpt_vm_find_ubc_region(&ubc_size);
-        if (ubc_addr && ubc_addr < DYLD_SHARED_CACHE_BASE) {
-                xnd_assert(ubc_addr >= PAGEZERO_END);
-                xnd_error("UBC region at fatal address: "
-                          "0x%016llx-0x%016llx %llu\n",
-                          ubc_addr, ubc_addr + ubc_size, ubc_size);
+	if (ubc_addr > 0 && ubc_addr < DYLD_SHARED_CACHE_BASE) {
+		xnd_assert(ubc_addr >= PAGEZERO_END);
+		xnd_error("UBC region at fatal address: "
+			  "0x%016llx-0x%016llx %llu\n",
+			  ubc_addr, ubc_addr + ubc_size, ubc_size);
                 exit(XND_EXIT_FAILURE);
         }
 
@@ -130,11 +130,6 @@ __noreturn int main(int argc, char **argv)
                           XND_GUARD_ADDR, XND_GUARD_ADDR + XND_GUARD_SIZE);
                 exit(XND_EXIT_FAILURE);
         }
-
-#if DEVELOPMENT || DEBUG
-        xnd_log_mach_port_info();
-        xnd_log_shared_cache_info();
-#endif
 
         fd = open(argv[1], O_RDONLY);
         if (fd < 0) {

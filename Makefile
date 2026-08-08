@@ -63,11 +63,9 @@ XND_RESTART_INTERNAL_SOURCES := \
         xnd/vm_common.c \
         xnd/vm_restore.c \
         xnd/readckpt.c \
-        xnd/ckptfile.c \
         xnd/shared_cache.c \
         xnd/util/log.c \
         xnd/util/path.c \
-        xnd/util/io.c \
         xnd/platform/ucontext/setcontext.c \
         xnd/platform/ucontext/_setcontext.s
 
@@ -137,7 +135,8 @@ ALL := \
         $(BUILD)/xnd_command \
         $(BUILD)/xnd_coordinator \
         $(BUILD)/libxnd.dylib \
-	$(BUILD)/xnd_macho_parse
+	$(BUILD)/xnd_macho_parse \
+	$(BUILD)/segpatch
 
 all: $(ALL)
 
@@ -165,9 +164,11 @@ $(BUILD)/%.o: %.cpp | $(BUILD)
 $(BUILD)/%.o: %.s | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD)/libxnd.dylib: $(LIBXND_OBJECTS) | $(BUILD)
-	$(CXX) $(CXXFLAGS) -dynamiclib -fPIC -lz -o $@ $^
-	dsymutil $@
+$(BUILD)/vm_checkpoint.o: vm_checkpoint.c | $(BUILD)
+	$(CC) $(CFLAGS) \
+	-DXND_RESTART_BASE=$(RESTART_TEXT)ULL \
+	-DXND_RESTART_END=$(RESTART_STACK_TOP)ULL \
+	-c $< -o $@
 
 # If changes to xnd_restart_internal.c or any of the other compilation
 # units it links against force one of xnd_restart_internal's segments
@@ -175,7 +176,7 @@ $(BUILD)/libxnd.dylib: $(LIBXND_OBJECTS) | $(BUILD)
 # flags reserve enough space for each segment.
 # (otool -lv xnd_restart_internal and look at vmsize of each segment)
 
-RESTART_TEXT_SIZE := 0xc000
+RESTART_TEXT_SIZE := 0x8000
 RESTART_TEXT := 0x500000000000
 
 RESTART_DATA_SIZE := 0x4000
@@ -208,16 +209,40 @@ RESTART_STACK_BOTTOM := $(DYLD_END)
 RESTART_STACK_TOP := $(shell printf "0x%X" \
 	$$(( $(RESTART_STACK_BOTTOM)+$(RESTART_STACK_SIZE) )))
 
-$(BUILD)/xnd_restart_internal: $(XND_RESTART_INTERNAL_SOURCES) | $(BUILD)
-	$(CC) $(CFLAGS) -fno-stack-protector \
-	-DXND_RESTART_STACK=$(RESTART_STACK_BOTTOM) \
-	-DXND_RESTART_STACK_SIZE=$(RESTART_STACK_SIZE) \
+GUARD_ADDR := 0x100000000
+GUARD_SIZE := 0x7b500000
+GUARD_PROT := ---
+GUARD_MAXPROT := rwx
+
+RESTART_DEFS := \
+	-DXND_RESTART_STACK=$(RESTART_STACK_BOTTOM)ULL \
+	-DXND_RESTART_STACK_SIZE=$(RESTART_STACK_SIZE)ULL \
+	-DXND_RESTART_TEXT=$(RESTART_TEXT)ULL \
+	-DXND_RESTART_TEXT_SIZE=$(RESTART_TEXT_SIZE)ULL \
+	-DXND_RESTART_DATA=$(RESTART_DATA)ULL \
+	-DXND_RESTART_DATA_SIZE=$(RESTART_DATA_SIZE)ULL \
+	-DXND_RESTART_DATA_CONST=$(RESTART_DATA_CONST)ULL \
+	-DXND_RESTART_DATA_CONST_SIZE=$(RESTART_DATA_CONST_SIZE)ULL \
+	-DXND_RESTART_LINKEDIT=$(RESTART_LINKEDIT)ULL \
+	-DXND_RESTART_LINKEDIT_SIZE=$(RESTART_LINKEDIT_SIZE)ULL \
+	-DXND_GUARD_ADDR=$(GUARD_ADDR)ULL \
+	-DXND_GUARD_SIZE=$(GUARD_SIZE)ULL
+
+$(BUILD)/xnd_restart_internal: $(XND_RESTART_INTERNAL_SOURCES) | $(BUILD)/segpatch
+	$(CC) $(CFLAGS) -fno-stack-protector $(RESTART_DEFS) \
 	-Wl,-segaddr,__TEXT,$(RESTART_TEXT) \
 	-Wl,-segaddr,__DATA,$(RESTART_DATA) \
 	-Wl,-segaddr,__DATA_CONST,$(RESTART_DATA_CONST) \
 	-Wl,-segaddr,__LINKEDIT,$(RESTART_LINKEDIT) \
-	-Wl,-ld_classic \
-	-o $@ $^
+	-Wl,-ld_classic -o $@ $^
+	$(BUILD)/segpatch $(BUILD)/xnd_restart_internal \
+	--vmaddr $(GUARD_ADDR) --vmsize $(GUARD_SIZE) \
+	--segname __XND --sectname __xnd \
+        --prot $(GUARD_PROT)/$(GUARD_MAXPROT)
+
+$(BUILD)/libxnd.dylib: $(LIBXND_OBJECTS) | $(BUILD)
+	$(CXX) $(CXXFLAGS) -dynamiclib -fPIC -lz -o $@ $^
+	dsymutil $@
 
 $(BUILD)/xnd_restart: $(XND_RESTART_OBJECTS) | $(BUILD)
 	$(CXX) $(CXXFLAGS) -lz -o $@ $^
@@ -242,6 +267,9 @@ $(BUILD)/xnd_coordinator: $(XND_COORD_OBJECTS) | $(BUILD)
 $(BUILD)/xnd_macho_parse: $(XND_MACHO_PARSE_OBJECTS) | $(BUILD)
 	$(CC) $(CFLAGS) -o $@ $^
 	dsymutil $@
+
+$(BUILD)/segpatch: xnd/segpatch.c | $(BUILD)
+	$(CC) $(CFLAGS) -o $@ $<
 
 test:	
 	$(MAKE) -C test all

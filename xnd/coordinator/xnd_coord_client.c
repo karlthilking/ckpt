@@ -6,30 +6,31 @@
 #include "xnd/pid/pid_table.h"
 #include "xnd_coord_api.h"
 #include "xnd_coord_client.h"
+#include <sys/socket.h>
 #include <stdlib.h>
 #include <string.h>
 #include <pthread.h>
 #include <errno.h>
 #include <uuid/uuid.h>
 
-extern pid_t    _virt_pid;
-extern pid_t    _virt_ppid;
-extern pid_t    _real_pid;
-extern pid_t    _real_ppid;
+extern pid_t _virt_pid;
+extern pid_t _virt_ppid;
+extern pid_t _real_pid;
+extern pid_t _real_ppid;
 
-extern uuid_t   xnd_uuid;
-extern u32      xnd_pid;
-extern u32      xnd_ppid;
-extern u32      xnd_pgid;
+extern u32 xnd_pid;
+extern u32 xnd_ppid;
+extern u32 xnd_pgid;
+extern uuid_t xnd_uuid;
 
-extern u64      epoch;
-extern u32      num_peers;
-extern bool     is_root_of_tree;
+extern u64 epoch;
+extern u32 num_peers;
+extern bool is_root_of_tree;
 
-static int              coord_fd        = -1;
-static int              child_coord_fd  = -1;
-static int              oob_fd          = -1;
-static pthread_mutex_t  oob_mutex       = PTHREAD_MUTEX_INITIALIZER;
+static int coord_fd = -1;
+static int child_coord_fd = -1;
+static int oob_fd = -1;
+static pthread_mutex_t oob_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 void send_recv_coord_handshake(enum xnd_msghdr hdr)
 {
@@ -172,23 +173,33 @@ void notify_coord_of_exit(pid_t pid)
 
 void disconnect_from_coord(void)
 {
-        struct xnd_msg msg;
+	int err, fd;
+        struct xnd_msg msg = {0};
 
         msg.hdr = XND_EXIT;
         msg.real_pid = _real_pid;
         xnd_assert(_real_pid == _real_getpid());
 
+	err = send_msg_to_coord(coord_fd, &msg);
+	if (err != 0)
+		xnd_warn("Failed to send XND_EXIT to coordinator\n");
+
         if (send_msg_to_coord(coord_fd, &msg) != 0) {
                 xnd_warn("Failed to send XND_EXIT to coordinator\n");
         }
 
-        if (close(coord_fd) != 0) {
-                xnd_warn("close: %s\n", strerror(errno));
-        }
+	xnd_assert(shutdown(coord_fd, SHUT_RDWR) == 0);
+	fd = coord_fd;
+	*(volatile int *)&coord_fd = -1;
+	if (close(fd) != 0)
+		xnd_perror("close(coord_fd)");
 
-        if (oob_fd != -1 && close(oob_fd) != 0) {
-                xnd_warn("close: %s\n", strerror(errno));
-        }
+	if (oob_fd != -1) {
+		fd = oob_fd;
+		*(volatile int *)&oob_fd = -1;
+		if (close(fd) != 0)
+			xnd_perror("close(oob_fd)");
+	}
 }
 
 void coord_client_atfork_prepare(void)
@@ -323,28 +334,31 @@ void coord_client_atfork_failed(void)
 
 int wait_for_ckpt_request_from_coord(void)
 {
-        struct xnd_msg  msg = {0};
-        int             err;
+	int err, fd;
+        struct xnd_msg msg = {0};
 
-        xnd_assert(coord_fd != -1);
-        for (;;) {
-                err = recv_msg_from_coord(coord_fd, &msg);
-                if (err == 0) {
-                        break;
-                } else if (coord_exited(coord_fd)) {
-                        return -1;
-                } else if ((err = coord_socket_status(coord_fd)) != 0) {
-                        xnd_error("Coordinator socket error: %s\n",
-                                  strerror(err));
-                        return -1;
-                }
-        }
+	err = recv_msg_from_coord(coord_fd, &msg);
+	if (err != 0) {
+		/*
+		 * If user thread called exit(), the socket to the
+		 * coordinator would have been closed in xnd_cleanup().
+		 * Don't treat this as an error, as we are preparing
+		 * to exit regardless.
+		 */
+		fd = *(volatile int *)&coord_fd;
+		if (fd == -1) {
+			usleep(1000);
+			return -1;
+		}
+		xnd_error("Failed to receive checkpoint request\n");
+		return -1;
+	}
 
-        if (msg.hdr != XND_CKPT_REQUEST) {
-                xnd_error("Unexpected coordinator response: %s\n",
-                          xnd_msghdr_string(msg.hdr));
-                return -1;
-        }
+	if (msg.hdr != XND_CKPT_REQUEST) {
+		xnd_error("Unexpected coordinator message: %s\n",
+			  xnd_msghdr_string(msg.hdr));
+		return -1;
+	}
 
         return 0;
 }

@@ -467,11 +467,12 @@ __noreturn void ckpt_thread_exit(void)
 
 void ckpt_thread_wait(void)
 {
-        if (wait_for_ckpt_request_from_coord() != 0) {
-                ckpt_thread_exit();
-        }
+	if (wait_for_ckpt_request_from_coord() != 0) {
+		ckpt_thread_exit();
+		unreachable();
+	}
 
-        set_xnd_state(XND_CKPT_PENDING);
+	set_xnd_state(XND_CKPT_PENDING);
 }
 
 void *ckpt_thread_work(void *wait)

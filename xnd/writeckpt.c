@@ -18,41 +18,43 @@
 extern u64 epoch;
 extern u32 xnd_pid;
 
-int write_vm_page(int fd, struct xnd_vm_region *region,
-                  struct xnd_vm_page *page)
+static inline int write_vm_page(int fd, struct xnd_vm_region *region,
+                                struct xnd_vm_page *page)
 {
-        ssize_t bytes;
-        void    *addr;
+	void *addr;
+	ssize_t bytes;
 
 	bytes = writeall(fd, page, sizeof(*page));
 	if (bytes != sizeof(*page))
 		return -1;
 
-        addr = region->start + page->offset;
-        bytes = writeall(fd, addr, VM_PAGE_SIZE);
-        if (bytes != VM_PAGE_SIZE) {
-                xnd_error("Failed to write vm page (%p-%p %s/%s)\n",
-                          region->start + page->offset,
-                          region->start + page->offset + VM_PAGE_SIZE,
-                          VM_PROT_STRING(region->prot),
-                          VM_PROT_STRING(region->max_prot));
-                return -1;
-        }
+	addr = region->start + page->offset;
+	bytes = writeall(fd, addr, VM_PAGE_SIZE);
+	if (bytes != VM_PAGE_SIZE) {
+		xnd_error("Failed to write vm page: %s\n",
+			  vm_page_string(region, page));
+		return -1;
+	}
 
         return 0;
 }
 
-int write_vm_region_pages(int fd, struct xnd_vm_region *region)
+static int write_vm_region_dirty(int fd, struct xnd_vm_region *region)
 {
-        kern_return_t           kr;
-        mach_vm_address_t       addr;
-        mach_vm_size_t          size;
-        size_t                  vec_len, idx;
-        ssize_t                 bytes;
-        uint                    dirty;
+	kern_return_t kr;
+	uint dirty;
+	ssize_t bytes;
+	size_t vec_len, idx;
+	mach_vm_size_t size;
+	mach_vm_address_t addr;
 
         addr = (mach_vm_address_t)region->start;
         size = (mach_vm_size_t)region->size;
+
+	if (region->prot == (VM_PROT_READ | VM_PROT_EXECUTE)) {
+		xnd_warn("Dirty page region is executable: %s\n",
+			 vm_region_string(region));
+	}
 
         xnd_assert((region->size % VM_PAGE_SIZE) == 0);
         vec_len = region->size / VM_PAGE_SIZE;
@@ -68,11 +70,10 @@ int write_vm_region_pages(int fd, struct xnd_vm_region *region)
         }
 
         xnd_assert(vec_len == region->size / VM_PAGE_SIZE);
-        for (idx = 0, dirty = 0; idx < vec_len; idx++) {
-                if (vec[idx] & VM_PAGE_QUERY_PAGE_DIRTY) {
-                        dirty++;
-                }
-        }
+	for (idx = 0, dirty = 0; idx < vec_len; idx++) {
+		if ((vec[idx] & VM_PAGE_QUERY_PAGE_DIRTY) != 0)
+			dirty++;
+	}
 
         region->pages_dirtied = dirty;
 	bytes = writeall(fd, region, sizeof(*region));
@@ -85,63 +86,129 @@ int write_vm_region_pages(int fd, struct xnd_vm_region *region)
                         xnd_assert(idx >= dirty);
                         break;
                 }
-                if (vec[idx] & VM_PAGE_QUERY_PAGE_DIRTY) {
-                        pg->offset = idx * VM_PAGE_SIZE;
-                        if (write_vm_page(fd, region, pg) != 0) {
-                                return -1;
-                        }
-                        pg++;
-                }
+		if ((vec[idx] & VM_PAGE_QUERY_PAGE_DIRTY) != 0) {
+			pg->offset = idx * VM_PAGE_SIZE;
+			if (write_vm_page(fd, region, pg) != 0)
+				return -1;
+			pg++;
+		}
         }
 
         xnd_assert(pg == pages + dirty);
         return 0;
 }
 
+/*
+ * write_vm_region_all_pages:
+ *  Attempt to write region contents one page at a time.
+ */
+static int write_vm_region_all_pages(int fd, struct xnd_vm_region *region)
+{
+	int p;
+	off_t ret, seek;
+	ssize_t bytes;
+
+	seek = lseek(fd, 0, SEEK_CUR);
+	xnd_assert(seek != -1);
+
+	for (p = 0; p < region->size / VM_PAGE_SIZE; p++) {
+		char *addr = (char *)region->start + p * VM_PAGE_SIZE;
+		bytes = writeall(fd, addr, VM_PAGE_SIZE);
+		if (bytes != VM_PAGE_SIZE) {
+			/*
+			 * If the failed write was a partial write, seek
+			 * backwards to the old file offset so the partial
+			 * write can be ignored.
+			 */
+			if (bytes != 0) {
+				ret = lseek(fd, seek - bytes, SEEK_SET);
+				xnd_assert(ret != -1);
+			}
+			break;
+		}
+		seek += VM_PAGE_SIZE;
+	}
+
+	return p;
+}
+
 int write_vm_region(int fd, struct xnd_vm_region *region)
 {
-        ssize_t bytes;
+	off_t before, after;
+	int pages;
+	ssize_t bytes;
+	bool read_protect;
 
-        if (ONLY_SAVE_DIRTY_PAGES(region)) {
-                xnd_assert(region->prot & VM_PROT_READ);
-                xnd_assert(region->prot != (VM_PROT_READ | VM_PROT_EXECUTE));
-                return write_vm_region_pages(fd, region);
-        }
+	/*
+	 * Only save dirty pages for shared cache regions, malloc
+	 * arenas, etc.
+	 */
+	if (ONLY_SAVE_DIRTY_PAGES(region))
+		return write_vm_region_dirty(fd, region);
+
+	/*
+	 * Save current position to manipulate region fields later
+	 * on if necessary
+	 */
+	before = lseek(fd, 0, SEEK_CUR);
+	xnd_assert(before != -1);
 
 	bytes = writeall(fd, region, sizeof(*region));
 	if (bytes != sizeof(*region)) {
-                xnd_error("Failed to write region info\n");
-                return -1;
-        }
+		xnd_error("Failed to write region info\n");
+		return -1;
+	}
 
-        /**
-         * Write vm region contents. If the region has no protection
-         * bits, temporarily grant read permission in order to save
-         * the contents of the region to the checkpoint file.
-         */
-        if (region->prot == VM_PROT_NONE &&
-            ckpt_vm_protect(region, false, VM_PROT_READ) < 0) {
-                xnd_error("Failed to get read protect vm region\n"
-                          "(%p-%p %zu %s/%s)\n",
-                          region->start, region->start + region->size,
-                          region->size, VM_PROT_STRING(region->prot),
-                          VM_PROT_STRING(region->max_prot));
-                return -1;
-        }
+	/*
+	 * Obtain read permissions for region if not currently readable.
+	 */
+	read_protect = ((region->prot & VM_PROT_READ) == 0);
+	if (read_protect) {
+		vm_prot_t prot = region->prot | VM_PROT_READ;
+		if (ckpt_vm_protect(region, false, prot) != 0) {
+			xnd_error("Failed to read protect region: %s\n",
+				  vm_region_string(region));
+			return -1;
+		}
+	}
 
-        bytes = writeall(fd, region->start, region->size);
-        if (bytes != region->size) {
-               xnd_error("Failed to write vm region contents\n"
-                         "(%p-%p %zu %s/%s)\n",
-                         region->start, region->start + region->size,
-                         region->size, VM_PROT_STRING(region->prot),
-                         VM_PROT_STRING(region->max_prot));
-                return -1;
-        }
+	pages = write_vm_region_all_pages(fd, region);
+	if (pages == region->size / VM_PAGE_SIZE)
+		goto out;
 
-        if (region->prot == VM_PROT_NONE &&
-            ckpt_vm_protect(region, false, VM_PROT_NONE) < 0) {
-                xnd_warn("Failed to restore region protections\n");
+	/*
+	 * If only some pages could be written successfully, correct
+	 * the region's size to reflect how many bytes could be written.
+	 *
+	 * Restore old file offset and rewrite region structure to
+	 * reflect the dynamic adjustment for failed/partial page writes.
+	 */
+	after = lseek(fd, 0, SEEK_CUR);
+	xnd_assert(after != -1);
+	if (lseek(fd, before, SEEK_SET) < 0) {
+		xnd_perror("lseek");
+		return -1;
+	}
+
+	region->size = pages * VM_PAGE_SIZE;
+	bytes = writeall(fd, region, sizeof(*region));
+	if (bytes != sizeof(*region)) {
+		xnd_error("Failed to update region size: %s\n",
+			  vm_region_string(region));
+		return -1;
+	}
+
+	if (lseek(fd, after, SEEK_SET) < 0) {
+		xnd_perror("lseek");
+		return -1;
+	}
+
+out:
+        if (read_protect) {
+		if (ckpt_vm_protect(region, false, region->prot) != 0) {
+			xnd_warn("Failed to restore vm protection: %s\n",
+				 vm_region_string(region));
+		}
         }
 
         return 0;
@@ -160,11 +227,11 @@ int write_ckpt(struct xnd_ckpt_header *header,
                struct xnd_vm_region *regions,
                ucontext_t *uctx)
 {
-        int                     fd = -1, dirfd = -1;
-        char                    ckptfile[XND_CKPTFILE_MAXLEN];
-        struct xnd_vm_region    *rgn = regions;
-        ssize_t                 bytes;
-        bool                    use_zlib;
+	int fd = -1, dirfd = -1;
+	ssize_t bytes;
+	bool use_zlib;
+	char ckptfile[XND_CKPTFILE_MAXLEN];
+	struct xnd_vm_region *region = regions;
 
         use_zlib = env_use_zlib_compression();
         xnd_ckptfile_name(ckptfile, sizeof(ckptfile), xnd_pid);
@@ -180,7 +247,7 @@ int write_ckpt(struct xnd_ckpt_header *header,
                 goto bad;
         }
 
-        bytes = writeall(fd, header, sizeof(struct xnd_ckpt_header));
+	bytes = writeall(fd, header, sizeof(*header));
         if (bytes != sizeof(*header)) {
                 xnd_error("Failed to write checkpoint header\n");
                 goto bad;
@@ -194,17 +261,12 @@ int write_ckpt(struct xnd_ckpt_header *header,
 
                 switch (entries[i]) {
                 case XND_VM_REGION_ENTRY:
-			if (write_vm_region(fd, rgn) != 0) {
-				xnd_error("Failed to write vm region:\n"
-					  "(%p-%p %zu %s/%s)\n",
-					  rgn->start,
-					  rgn->start + rgn->size,
-					  rgn->size,
-					  VM_PROT_STRING(rgn->prot),
-					  VM_PROT_STRING(rgn->max_prot));
+			if (write_vm_region(fd, region) != 0) {
+				xnd_error("Failed to write region: %s\n",
+					  vm_region_string(region));
 				goto bad;
 			}
-                        rgn++;
+                        region++;
                         break;
                 case XND_UCONTEXT_ENTRY:
 			if (write_context(fd, uctx) != 0) {

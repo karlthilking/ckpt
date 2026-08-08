@@ -1,3 +1,0 @@
-/* xnd_macho_parse.c */
-#include "xnd/xnd.h"
-#include "macho.h"

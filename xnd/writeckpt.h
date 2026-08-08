@@ -8,8 +8,6 @@
 
 #include <ucontext.h>
 
-int write_vm_page(int, struct xnd_vm_region *, struct xnd_vm_page *);
-int write_vm_region_pages(int, struct xnd_vm_region *);
 int write_vm_region(int, struct xnd_vm_region *);
 int write_context(int, ucontext_t *);
 int write_ckpt(struct xnd_ckpt_header *, enum xnd_ckpt_entry *,

@@ -256,7 +256,7 @@ int xnd_ckptfile_write_manifest(u32 total, u32 min_xnd_pid, u32 max_xnd_pid,
         int                     dirfd = -1, fd = -1;
         u32                     id, count;
         ssize_t                 bytes;
-        
+
         dirfd = xnd_ckptdir_open(uuid, epoch);
         if (dirfd < 0) {
                 xnd_error("Failed to open checkpoint directory\n");
@@ -268,7 +268,7 @@ int xnd_ckptfile_write_manifest(u32 total, u32 min_xnd_pid, u32 max_xnd_pid,
                 xnd_error("Failed to create checkpoint manifest\n");
                 goto fail;
         }
-        
+
         count = 0;
         for (id = min_xnd_pid; id <= max_xnd_pid; id++) {
                 if (xnd_ckptfile_exists(dirfd, id)) {
@@ -289,7 +289,7 @@ int xnd_ckptfile_write_manifest(u32 total, u32 min_xnd_pid, u32 max_xnd_pid,
                 xnd_error("Failed to write checkpoint manifest\n");
                 goto fail;
         }
-        
+
         close(dirfd);
         close(fd);
         return 0;
@@ -308,17 +308,16 @@ int xnd_ckptfile_extract_manifest(const char *path,
 {
         ssize_t bytes;
         int     fd = -1;
-        
+
         fd = open(path, O_RDONLY);
         if (unlikely(fd < 0)) {
                 xnd_error("open(%s): %s\n", path, strerror(errno));
                 goto fail;
         }
 
-        bytes = readall(fd, manifest, sizeof(struct xnd_manifest));
-        if (bytes != sizeof(struct xnd_manifest)) {
-                goto fail;
-        }
+	bytes = readall(fd, manifest, sizeof(*manifest));
+	if (bytes != sizeof(*manifest))
+		goto fail;
 
         close(fd);
         return 0;
@@ -342,7 +341,7 @@ bool xnd_ckptfile_valid(const struct xnd_ckpt_header *header)
         if (shared_cache_check(&header->shared_cache_info) < 0) {
                 return false;
         }
-        
+
         if (header->entry_count > XND_CKPT_ENTRY_MAX ||
             header->region_count > XND_CKPT_VM_REGION_MAX) {
                 xnd_error("Checkpoint header is corrupted!\n");
@@ -406,8 +405,8 @@ int xnd_ckptfile_name(char *out, size_t outlen, u32 xnd_pid)
 
 int xnd_ckptfile_extract_header(char *path, struct xnd_ckpt_header *hdr)
 {
+	int fd = -1;
         ssize_t bytes;
-        int     fd = -1;
 
         if (fd < 0) {
                 xnd_error("open: %s\n", strerror(errno));
@@ -415,22 +414,20 @@ int xnd_ckptfile_extract_header(char *path, struct xnd_ckpt_header *hdr)
         }
 
         xnd_assert(hdr != NULL);
-        bytes = readall(fd, hdr, sizeof(struct xnd_ckpt_header));
-        if (bytes != sizeof(struct xnd_ckpt_header)) {
-                goto fail;
-        }
+	bytes = readall(fd, hdr, sizeof(*hdr));
+	if (bytes != sizeof(*hdr))
+		goto fail;
 
         if (strcmp(hdr->magic, XND_HEADER_MAGIC)) {
                 xnd_error("Invalid checkpoint image: %s\n", path);
                 goto fail;
         }
-        
+
         close(fd);
         return 0;
 fail:
-        if (fd != -1) {
-                close(fd);
-        }
+	if (fd != -1)
+		close(fd);
         return -1;
 }
 
