@@ -96,6 +96,8 @@ struct xnd_vm_page {
          ((info)->inheritance == RESTART_REGION_INHERIT_FLAG &&         \
           (info)->inheritance == RESTART_REGION_BEHAVIOR_FLAG) ||       \
          ((info)->user_tag == VM_MEMORY_RESTART_STACK))
+#else
+# define RESTART_REGION(info, addr, size) (0)
 #endif
 
 #define IN_VM_RANGE(ptr, start, end) \

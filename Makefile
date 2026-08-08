@@ -226,7 +226,8 @@ RESTART_DEFS := \
 	-DXND_RESTART_LINKEDIT=$(RESTART_LINKEDIT)ULL \
 	-DXND_RESTART_LINKEDIT_SIZE=$(RESTART_LINKEDIT_SIZE)ULL \
 	-DXND_GUARD_ADDR=$(GUARD_ADDR)ULL \
-	-DXND_GUARD_SIZE=$(GUARD_SIZE)ULL
+	-DXND_GUARD_SIZE=$(GUARD_SIZE)ULL \
+	-DDYLD_RESERVE_SIZE=$(DYLD_RESERVE_SIZE)ULL
 
 # This assumes that macOS 15.x.x introduced the Memory Tag 22 region
 # (supposedly for the unified buffer cache) that requires patching

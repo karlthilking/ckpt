@@ -6,14 +6,14 @@
 #include <dlfcn.h>
 #include <errno.h>
 
+extern long __stack_chk_guard;
+extern mach_port_t mach_task_self_;
+extern mach_port_t task_self_trap(void);
+
 static inline int ckpt_vm_map_region(struct xnd_vm_region *);
 static inline int ckpt_vm_refresh(struct xnd_vm_region *);
 static inline int ckpt_vm_restore_pages(int, struct xnd_vm_region *);
 static int ckpt_vm_restore_region_pages(int, struct xnd_vm_region *);
-
-extern mach_port_t      mach_task_self_;
-extern mach_port_t      task_self_trap(void);
-extern uintptr_t        __stack_chk_guard;
 
 static inline int ckpt_vm_mark(mach_vm_address_t addr, mach_vm_size_t size)
 {
@@ -45,6 +45,18 @@ int ckpt_vm_mark_regions(void)
         natural_t depth = 0;
         mach_msg_type_number_t count;
         vm_region_submap_info_data_64_t info;
+	uintptr_t dyld_start, dyld_end;
+
+	/*
+	 * dyld will map itself above xnd_restart_internal, placing its
+	 * memory segments in a hole between the restart binary's image
+	 * and xnd_restart_internal's temporary stack. dyld's memory
+	 * segments should be skipped when marking restart regions to
+	 * prevent a segfault, for example, if a symbol is bound to
+	 * the copy dyld in xnd_restart_internal.
+	 */
+	dyld_start = XND_RESTART_LINKEDIT + XND_RESTART_LINKEDIT_SIZE;
+	dyld_end = dyld_start + DYLD_RESERVE_SIZE;
 
         for (;;) {
                 count = VM_REGION_SUBMAP_INFO_COUNT_64;
@@ -57,14 +69,15 @@ int ckpt_vm_mark_regions(void)
                 else if (info.is_submap)
                         continue;
 
-                if (PAGEZERO(addr, size) ||
-                    DYLD_SHARED_CACHE_REGION(addr, size)) {
-                        addr += size;
-                        continue;
-                }
+		if (PAGEZERO(addr, size) ||
+		    DYLD_SHARED_CACHE_REGION(addr, size) ||
+		    (addr >= dyld_start && addr + size < dyld_end)) {
+			addr += size;
+			continue;
+		}
 
-                if (unlikely(ckpt_vm_mark(addr, size) < 0))
-                        return -1;
+		if (ckpt_vm_mark(addr, size) < 0)
+			return -1;
 
                 addr += size;
         }
