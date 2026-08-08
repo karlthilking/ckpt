@@ -164,12 +164,12 @@ $(BUILD)/%.o: %.cpp | $(BUILD)
 $(BUILD)/%.o: %.s | $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD)/vm_checkpoint.o: vm_checkpoint.c | $(BUILD)
-	$(CC) $(CFLAGS) \
-	-DXND_RESTART_BASE=$(RESTART_TEXT)ULL \
-	-DXND_RESTART_END=$(RESTART_STACK_TOP)ULL \
-	-c $< -o $@
-
+# FIXME: xnd_restart_internal's memory segment sizes can fluctuate
+# with different optimization levels or other compile options.
+# xnd_restart_internal's memory size definitions should be discovered
+# dynamically, or use generous padding to between segments so changes
+# to optimization level won't effect any code assuming a fixed size.
+#
 # If changes to xnd_restart_internal.c or any of the other compilation
 # units it links against force one of xnd_restart_internal's segments
 # to exceed their defined size, update the Make variable so the linker
@@ -228,6 +228,20 @@ RESTART_DEFS := \
 	-DXND_GUARD_ADDR=$(GUARD_ADDR)ULL \
 	-DXND_GUARD_SIZE=$(GUARD_SIZE)ULL
 
+# This assumes that macOS 15.x.x introduced the Memory Tag 22 region
+# (supposedly for the unified buffer cache) that requires patching
+# the restart binary with a guard segment after compiling.
+MACOS_MAJOR := $(shell sw_vers --productVersion | sed s'/\.[0-9]*//g')
+ifeq ($(shell test $(MACOS_MAJOR) -ge 15; echo $$?),0)
+	SEGPATCH_ARGV := \
+		$(BUILD)/segpatch $(BUILD)/xnd_restart_internal \
+		--vmaddr $(GUARD_ADDR) --vmsize $(GUARD_SIZE) \
+		--segname __XND --sectname __xnd \
+		--prot $(GUARD_PROT)/$(GUARD_MAXPROT)
+else
+	SEGPATCH_ARGV :=
+endif
+
 $(BUILD)/xnd_restart_internal: $(XND_RESTART_INTERNAL_SOURCES) | $(BUILD)/segpatch
 	$(CC) $(CFLAGS) -fno-stack-protector $(RESTART_DEFS) \
 	-Wl,-segaddr,__TEXT,$(RESTART_TEXT) \
@@ -235,10 +249,13 @@ $(BUILD)/xnd_restart_internal: $(XND_RESTART_INTERNAL_SOURCES) | $(BUILD)/segpat
 	-Wl,-segaddr,__DATA_CONST,$(RESTART_DATA_CONST) \
 	-Wl,-segaddr,__LINKEDIT,$(RESTART_LINKEDIT) \
 	-Wl,-ld_classic -o $@ $^
-	$(BUILD)/segpatch $(BUILD)/xnd_restart_internal \
-	--vmaddr $(GUARD_ADDR) --vmsize $(GUARD_SIZE) \
-	--segname __XND --sectname __xnd \
-        --prot $(GUARD_PROT)/$(GUARD_MAXPROT)
+	$(SEGPATCH_ARGV)
+
+$(BUILD)/vm_checkpoint.o: vm_checkpoint.c | $(BUILD)
+	$(CC) $(CFLAGS) \
+	-DXND_RESTART_BASE=$(RESTART_TEXT)ULL \
+	-DXND_RESTART_END=$(RESTART_STACK_TOP)ULL \
+	-c $< -o $@
 
 $(BUILD)/libxnd.dylib: $(LIBXND_OBJECTS) | $(BUILD)
 	$(CXX) $(CXXFLAGS) -dynamiclib -fPIC -lz -o $@ $^
