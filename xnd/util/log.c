@@ -31,7 +31,7 @@ void xnd_log_setup(void)
 		return;
 	}
 
-	fd = open("xnd.log", O_WRONLY | O_CREAT, O_APPEND, 0666);
+	fd = open("xnd.log", O_WRONLY | O_CREAT | O_APPEND, 0666);
 	if (fd != -1) {
 		log_fd = dup2(fd, XND_TRACE_FD);
 		close(fd);
