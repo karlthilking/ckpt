@@ -1,10 +1,11 @@
 /* signal.c */
+#include <errno.h>
+#include <signal.h>
+#include <ucontext.h>
+
 #include "xnd/xnd.h"
 #include "xnd/pac.h"
 #include "xnd/platform/signal.h"
-
-#include <signal.h>
-#include <ucontext.h>
 
 __noreturn void __xnd_sigreturn(ucontext_t *uctx, int ctxstyle,
 				uintptr_t token)
@@ -33,33 +34,35 @@ __noreturn void __xnd_sigtramp(union __sigaction_u __sigaction_u,
 int __xnd_sigaction(int sig, const struct sigaction *act,
                     struct sigaction *oact)
 {
-        struct __sigaction      nsv, osv;
-        int                     err;
+	int ret;
+	struct __sigaction nsv, osv;
 
-        if (act) {
-                nsv.sa_mask = act->sa_mask;
-                nsv.sa_flags = act->sa_flags;
-                nsv.sa_flags &= ~SA_VALIDATE_SIGRETURN_FROM_SIGTRAMP;
-                if (act->sa_flags & SA_SIGINFO) {
-                        nsv.sa_sigaction = act->sa_sigaction;
-                } else {
-                        nsv.sa_handler = act->sa_handler;
-                }
-                nsv.sa_tramp = (void *)__xnd_sigtramp;
-                err = __sigaction(sig, &nsv, &osv);
-        } else {
-                err = __sigaction(sig, NULL, &osv);
-        }
+	if (sig <= 0 || sig >= NSIG) {
+		errno = EINVAL;
+		return -1;
+	}
 
-        if (err == 0 && oact) {
-                oact->sa_mask = osv.sa_mask;
-                oact->sa_flags = osv.sa_flags;
-                if (oact->sa_flags & SA_SIGINFO) {
-                        oact->sa_sigaction = osv.sa_sigaction;
-                } else {
-                        oact->sa_handler = osv.sa_handler;
-                }
-        }
+	if (act != NULL && (sig == SIGSTOP || sig == SIGKILL)) {
+		errno = EINVAL;
+		return -1;
+	}
 
-        return err;
+	if (act != NULL) {
+		nsv.sa_mask = act->sa_mask;
+		nsv.sa_flags = act->sa_flags;
+		nsv.sa_flags &= ~SA_VALIDATE_SIGRETURN_FROM_SIGTRAMP;
+		nsv.sa_handler = act->sa_handler;
+		nsv.sa_tramp = (void *)__xnd_sigtramp;
+		ret = __sigaction(sig, &nsv, &osv);
+	} else {
+		ret = __sigaction(sig, NULL, &osv);
+	}
+
+	if (ret == 0 && oact != NULL) {
+		oact->sa_mask = osv.sa_mask;
+		oact->sa_flags = osv.sa_flags;
+		oact->sa_handler = osv.sa_handler;
+	}
+
+        return ret;
 }

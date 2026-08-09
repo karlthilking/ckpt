@@ -17,6 +17,7 @@
 #include <stdio.h>
 #include <err.h>
 
+static int last_ckpt_sig = -1;
 static struct sigaction sa_table[NSIG];
 
 void sig_state_save(void)
@@ -48,6 +49,8 @@ void sig_state_save(void)
                          thread_sighandler, ckpt_sa->sa_sigaction);
                 ckpt_sa->sa_sigaction = thread_sighandler;
         }
+
+	last_ckpt_sig = ckpt_sig;
 }
 
 void sig_state_restore(void)
@@ -55,11 +58,17 @@ void sig_state_restore(void)
         int sig, ckpt_sig;
         struct sigaction *ckpt_sa;
 
-        /**
+        /*
          * Validate checkpoint signal and current signal handler
          * being used for the checkpoint signal
          */
         ckpt_sig = env_get_ckpt_signal();
+	if (ckpt_sig != last_ckpt_sig) {
+		xnd_error("Checkpoint signal changed: %d -> %d\n",
+			  last_ckpt_sig, ckpt_sig);
+		xnd_abort();
+	}
+
         if (ckpt_sig <= 0  || ckpt_sig >= NSIG ||
             ckpt_sig == SIGKILL || ckpt_sig == SIGSTOP) {
                 xnd_error("Illegal checkpoint signal: %d\n", ckpt_sig);

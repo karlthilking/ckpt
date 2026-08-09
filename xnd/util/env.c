@@ -107,23 +107,34 @@ bool env_should_unlink_tmp_binary(void)
         return true;
 }
 
-void env_set_ckpt_signal(char *sig)
+void env_set_ckpt_signal(char *s)
 {
-        xnd_assert(setenv(XND_CKPT_SIGNAL_ENV, sig, 1) == 0);
-        xnd_trace("%s=%s\n", XND_CKPT_SIGNAL_ENV, sig);
+	char buf[11];
+	int sig = atoi(s);
+
+	if (sig <= 0 || sig >= NSIG || sig == SIGKILL || sig == SIGSTOP) {
+		xnd_warn("Checkpoint signal is invalid: %d\n"
+			 "Using default checkpoint signal: %d\n",
+			 sig, XND_DEFAULT_CKPT_SIGNAL);
+		sig = XND_DEFAULT_CKPT_SIGNAL;
+	}
+
+	snprintf(buf, sizeof(buf), "%d", sig);
+	setenv(XND_CKPT_SIGNAL_ENV, buf, 1);
+	xnd_trace("%s=%d\n", XND_CKPT_SIGNAL_ENV, sig);
 }
 
 int env_get_ckpt_signal(void)
 {
-        char            *value;
-        static int      sig = -1;
+	char *value;
+	static int ckpt_sig = -1;
 
-        if (unlikely(sig == -1)) {
-                value = getenv(XND_CKPT_SIGNAL_ENV);
-                sig = (value ? atoi(value) : XND_DEFAULT_CKPT_SIGNAL);
-        }
+	if (unlikely(ckpt_sig == -1)) {
+		value = getenv(XND_CKPT_SIGNAL_ENV);
+		ckpt_sig = (value ? atoi(value) : XND_DEFAULT_CKPT_SIGNAL);
+	}
 
-        return sig;
+	return ckpt_sig;
 }
 
 void env_set_dyld_shared_region_private(void)
