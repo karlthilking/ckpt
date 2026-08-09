@@ -39,7 +39,7 @@
         (TIMEVAL_TO_MSEC(end) - TIMEVAL_TO_MSEC(begin))
 #define TIMEVAL_USEC_DIFF(end, begin) \
 	(TIMEVAL_TO_USEC(end) - TIMEVAL_TO_USEC(begin))
-#define TIMEVAL_NSEC_DOFF(end, begin) \
+#define TIMEVAL_NSEC_DIFF(end, begin) \
 	(TIMEVAL_TO_NSEC(end) - TIMEVAL_TO_NSEC(begin))
 
 #define TIMESPEC_TO_MSEC(tsp) \
