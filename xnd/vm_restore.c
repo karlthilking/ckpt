@@ -30,7 +30,7 @@ static inline int ckpt_vm_mark(mach_vm_address_t addr, mach_vm_size_t size)
                                   RESTART_REGION_BEHAVIOR_FLAG);
         if (kr != KERN_SUCCESS) {
                 xnd_warn("mach_vm_behavior_set: %s\n",
-                         mach_error_string(kr));
+			 mach_error_string(kr));
                 return -1;
         }
 
@@ -45,18 +45,6 @@ int ckpt_vm_mark_regions(void)
         natural_t depth = 0;
         mach_msg_type_number_t count;
         vm_region_submap_info_data_64_t info;
-	uintptr_t dyld_start, dyld_end;
-
-	/*
-	 * dyld will map itself above xnd_restart_internal, placing its
-	 * memory segments in a hole between the restart binary's image
-	 * and xnd_restart_internal's temporary stack. dyld's memory
-	 * segments should be skipped when marking restart regions to
-	 * prevent a segfault, for example, if a symbol is bound to
-	 * the copy dyld in xnd_restart_internal.
-	 */
-	dyld_start = XND_RESTART_LINKEDIT + XND_RESTART_LINKEDIT_SIZE;
-	dyld_end = dyld_start + DYLD_RESERVE_SIZE;
 
         for (;;) {
                 count = VM_REGION_SUBMAP_INFO_COUNT_64;
@@ -70,8 +58,7 @@ int ckpt_vm_mark_regions(void)
                         continue;
 
 		if (PAGEZERO(addr, size) ||
-		    DYLD_SHARED_CACHE_REGION(addr, size) ||
-		    (addr >= dyld_start && addr + size < dyld_end)) {
+		    DYLD_SHARED_CACHE_REGION(addr, size)) {
 			addr += size;
 			continue;
 		}

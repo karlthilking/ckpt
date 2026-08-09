@@ -79,11 +79,10 @@ struct xnd_vm_page {
         ((__info)->share_mode == SM_PRIVATE_ALIASED || \
          (__info)->share_mode == SM_SHARED_ALIASED)
 
-/**
+/*
  * Sentinel user_tag, and behavior and inheritance attributes
  * used to indicate the restart process's own regions so
- * that they will be ignored on checkpoint (or deallocated
- * when the restart phase finishes).
+ * that they will be ignored on checkpoint.
  */
 #define VM_MEMORY_RESTART_STACK (240)
 #define RESTART_REGION_BEHAVIOR_FLAG    VM_BEHAVIOR_RSEQNTL
@@ -94,10 +93,13 @@ struct xnd_vm_page {
         (((uintptr_t)(addr) >= XND_RESTART_BASE &&                      \
           (uintptr_t)(addr) + (uintptr_t)(size) < XND_RESTART_END) ||   \
          ((info)->inheritance == RESTART_REGION_INHERIT_FLAG &&         \
-          (info)->inheritance == RESTART_REGION_BEHAVIOR_FLAG) ||       \
+          (info)->behavior == RESTART_REGION_BEHAVIOR_FLAG) ||		\
          ((info)->user_tag == VM_MEMORY_RESTART_STACK))
 #else
-# define RESTART_REGION(info, addr, size) (0)
+# define RESTART_REGION(info, addr, size)			\
+	(((info)->inheritance == RESTART_REGION_INHERIT_FLAG && \
+	  (info)->behavior == RESTART_REGION_BEHAVIOR_FLAG) ||	\
+	 ((info)->user_tag == VM_MEMORY_RESTART_STACK))
 #endif
 
 #define IN_VM_RANGE(ptr, start, end) \
@@ -179,7 +181,6 @@ int ckpt_vm_remove_xnd_guard(void);
 int ckpt_vm_valid_region(vm_region_submap_info_data_64_t *,
                          mach_vm_address_t, mach_vm_size_t);
 u32 ckpt_vm_save_regions(struct xnd_vm_region *);
-void ckpt_vm_deallocate_regions(void);
 
 int ckpt_vm_protect(struct xnd_vm_region *, bool, vm_prot_t);
 const char *vm_page_string(struct xnd_vm_region *, struct xnd_vm_page *);

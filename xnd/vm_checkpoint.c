@@ -49,7 +49,7 @@ int ckpt_vm_valid_region(vm_region_submap_info_data_64_t *info,
         case VM_MEMORY_OS_ALLOC_ONCE:
                 return 1;
         case VM_KERN_MEMORY_UBC:
-                /**
+                /*
                  * If UBC region address is after the end of the
                  * shared cache, this should be the UBC region from
                  * the restart process that was coerced to mapped outside
@@ -109,48 +109,4 @@ u32 ckpt_vm_save_regions(struct xnd_vm_region *regions)
         }
 
         return region_count;
-}
-
-void ckpt_vm_deallocate_regions(void)
-{
-        kern_return_t                   ret;
-        vm_region_submap_info_data_64_t info;
-        mach_msg_type_number_t          count;
-        mach_vm_address_t               addr    = 0;
-        mach_vm_size_t                  size    = 0;
-        natural_t                       depth   = 0;
-
-        for (;;) {
-                count = VM_REGION_SUBMAP_INFO_COUNT_64;
-                ret = mach_vm_region_recurse(
-                        mach_task_self(), &addr, &size, &depth,
-                        (vm_region_recurse_info_t)&info, &count
-                );
-
-                if (ret != KERN_SUCCESS) {
-                        break;
-                } else if (info.is_submap) {
-                        depth++;
-                        continue;
-                }
-
-                if (!RESTART_REGION(&info, addr, size)) {
-                        addr += size;
-                        continue;
-                }
-
-                /* Only deallocate restart stack and executable segments */
-                if (info.user_tag != VM_MEMORY_RESTART_STACK &&
-                    info.protection != (VM_PROT_READ | VM_PROT_EXECUTE)) {
-                        addr += size;
-                        continue;
-                }
-
-                ret = mach_vm_deallocate(mach_task_self(), addr, size);
-                if (ret != KERN_SUCCESS)
-                        xnd_warn("mach_vm_deallocate: %s\n",
-                                 mach_error_string(ret));
-
-                addr += size;
-        }
 }
