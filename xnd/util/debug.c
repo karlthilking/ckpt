@@ -12,60 +12,61 @@
 #include <limits.h>
 #include <mach-o/dyld.h>
 
-static __always_inline s32 main_image_index(void)
+static inline s32 main_image_index(void)
 {
-        char *program;
+	const char *name = NULL;
+	char *program = env_get_program_name();
 
-        if ((program = env_get_program_name()) == NULL) {
-                xnd_trace("getenv: %s\n", strerror(errno));
-                return -1;
-        }
+	for (s32 i = 0; i < _dyld_image_count(); i++) {
+		name = _dyld_get_image_name(i);
+		if (name == NULL)
+			continue;
+		if (strstr(name, program) || strstr(program, name))
+			return i;
+	}
 
-        for (s32 i = 0; i < _dyld_image_count(); i++) {
-                const char *name = _dyld_get_image_name(i);
-                if (name && strstr(name, program))
-                        return i;
-        }
-
-        return -1;
+	return -1;
 }
 
-static __always_inline s32 libxnd_image_index(void)
+static inline s32 libxnd_image_index(void)
 {
-        for (s32 i = 0; i < _dyld_image_count(); i++) {
-                const char *name = _dyld_get_image_name(i);
-                if (name && strstr(name, "libxnd.dylib"))
-                        return i;
-        }
+	const char *name = NULL;
+	const u32 count = _dyld_image_count();
 
-        return -1;
+	for (s32 i = 0; i < count; i++) {
+		name = _dyld_get_image_name(i);
+		if (name != NULL && strstr(name, "libxnd.dylib"))
+			return i;
+	}
+
+	return -1;
 }
 
 void dump_debug_info(void)
 {
-        intptr_t        image_slide, libxnd_slide;
-        s32             image_idx, libxnd_idx;
-        
-        if ((image_idx = main_image_index()) < 0) {
-                xnd_trace("Failed to generate debug script\n");
-                return;
-        }
+	s32 image_idx, libxnd_idx;
+	intptr_t image_slide = -1, libxnd_slide = -1;
+	const char *image_name = NULL, *libxnd_name = NULL;
 
-        const char *image_path = _dyld_get_image_name(image_idx);
-        image_slide = _dyld_get_image_vmaddr_slide(image_idx);
+	image_idx = main_image_index();
+	if (image_idx != -1) {
+		image_name = _dyld_get_image_name(image_idx);
+		image_slide = _dyld_get_image_vmaddr_slide(image_idx);
+	}
 
-        if ((libxnd_idx = libxnd_image_index()) < 0) {
-                xnd_trace("Failed to generate debug script\n");
-                return;
-        }
+	libxnd_idx = libxnd_image_index();
+	if (libxnd_idx != -1) {
+		libxnd_name = _dyld_get_image_name(libxnd_idx);
+		libxnd_slide = _dyld_get_image_vmaddr_slide(libxnd_idx);
+	}
 
-        const char *libxnd_path = _dyld_get_image_name(libxnd_idx);
-        libxnd_slide = _dyld_get_image_vmaddr_slide(libxnd_idx);
-
-        xnd_trace("Debug info:\n"
-                  "  Main image path:   %s\n"
-                  "  Main image slide:  %lx\n"
-                  "  libxnd path:       %s\n"
-                  "  libxnd slide:      %lx\n",
-                  image_path, image_slide, libxnd_path, libxnd_slide);
+	xnd_trace("Debug info:\n"
+		  " main image index: %d\n"
+		  "  main image name: %s\n"
+		  " main image slide: 0x%lx\n"
+		  "     libxnd index: %d\n"
+		  "      libxnd name: %s\n"
+		  "     libxnd slide: 0x%lx\n",
+		  image_idx, image_name, image_slide,
+		  libxnd_idx, libxnd_name, libxnd_slide);
 }
