@@ -33,6 +33,7 @@ LIBXND_OBJECTS := \
         $(BUILD)/writeckpt.o \
         $(BUILD)/shared_cache.o \
         $(BUILD)/thread_info.o \
+	$(BUILD)/tls.o \
         $(BUILD)/ckptfile.o \
         $(BUILD)/log.o \
         $(BUILD)/path.o \

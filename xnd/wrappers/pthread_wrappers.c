@@ -3,6 +3,8 @@
 #include "xnd/thread_info.h"
 #include "xnd/pac.h"
 #include "xnd/tls.h"
+#include "xnd/interpose.h"
+#include "xnd/util/env.h"
 #include "pthread_wrappers.h"
 
 #include <stdlib.h>
@@ -14,9 +16,9 @@
 #include <time.h>
 #include <signal.h>
 
-static __always_inline pthread_t encode_pthread(struct thread_info *t)
+static __always_inline pthread_t encode_pthread(struct thread_info *th)
 {
-        return (pthread_t)((uintptr_t)t | PTHREAD_MAGIC);
+	return (pthread_t)((uintptr_t)th | PTHREAD_MAGIC);
 }
 
 static __always_inline struct thread_info *decode_pthread(pthread_t p)
@@ -98,18 +100,18 @@ void __pthread_exit_hook(void *value_ptr)
 
 pthread_t __pthread_self_hook(void)
 {
-        struct thread_info *self;
+	struct thread_info *self;
 
-        if (!tlv_ok())
-                return pthread_self();
+	if (xnd_tlv_ok() == false)
+		return pthread_self();
 
-        self = thread_self_or_null();
-        if (!self) {
-                xnd_error("Self thread descriptor is NULL\n");
-                xnd_abort();
-        }
+	self = thread_self_or_null();
+	if (self == NULL) {
+		xnd_error("thread descriptor is NULL\n");
+		xnd_abort();
+	}
 
-        return encode_pthread(self);
+	return encode_pthread(self);
 }
 
 int __pthread_equal_hook(pthread_t p1, pthread_t p2)
@@ -123,31 +125,32 @@ int __pthread_equal_hook(pthread_t p1, pthread_t p2)
 
 int __pthread_kill_hook(pthread_t p, int sig)
 {
-        struct thread_info      *th;
-        int                     err;
+	int err, ckpt_sig;
+	struct thread_info *th;
 
-        if (!validate_pthread(p)) {
-                xnd_warn("Unidentified pthread: 0x%lx\n", (uintptr_t)p);
-                return ESRCH;
-        }
+	if (!validate_pthread(p)) {
+		xnd_warn("pthread is invalid: 0x%lx\n", (uintptr_t)p);
+		return ESRCH;
+	}
 
-        if (sig == SIGUSR1 || sig == SIGUSR2) {
-                xnd_warn("signal %d is reserved\n", sig);
-                return EINVAL;
-        }
+	ckpt_sig = env_get_ckpt_signal();
+	if (sig == ckpt_sig) {
+		xnd_warn("signal %d is reserved\n", ckpt_sig);
+		return EINVAL;
+	}
 
-        /**
-         * pthread_kill uses __pthread_kill internally which uses a mach
-         * port to identify the target thread, so pthread_kill is not safe
-         * to restart after a checkpoint (the mach port will be invalid
-         * by then).
-         */
-        th = decode_pthread(p);
-        unsafe_enter();
-        err = pthread_kill(th->self, sig);
-        unsafe_exit();
+	/*
+	 * Wrap pthread_kill in a critical section; __pthread_kill
+	 * will use the thread's mach port, which will be invalid if
+	 * we restart after taking a checkpoint in the middle of
+	 * __pthread_kill.
+	 */
+	th = decode_pthread(p);
+	unsafe_enter();
+	err = pthread_kill(th->self, sig);
+	unsafe_exit();
 
-        return err;
+	return err;
 }
 
 int __pthread_detach_hook(pthread_t p)

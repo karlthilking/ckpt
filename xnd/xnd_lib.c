@@ -28,21 +28,16 @@
 #include <unistd.h>
 #include <signal.h>
 
-extern mach_port_t mach_task_self_;
-extern mach_port_t task_self_trap(void);
+static _Atomic enum xnd_state libxnd_state = XND_UNINITIALIZED;
 
-static _Atomic enum xnd_state   libxnd_state = XND_UNINITIALIZED;
-static bool                     xnd_atfork_registered = false;
-static uintptr_t                _pthread_ptr_munge_token;
-
+__hidden u32 xnd_pid;
+__hidden u32 xnd_ppid;
+__hidden u32 xnd_pgid;
 __hidden uuid_t xnd_uuid;
-__hidden u32    xnd_pid;
-__hidden u32    xnd_ppid;
-__hidden u32    xnd_pgid;
 
-__hidden u64    epoch           = 0;
-__hidden u32    num_peers       = 0;
-__hidden bool   is_root_of_tree = false;
+__hidden u64 epoch = 0;
+__hidden u32 num_peers = 0;
+__hidden bool is_root_of_tree = false;
 
 enum xnd_state get_xnd_state(void)
 {
@@ -58,7 +53,9 @@ void xnd_precheckpoint(void)
 {
         sig_state_save();
         fd_table_save();
-        _pthread_ptr_munge_token = thread_munge_token();
+
+	if (thread_ptr_munge_save() != 0)
+		xnd_warn("warning: possible tls/thread corruption\n");
 }
 
 void xnd_postcheckpoint(void)
@@ -79,8 +76,7 @@ void xnd_postrestart(void)
         connect_to_coord_on_restart();
         enter_coord_barrier(COORD_BARRIER_POSTRESTART);
 
-        thread_sig_fixup(_pthread_ptr_munge_token);
-        ckpt_vm_deallocate_regions();
+	thread_ptr_munge_fixup();
         pid_table_postrestart();
         fd_table_restore();
         sig_state_restore();
@@ -167,22 +163,24 @@ void xnd_atfork_failed(void)
 
 void xnd_register_fork_handlers(void)
 {
-        void (*prepare)(void), (*parent)(void), (*child)(void);
+	int err;
+	void (*child)(void), (*parent)(void), (*prepare)(void);
+	static bool xnd_atfork_registered = false;
 
-        if (xnd_atfork_registered) {
-                return;
-        }
+	if (xnd_atfork_registered)
+		return;
 
-        child = xnd_atfork_child;
-        parent = xnd_atfork_parent;
-        prepare = xnd_atfork_prepare;
+	child = xnd_atfork_child;
+	parent = xnd_atfork_parent;
+	prepare = xnd_atfork_prepare;
 
-        if (pthread_atfork(prepare, parent, child) != 0) {
-                xnd_error("pthread_atfork: %s\n", strerror(errno));
-                xnd_abort();
-        }
+	err = pthread_atfork(prepare, parent, child);
+	if (err != 0) {
+		xnd_error("pthread_atfork: %s\n", strerror(err));
+		xnd_abort();
+	}
 
-        xnd_atfork_registered = true;
+	xnd_atfork_registered = true;
 }
 
 static __constructor(101) void xnd_setup(void)

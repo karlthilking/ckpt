@@ -2,7 +2,7 @@
 #include "xnd/xnd.h"
 #include "xnd/xnd_lib.h"
 #include "xnd/tls.h"
-#include "xnd/inject.h"
+#include "xnd/interpose.h"
 #include "xnd/thread_info.h"
 #include "xnd/util/env.h"
 #include "xnd/wrappers/time_wrappers.h"
@@ -22,17 +22,6 @@ extern pid_t _virt_pid;
 extern pid_t _virt_ppid;
 extern pid_t _real_pid;
 extern pid_t _real_ppid;
-
-static __always_inline bool skip_interpose(void)
-{
-        if (unlikely(get_xnd_state() == XND_UNINITIALIZED))
-                return true;
-
-        if (unlikely(tlv_ok() == false))
-                return true;
-
-        return false;
-}
 
 static inline pid_t virtual_to_real_pid(pid_t virt)
 {
@@ -357,7 +346,7 @@ int __proc_pidinfo_hook(int pid, int flavor, u64 arg,
         int     ret;
         pid_t   real_pid;
 
-        if (skip_interpose())
+        if (XND_SKIP_INTERPOSE())
                 return proc_pidinfo(pid, flavor, arg, buf, bufsize);
 
         unsafe_enter();
@@ -409,7 +398,7 @@ int __proc_pidfdinfo_hook(int pid, int fd, int flavor,
         int     ret;
         pid_t   real_pid;
 
-        if (skip_interpose())
+        if (XND_SKIP_INTERPOSE())
                 return proc_pidfdinfo(pid, fd, flavor, buf, bufsize);
 
         unsafe_enter();
@@ -430,7 +419,7 @@ int __proc_pidfileportinfo_hook(int pid, u32 fileport, int flavor,
         int     ret;
         pid_t   real_pid;
 
-        if (skip_interpose())
+        if (XND_SKIP_INTERPOSE())
                 return proc_pidfileportinfo(
                         pid, fileport, flavor, buf, bufsize);
 
@@ -452,7 +441,7 @@ int __proc_name_hook(int pid, void *buf, u32 bufsize)
         int     ret;
         pid_t   real_pid;
 
-        if (skip_interpose())
+        if (XND_SKIP_INTERPOSE())
                 return proc_name(pid, buf, bufsize);
 
         unsafe_enter();
@@ -473,7 +462,7 @@ int __proc_regionfilename_hook(int pid, u64 addr, void *buf, u32 bufsize)
         int     ret;
         pid_t   real_pid;
 
-        if (skip_interpose())
+        if (XND_SKIP_INTERPOSE())
                 return proc_regionfilename(pid, addr, buf, bufsize);
 
         unsafe_enter();
@@ -493,7 +482,7 @@ int __proc_pidpath_hook(int pid, void *buf, u32 bufsize)
         int     ret;
         pid_t   real_pid;
 
-        if (skip_interpose())
+        if (XND_SKIP_INTERPOSE())
                 return proc_pidpath(pid, buf, bufsize);
 
         unsafe_enter();
@@ -513,7 +502,7 @@ int __proc_pid_rusage_hook(int pid, int flavor, rusage_info_t *buf)
         int     ret;
         pid_t   real_pid;
 
-        if (skip_interpose())
+        if (XND_SKIP_INTERPOSE())
                 return proc_pid_rusage(pid, flavor, buf);
 
         unsafe_enter();
@@ -533,7 +522,7 @@ int __proc_track_dirty_hook(pid_t pid, u32 flags)
         int     ret;
         pid_t   real_pid;
 
-        if (skip_interpose())
+        if (XND_SKIP_INTERPOSE())
                 return proc_track_dirty(pid, flags);
 
         unsafe_enter();
@@ -553,7 +542,7 @@ int __proc_set_dirty_hook(pid_t pid, bool dirty)
         int     ret;
         pid_t   real_pid;
 
-        if (skip_interpose())
+        if (XND_SKIP_INTERPOSE())
                 return proc_set_dirty(pid, dirty);
 
         unsafe_enter();
@@ -573,7 +562,7 @@ int __proc_get_dirty_hook(pid_t pid, u32 *flags)
         int     ret;
         pid_t   real_pid;
 
-        if (skip_interpose())
+        if (XND_SKIP_INTERPOSE())
                 return proc_get_dirty(pid, flags);
 
         unsafe_enter();
@@ -593,7 +582,7 @@ int __proc_clear_dirty_hook(pid_t pid, u32 flags)
         int     ret;
         pid_t   real_pid;
 
-        if (skip_interpose())
+        if (XND_SKIP_INTERPOSE())
                 return proc_clear_dirty(pid, flags);
 
         unsafe_enter();
@@ -613,7 +602,7 @@ int __proc_terminate_hook(pid_t pid, int *sig)
         int     ret;
         pid_t   real_pid;
 
-        if (skip_interpose())
+        if (XND_SKIP_INTERPOSE())
                 return proc_terminate(pid, sig);
 
         unsafe_enter();
@@ -633,7 +622,7 @@ int __proc_udata_info_hook(int pid, int flavor, void *buf, int bufsize)
         int     ret;
         pid_t   real_pid;
 
-        if (skip_interpose())
+        if (XND_SKIP_INTERPOSE())
                 return proc_udata_info(pid, flavor, buf, bufsize);
 
         unsafe_enter();
@@ -653,7 +642,7 @@ int __proc_listpgrppids_hook(pid_t pgrp, void *buf, int bufsize)
         int     ret;
         pid_t   real_pgrp;
 
-        if (skip_interpose())
+        if (XND_SKIP_INTERPOSE())
                 return proc_listpgrppids(pgrp, buf, bufsize);
 
         unsafe_enter();
@@ -676,7 +665,7 @@ int __proc_listchildpids_hook(pid_t ppid, void *buf, int bufsize)
         int     ret;
         pid_t   real_ppid;
 
-        if (skip_interpose())
+        if (XND_SKIP_INTERPOSE())
                 return proc_listchildpids(ppid, buf, bufsize);
 
         unsafe_enter();
@@ -699,7 +688,7 @@ int __proc_listpids_hook(u32 type, u32 typeinfo, void *buf, int bufsize)
         int     ret;
         pid_t   real_typeinfo;
 
-        if (skip_interpose())
+        if (XND_SKIP_INTERPOSE())
                 return proc_listpids(type, typeinfo, buf, bufsize);
 
         unsafe_enter();
@@ -725,7 +714,7 @@ int __proc_listallpids_hook(void *buf, int bufsize)
 {
         int ret;
 
-        if (skip_interpose())
+        if (XND_SKIP_INTERPOSE())
                 return proc_listallpids(buf, bufsize);
 
         unsafe_enter();

@@ -3,7 +3,6 @@
 #define SIGNAL_WRAPPERS_H
 
 #include "xnd/xnd.h"
-#include "xnd/inject.h"
 #include "xnd/platform/signal.h"
 
 #include <signal.h>

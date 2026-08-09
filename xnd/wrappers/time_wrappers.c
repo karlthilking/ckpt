@@ -6,6 +6,7 @@
 #include <time.h>
 #include <unistd.h>
 #include "time_wrappers.h"
+#include "xnd/interpose.h"
 
 unsigned int __sleep_hook(unsigned int seconds)
 {
@@ -65,3 +66,7 @@ int __nanosleep_hook(const struct timespec *rqtp, struct timespec *rmtp)
 
         return err;
 }
+
+INTERPOSE(__sleep_hook, sleep);
+INTERPOSE(__usleep_hook, usleep);
+INTERPOSE(__nanosleep_hook, nanosleep);

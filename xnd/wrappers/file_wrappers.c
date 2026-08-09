@@ -3,6 +3,7 @@
 #include "xnd/tls.h"
 #include "xnd/xnd_lib.h"
 #include "xnd/thread_info.h"
+#include "xnd/interpose.h"
 #include "file_wrappers.h"
 
 #include <errno.h>
@@ -12,17 +13,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-
-static __always_inline bool skip_interpose(void)
-{
-        if (unlikely(get_xnd_state() == XND_UNINITIALIZED))
-                return true;
-
-        if (unlikely(tlv_ok() == false))
-                return true;
-
-        return false;
-}
 
 int __openat_hook(int dirfd, const char *path, int flags, ...)
 {
@@ -36,9 +26,8 @@ int __openat_hook(int dirfd, const char *path, int flags, ...)
                 va_end(va);
         }
 
-        if (skip_interpose()) {
+        if (XND_SKIP_INTERPOSE())
                 return openat(dirfd, path, flags, mode);
-        }
 
         unsafe_enter();
         if ((retval = openat(dirfd, path, flags, mode)) != -1) {
@@ -82,9 +71,8 @@ int __close_hook(int fd)
 {
         int retval;
 
-        if (skip_interpose()) {
+        if (XND_SKIP_INTERPOSE())
                 return close(fd);
-        }
 
         unsafe_enter();
         if ((retval = close(fd)) != -1) {
@@ -99,9 +87,8 @@ int __dup_hook(int oldfd)
 {
         int newfd;
 
-        if (skip_interpose()) {
+        if (XND_SKIP_INTERPOSE())
                 return dup(oldfd);
-        }
 
         unsafe_enter();
         if ((newfd = dup(oldfd)) != -1) {
@@ -116,9 +103,8 @@ int __dup2_hook(int oldfd, int newfd)
 {
         int retval;
 
-        if (skip_interpose()) {
+        if (XND_SKIP_INTERPOSE())
                 return dup2(oldfd, newfd);
-        }
 
         unsafe_enter();
         if ((retval = dup2(oldfd, newfd)) != -1) {
@@ -140,9 +126,8 @@ int __fcntl_hook(int fd, int cmd, ...)
         arg = va_arg(va, void *);
         va_end(va);
 
-        if (skip_interpose()) {
+        if (XND_SKIP_INTERPOSE())
                 return fcntl(fd, cmd, arg);
-        }
 
         unsafe_enter();
         ret = fcntl(fd, cmd, arg);
@@ -158,9 +143,8 @@ FILE *__fopen_hook(const char *path, const char *mode)
         FILE    *stream;
         int     flags;
 
-        if (skip_interpose()) {
+        if (XND_SKIP_INTERPOSE())
                 return fopen(path, mode);
-        }
 
         unsafe_enter();
         if ((stream = fopen(path, mode)) != NULL) {
@@ -176,9 +160,8 @@ int __fclose_hook(FILE *stream)
 {
         int ret, fd;
 
-        if (skip_interpose()) {
+        if (XND_SKIP_INTERPOSE())
                 return fclose(stream);
-        }
 
         unsafe_enter();
         fd = fileno(stream);
@@ -195,9 +178,8 @@ FILE *__freopen_hook(const char *path, const char *mode, FILE *oldfp)
         char buf[PATH_MAX];
         int oldfd, newfd, oflag;
 
-        if (skip_interpose()) {
+        if (XND_SKIP_INTERPOSE())
                 return freopen(path, mode, oldfp);
-        }
 
         unsafe_enter();
         oldfd = fileno(oldfp);
@@ -234,9 +216,8 @@ DIR *__opendir_hook(const char *path)
 {
         DIR *dirp;
 
-        if (skip_interpose()) {
+        if (XND_SKIP_INTERPOSE())
                 return opendir(path);
-        }
 
         unsafe_enter();
         dirp = opendir(path);
@@ -253,9 +234,8 @@ DIR *__fdopendir_hook(int fd)
         const char *path;
         char buf[PATH_MAX];
 
-        if (skip_interpose()) {
+        if (XND_SKIP_INTERPOSE())
                 return fdopendir(fd);
-        }
 
         path = (fcntl(fd, F_GETPATH, buf) == 0 ? buf : "");
 
@@ -272,9 +252,8 @@ int __closedir_hook(DIR *dirp)
 {
         int ret, fd;
 
-        if (skip_interpose()) {
+        if (XND_SKIP_INTERPOSE())
                 return closedir(dirp);
-        }
 
         fd = dirfd(dirp);
 
@@ -291,9 +270,8 @@ struct dirent *__readdir_hook(DIR *dirp)
 {
         struct dirent *ent;
 
-        if (skip_interpose()) {
+        if (XND_SKIP_INTERPOSE())
                 return readdir(dirp);
-        }
 
         unsafe_enter();
         ent = readdir(dirp);
@@ -306,9 +284,8 @@ int __readdir_r_hook(DIR *dirp, struct dirent *entry, struct dirent **result)
 {
         int ret;
 
-        if (skip_interpose()) {
+        if (XND_SKIP_INTERPOSE())
                 return readdir_r(dirp, entry, result);
-        }
 
         unsafe_enter();
         ret = readdir_r(dirp, entry, result);
@@ -319,22 +296,21 @@ int __readdir_r_hook(DIR *dirp, struct dirent *entry, struct dirent **result)
 
 long __telldir_hook(DIR *dirp)
 {
-        long loc;
+	long tell;
 
-        if (skip_interpose()) {
-                return telldir(dirp);
-        }
+	if (XND_SKIP_INTERPOSE())
+		return telldir(dirp);
 
-        unsafe_enter();
-        loc = telldir(dirp);
-        unsafe_exit();
+	unsafe_enter();
+	tell = telldir(dirp);
+	unsafe_exit();
 
-        return loc;
+	return tell;
 }
 
 void __seekdir_hook(DIR *dirp, long loc)
 {
-        if (skip_interpose()) {
+        if (XND_SKIP_INTERPOSE()) {
                 seekdir(dirp, loc);
                 return;
         }
@@ -346,7 +322,7 @@ void __seekdir_hook(DIR *dirp, long loc)
 
 void __rewinddir_hook(DIR *dirp)
 {
-        if (skip_interpose()) {
+        if (XND_SKIP_INTERPOSE()) {
                 rewinddir(dirp);
                 return;
         }

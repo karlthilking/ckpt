@@ -45,7 +45,7 @@ void thread_list_init(void)
         }
 
         /* Initialize main thread info */
-        tlv_init();
+        xnd_tlv_init();
         thread_list.head = calloc(1, sizeof(struct thread_info));
         xnd_assert(thread_list.head != NULL);
 
@@ -95,7 +95,7 @@ void thread_list_destroy(void)
         pthread_mutex_destroy(&thread_list.lock);
 
         zombie_list_destroy();
-        tlv_exit();
+        xnd_tlv_fini();
 }
 
 void thread_list_acquire(void)
@@ -407,7 +407,7 @@ __noreturn void thread_exit(void *exit_value)
         xnd_assert(myself);
         xnd_assert(pthread_mutex_lock(&myself->lock) == 0);
 
-        tlv_exit();
+        xnd_tlv_fini();
         myself->exiting = 1;
 
         pthread_cond_signal(&myself->cond);
@@ -453,14 +453,15 @@ void ckpt_thread_init(void)
 
 __noreturn void ckpt_thread_exit(void)
 {
-        /**
-         * If thread_terminate() in ckpt_thread_reap fails, the checkpoint
-         * thread will still be alive and will call ckpt_thread_exit instead
-         * of being forcefully terminated. However, ckpt_thread_reap() will
-         * destroy all resources associated with the checkpoint thread
-         * regardless, so just exit and do nothing else here.
+        /*
+         * If thread_terminate() in ckpt_thread_reap fails, the
+	 * checkpoint thread will still be alive and will call
+	 * ckpt_thread_exit instead of being forcefully terminated.
+	 * However, ckpt_thread_reap() will destroy all resources
+	 * associated with the checkpoint thread regardless, so
+	 * just exit and do nothing else here.
          */
-        tlv_exit();
+        xnd_tlv_fini();
         pthread_exit(NULL);
         unreachable();
 }
@@ -484,7 +485,7 @@ void *ckpt_thread_work(void *wait)
         sigaddset(&set, env_get_ckpt_signal());
         pthread_sigmask(SIG_BLOCK, &set, NULL);
 
-        tlv_init();
+        xnd_tlv_init();
         myself = &ckpt_thread;
         myself->self = pthread_self();
 
@@ -512,7 +513,7 @@ void *ckpt_thread_work(void *wait)
                 xnd_postrestart();
 
                 thread_restore_tls(&ckpt_thread);
-		tlv_init();
+		xnd_tlv_init();
 
                 myself = &ckpt_thread;
                 myself->self = pthread_self();
@@ -557,7 +558,7 @@ void *ckpt_thread_work(void *wait)
                 barrier_arrival_wait();
 
                 xnd_precheckpoint();
-                set_tls_slot(TLS_TLV_FLAG_SLOT, 0);
+		xnd_tlv_fini();
                 xnd_checkpoint(&myself->uctx);
 
                 /**
@@ -566,7 +567,7 @@ void *ckpt_thread_work(void *wait)
                  * manifest.
                  */
                 enter_coord_barrier(COORD_BARRIER_POSTCKPT);
-                set_tls_slot(TLS_TLV_FLAG_SLOT, TLS_TLV_INIT_MAGIC);
+		xnd_tlv_init();
 
                 xnd_postcheckpoint();
                 /**
@@ -797,12 +798,12 @@ void thread_sighandler(int sig, siginfo_t *info, void *uctx)
         }
 
         is_restart = true;
-        set_tls_slot(TLS_TLV_FLAG_SLOT, 0);
+	xnd_tlv_fini();
         xnd_assert(thread_state_cas(myself, ST_SUSPINPROG, ST_SUSPENDED));
 
         /* Wait in barrier and then resume */
         thread_barrier();
-        set_tls_slot(TLS_TLV_FLAG_SLOT, TLS_TLV_INIT_MAGIC);
+	xnd_tlv_init();
         xnd_assert(thread_state_cas(myself, ST_SUSPENDED, ST_RUNNING));
 }
 
@@ -810,7 +811,7 @@ __noreturn void *thread_start(void *thread)
 {
         void *retval;
 
-        tlv_init();
+        xnd_tlv_init();
         /**
          * Set thread local pointer to thread descriptor to point to
          * newly allocated thread struct, and initialize pthread_t
@@ -838,7 +839,7 @@ __noreturn void *thread_start(void *thread)
 
 __noreturn void *thread_restart(void *thread)
 {
-        tlv_init();
+        xnd_tlv_init();
 
         /**
          * Reinitialize thread local struct thread_info pointer to
@@ -939,7 +940,7 @@ void thread_restore_tls(struct thread_info *th)
 
         xnd_assert(th != NULL);
         asm volatile("mrs %0, tpidrro_el0" : "=r" (tls) :: "memory");
-        set_thread_cleanup_stack(NULL);
+        set_thread_cleanup_stack(tls, NULL);
 
         dst = (void **)tls;
         src = (void **)th->tls;

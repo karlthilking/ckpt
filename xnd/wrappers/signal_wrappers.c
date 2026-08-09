@@ -3,6 +3,7 @@
 #include "xnd/xnd.h"
 #include "xnd/pac.h"
 #include "xnd/xnd_lib.h"
+#include "xnd/interpose.h"
 #include "xnd/thread_info.h"
 #include "xnd/util/env.h"
 #include "xnd/platform/signal.h"

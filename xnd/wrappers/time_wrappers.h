@@ -1,7 +1,6 @@
 /* time_wrappers.h */
 #ifndef TIME_WRAPPERS_H
 #define TIME_WRAPPERS_H
-#include "xnd/inject.h"
 #include <time.h>
 #include <unistd.h>
 
@@ -48,9 +47,5 @@
 unsigned int __sleep_hook(unsigned int);
 int __usleep_hook(useconds_t);
 int __nanosleep_hook(const struct timespec *, struct timespec *);
-
-INTERPOSE(__sleep_hook, sleep)
-INTERPOSE(__usleep_hook, usleep);
-INTERPOSE(__nanosleep_hook, nanosleep)
 
 #endif /* TIME_WRAPPERS_H */
