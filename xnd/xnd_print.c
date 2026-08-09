@@ -172,7 +172,7 @@ int main(int argc, char *argv[])
         } while (argc);
 
         if (compressed) {
-                xnd_path_dirname(ckpt, dir, sizeof(dir));
+		xnd_path_dirname(dir, sizeof(dir), ckpt);
                 dirfd = open(dir, O_RDONLY | O_DIRECTORY);
                 if (dirfd < 0) {
                         xnd_error("open(%s): %s\n", dir, strerror(errno));
@@ -189,7 +189,7 @@ int main(int argc, char *argv[])
                 xnd_error("open(%s): %s\n", ckpt, strerror(errno));
                 goto bad;
         }
-                                
+
         print_checkpoint(fd);
         exit(XND_EXIT_SUCCESS);
 bad:

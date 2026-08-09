@@ -36,8 +36,8 @@ struct xnd_restart_info {
 
                 strncpy(ckptdir, dir, XND_CKPTDIR_MAXLEN);
 
-                err = xnd_exe_path_of(XND_RESTART_BINARY, restart,
-                                      sizeof(restart));
+		err = xnd_exe_path_of(restart, sizeof(restart),
+				      XND_RESTART_BINARY);
                 if (err != 0) {
                         xnd_error("xnd_exe_path_of failed\n");
                         exit(XND_EXIT_FAILURE);

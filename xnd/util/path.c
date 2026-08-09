@@ -45,55 +45,56 @@ int xnd_path_find(const char *file, char *out, size_t outlen)
         return -1;
 }
 
-/**
- * /path/to/file -> /path/to
+/*
+ * xnd_path_dirname:
+ *  Extract directory path from file path.
+ *  (e.g. /home/user/xnd/libxnd.dylib -> /home/usr/xnd)
  */
-int xnd_path_dirname(const char *path, char *out, size_t outlen)
+int xnd_path_dirname(char *dst, size_t dstlen, const char *path)
 {
-        size_t  dirlen;
-        char    *rslash;
+	const char *delim, *src = path;
+	size_t srclen;
 
-        rslash = strrchr(path, '/');
-        if (!rslash) {
-                if (!out || !outlen)
-                        return -1;
-                *out = '\0';
-                return 0;
-        }
+	if (dst == NULL || dstlen == 0)
+		return -1;
 
-        dirlen = rslash - path;
-        if (outlen < dirlen + 1)
-                return -1;
+	delim = strrchr(path, '/');
+	if (delim == NULL) {
+		*dst = '\0';
+		return 0;
+	}
 
-        strncpy(out, path, dirlen);
-        out[dirlen] = '\0';
-        return 0;
+	srclen = delim - src;
+	if (dstlen <= srclen)
+		return -1;
+
+	strlcpy(dst, src, srclen + 1);
+	return 0;
 }
 
-/**
- * /path/to/file -> file
+/*
+ * xnd_path_basename:
+ *  Extract basename from file path.
+ *  (e.g. /usr/bin/uname -> uname)
  */
-int xnd_path_basename(const char *path, char *out, size_t outlen)
+int xnd_path_basename(char *dst, size_t dstlen, const char *path)
 {
-        char *base, *rslash;
+	const char *src;
+	size_t srclen;
 
-        rslash = strrchr(path, '/');
-        if (rslash)
-                base = rslash + 1;
-        else
-                base = (char *)path;
+	src = xnd_path_basename_inplace(path);
+	srclen = strlen(src);
+	if (dstlen <= srclen)
+		return -1;
 
-        if (outlen < strlen(base) + 1)
-                return -1;
-
-        strncpy(out, base, strlen(base));
-        out[strlen(base)] = '\0';
-        return 0;
+	strlcpy(dst, src, srclen + 1);
+	return 0;
 }
 
 /*
  * xnd_path_stem:
- *  Extract filename stem from filename or pathname
+ *  Extract filename stem from filename or pathname.
+ *  (e.g. /usr/lib/libhello.dylib -> libhello)
  */
 int xnd_path_stem(char *out, size_t outlen, const char *path)
 {
@@ -114,7 +115,8 @@ int xnd_path_stem(char *out, size_t outlen, const char *path)
 
 /*
  * xnd_path_ext:
- *  Extract the extension from a pathname
+ *  Extract the extension from a pathname.
+ *  (e.g. /path/to/file.txt -> txt)
  */
 int xnd_path_ext(char *out, size_t outlen, const char *path)
 {

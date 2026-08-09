@@ -11,10 +11,10 @@
 struct thread_info;
 
 enum xnd_log_level {
-        XND_ERRORS      = 0,
-        XND_WARNINGS    = 1,
-        XND_DEBUGGING   = 2,
-        XND_TRACING     = 3
+        XND_ERRORS      = 0, /* fatal errors only */
+        XND_WARNINGS    = 1, /* print warnings */
+        XND_DEBUGGING   = 2, /* print debugging information */
+        XND_TRACING     = 3, /* logging/tracing to xnd.log */
 };
 
 #define XND_TRACE_FD 253
@@ -40,10 +40,9 @@ enum xnd_log_level {
 })
 #endif
 
-#define __XND_FILE__				\
-	(__builtin_strrchr(__FILE__, '/')	\
-	 ? __builtin_strrchr(__FILE__, '/') + 1 \
-	 : __FILE__)
+#define __XND_FILE__ \
+	(__builtin_strrchr(__FILE__, '/') ? \
+	 __builtin_strrchr(__FILE__, '/') + 1 : __FILE__)
 
 #define CLR_RED "\033[0;31m"
 #define CLR_YLW "\033[0;33m"
@@ -64,11 +63,12 @@ enum xnd_log_level {
 	fprintf(stderr, CLR_YLW "[xnd:%s:%s:%d] " fmt CLR_RST, \
 		__XND_FILE__, __func__, __LINE__, ##__VA_ARGS__)
 
-/**
- * Print information to xnd.log file instead of stdout/stderr
+/*
+ * Print information to xnd.log file instead of stdout/stderr.
+ * Used for event tracing, debug info, and logging low level details.
  */
 #define xnd_trace(fmt, ...) \
-	dprintf(XND_TRACE_FD, "[xnd:%s:%s:%d] " fmt, \
+	dprintf(XND_TRACE_FD, "[xnd:%s:%s:%d]\n" fmt "\n", \
 		__XND_FILE__, __func__, __LINE__, ##__VA_ARGS__)
 
 #define xnd_abort()						     \

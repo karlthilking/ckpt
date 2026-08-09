@@ -10,7 +10,7 @@ extern "C" {
 
 int xnd_exe_path(char *, size_t);
 int xnd_exe_dir(char *, size_t);
-int xnd_exe_path_of(const char *, char *, size_t);
+int xnd_exe_path_of(char *, size_t, const char *);
 
 #ifdef __cplusplus
 }

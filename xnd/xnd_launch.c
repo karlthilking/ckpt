@@ -124,7 +124,7 @@ static void prepare_args(int argc, char **argv, char **new_argv)
         for (uint i = 1u; i < argc; i++)
                 new_argv[i] = strdup(argv[i]);
 
-        ret = xnd_path_basename(argv[0], tmp + 2, sizeof(tmp) - 2);
+	ret = xnd_path_basename(&tmp[2], sizeof(tmp) - 2, argv[0]);
         if (ret != 0) {
                 xnd_error("Failed to get basename of %s\n", argv[0]);
                 xnd_exit(XND_EXIT_FAILURE);
@@ -173,7 +173,7 @@ static __noreturn void launch(int argc, char **argv)
                 xnd_exit(XND_EXIT_FAILURE);
         }
 
-        err = xnd_exe_path_of("libxnd.dylib", libxnd_path, PATH_MAX);
+	err = xnd_exe_path_of(libxnd_path, PATH_MAX, "libxnd.dylib");
         if (err < 0) {
                 xnd_error("Failed to get path of libxnd.dylib\n");
                 xnd_exit(XND_EXIT_FAILURE);
