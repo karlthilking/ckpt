@@ -83,28 +83,39 @@ char *env_get_program_name(void)
 
 void env_set_tmp_binary(char *value)
 {
-        xnd_assert(setenv(XND_TMP_BINARY_ENV, value, 1) == 0);
+	setenv(XND_TMP_BINARY_ENV, value, 1);
 }
 
 char *env_get_tmp_binary(void)
 {
-        return getenv(XND_TMP_BINARY_ENV);
+	return getenv(XND_TMP_BINARY_ENV);
 }
 
-void env_set_unlink_tmp_binary(char *value)
+void env_set_unlink_tmp(char *value)
 {
-        xnd_assert(setenv(XND_UNLINK_TMP_ENV, value, 0) == 0);
+	setenv(XND_UNLINK_TMP_ENV, value, 1);
 }
 
-bool env_should_unlink_tmp_binary(void)
+bool env_unlink_tmp_at_init(void)
 {
-        char *value;
+	bool ret = false;
+	char *value = getenv(XND_UNLINK_TMP_ENV);
 
-        value = getenv(XND_UNLINK_TMP_ENV);
-        if (value)
-                return (strcmp(value, "0") != 0);
+	if (value != NULL)
+		ret = (atoi(value) == UNLINK_TMP_AT_INIT);
 
-        return true;
+	return ret;
+}
+
+bool env_unlink_tmp_at_exit(void)
+{
+	bool ret = false;
+	char *value = getenv(XND_UNLINK_TMP_ENV);
+
+	if (value != NULL)
+		ret = (atoi(value) == UNLINK_TMP_AT_EXIT);
+
+	return ret;
 }
 
 void env_set_ckpt_signal(char *s)

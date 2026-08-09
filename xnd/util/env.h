@@ -11,11 +11,22 @@
 #define XND_REAL_PPID_ENV       "XND_REAL_PPID"
 
 #define XND_PROGRAM_ENV         "XND_PROGRAM"
-#define XND_TMP_BINARY_ENV      "XND_TMP_BINARY"
-#define XND_UNLINK_TMP_ENV      "XND_UNLINK_TMP"
 #define XND_CKPT_SIGNAL_ENV     "XND_CKPT_SIGNAL"
 #define XND_USE_ZLIB_ENV        "XND_USE_ZLIB"
 #define XND_CKPT_INTERVAL_ENV   "XND_CKPT_INTERVAL"
+
+/*
+ * Environment variables and definitions to control when
+ * a temporary executable should be unlinked/removed. This is
+ * only relevant if xnd_launch was given an arm64 executable,
+ * thus generating a temporary arm64 patched binary.
+ */
+#define XND_TMP_BINARY_ENV "XND_TMP_BINARY"
+#define XND_UNLINK_TMP_ENV "XND_UNLINK_TMP"
+#define UNLINK_TMP_AT_INIT 0
+#define UNLINK_TMP_AT_EXIT 1
+#define UNLINK_TMP_NEVER 2
+#define UNLINK_TMP_DEFAULT UNLINK_TMP_AT_EXIT
 
 #ifdef __cplusplus
 extern "C" {
@@ -29,8 +40,9 @@ char *env_get_program_name(void);
 
 void env_set_tmp_binary(char *);
 char *env_get_tmp_binary(void);
-void env_set_unlink_tmp_binary(char *);
-bool env_should_unlink_tmp_binary(void);
+void env_set_unlink_tmp(char *);
+bool env_unlink_tmp_at_init(void);
+bool env_unlink_tmp_at_exit(void);
 
 void env_set_ckpt_signal(char *);
 int env_get_ckpt_signal(void);

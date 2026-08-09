@@ -207,9 +207,10 @@ void xnd_register_fork_handlers(void)
 
 static __constructor(101) void xnd_setup(void)
 {
-        struct sigaction        sa;
-        sigset_t                set;
-        int                     sig;
+	char *tmp;
+        int sig;
+        sigset_t set;
+        struct sigaction sa;
 
         connect_to_coord_on_launch();
 
@@ -228,6 +229,10 @@ static __constructor(101) void xnd_setup(void)
 
         pid_table_init();
         pid_table_init_pid_info();
+
+	tmp = env_get_tmp_binary();
+	if (tmp != NULL && env_unlink_tmp_at_init())
+		unlink(tmp);
 
         set_xnd_state(XND_RUNNING);
 
@@ -249,7 +254,7 @@ static __destructor() void xnd_cleanup(void)
         thread_list_destroy();
 
 	tmp = env_get_tmp_binary();
-	if (tmp != NULL && env_should_unlink_tmp_binary())
+	if (tmp != NULL && env_unlink_tmp_at_exit())
 		unlink(tmp);
 
         xnd_log_cleanup();

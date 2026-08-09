@@ -51,10 +51,10 @@ static const char *help =
 "  --ckpt-signal <signal>\n"
 "       Set the signal used for checkpoints\n"
 "       Default: SIGUSR2\n\n"
-"  --unlink-tmp [0 | 1]\n"
-"       Unlink the temporary arm64 executable created by xnd_launch\n"
+"  --unlink-tmp [0-2]\n"
+"       Specify when to unlink temprary arm64 executable\n"
 "       (Only relevant when xnd_launch is given an arm64e executable)\n"
-"        Default: 1 (true)\n\n"
+"       0 = unlink immediately; 1 = at exit, 2 = never (default: 1)\n\n"
 "  --help\n"
 "       Display this help message\n";
 
@@ -89,7 +89,7 @@ int main(int argc, char *argv[])
                         argv++; argv++;
                         argc--; argc--;
                 } else if (ARG_IS_UNLINK_TMP(argv[0])) {
-                        env_set_unlink_tmp_binary(argv[1]);
+                        env_set_unlink_tmp(argv[1]);
                         argv++; argv++;
                         argc--; argc--;
                 } else if (ARG_IS_INVALID(argv[0])) {
