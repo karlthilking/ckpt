@@ -10,18 +10,20 @@
 
 int read_vm_region(int fd, struct xnd_vm_region *region)
 {
-        ssize_t bytes;
+	ssize_t bytes;
 
-        bytes = sys_readall(fd, region, sizeof(*region));
-        if (bytes != sizeof(*region)) {
-                return -1;
-        }
+	bytes = sys_readall(fd, region, sizeof(*region));
+	if (bytes != sizeof(*region)) {
+		xnd_error("Failed to read vm region struct\n");
+		return -1;
+	}
 
-        if (ckpt_vm_restore_region(fd, region) < 0) {
-                return -1;
-        }
+	if (ckpt_vm_restore_region(fd, region) < 0) {
+		xnd_error("Failed to restore region memory contents\n");
+		return -1;
+	}
 
-        return 0;
+	return 0;
 }
 
 int read_context(int fd, ucontext_t *uctx)

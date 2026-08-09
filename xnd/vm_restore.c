@@ -11,8 +11,8 @@ extern mach_port_t mach_task_self_;
 extern mach_port_t task_self_trap(void);
 
 static inline int ckpt_vm_map_region(struct xnd_vm_region *);
-static inline int ckpt_vm_refresh(struct xnd_vm_region *);
-static inline int ckpt_vm_restore_pages(int, struct xnd_vm_region *);
+static inline int ckpt_vm_refresh_region(struct xnd_vm_region *);
+static int ckpt_vm_restore_pages(int, struct xnd_vm_region *);
 static int ckpt_vm_restore_region_pages(int, struct xnd_vm_region *);
 
 static inline int ckpt_vm_mark(mach_vm_address_t addr, mach_vm_size_t size)
@@ -72,53 +72,162 @@ int ckpt_vm_mark_regions(void)
         return 0;
 }
 
-static inline int ckpt_vm_restore_pages(int fd, struct xnd_vm_region *region)
+static inline int ckpt_vm_refresh_page(struct xnd_vm_region *rgn,
+				       struct xnd_vm_page *page)
 {
-        void                    *addr;
-        ssize_t                 bytes;
-        struct xnd_vm_page      pages[region->pages_dirtied];
+	kern_return_t kr;
+	mach_vm_address_t addr;
 
-        for (uint idx = 0; idx < region->pages_dirtied; idx++) {
-                bytes = sys_readall(fd, pages + idx, sizeof(pages[idx]));
-                if (bytes != sizeof(pages[idx])) {
-                        return -1;
-                }
-                addr = region->start + pages[idx].offset;
-                bytes = sys_readall(fd, addr, VM_PAGE_SIZE);
-                if (bytes != VM_PAGE_SIZE) {
-                        return -1;
-                }
-        }
+	addr = (mach_vm_address_t)((uintptr_t)rgn->start + page->offset);
+	if (rgn->prot != VM_PROT_DEFAULT) {
+		kr = mach_vm_protect(mach_task_self(), addr, VM_PAGE_SIZE,
+				     FALSE, rgn->prot);
+		if (kr != KERN_SUCCESS) {
+			xnd_error("mach_vm_protect: %s (%s)\n",
+				  mach_error_string(kr),
+				  vm_page_string(rgn, page));
+			return -1;
+		}
+	}
 
-        return 0;
+	if (rgn->max_prot != VM_PROT_ALL) {
+		kr = mach_vm_protect(mach_task_self(), addr, VM_PAGE_SIZE,
+				     TRUE, rgn->max_prot);
+		if (kr != KERN_SUCCESS) {
+			xnd_error("mach_vm_protect: %s (%s)\n",
+				  mach_error_string(kr),
+				  vm_page_string(rgn, page));
+			return -1;
+		}
+	}
+
+	if (rgn->inherit != VM_INHERIT_DEFAULT) {
+		kr = mach_vm_inherit(mach_task_self(), addr, VM_PAGE_SIZE,
+				     rgn->inherit);
+		if (kr != KERN_SUCCESS) {
+			xnd_error("mach_vm_inherit: %s (%s)\n",
+				  mach_error_string(kr),
+				  vm_page_string(rgn, page));
+			return -1;
+		}
+	}
+
+	return 0;
+}
+
+static inline int ckpt_vm_map_page(struct xnd_vm_region *rgn,
+				   struct xnd_vm_page *page)
+{
+	kern_return_t kr;
+	mach_vm_address_t addr;
+
+	addr = (mach_vm_address_t)((uintptr_t)rgn->start + page->offset);
+	kr = mach_vm_map(mach_task_self(), &addr, VM_PAGE_SIZE, 0,
+			 VM_FLAGS_FIXED | VM_MAKE_TAG(rgn->tag),
+			 MEMORY_OBJECT_NULL, 0, FALSE, VM_PROT_DEFAULT,
+			 VM_PROT_ALL, VM_INHERIT_DEFAULT);
+
+	if (kr != KERN_SUCCESS) {
+		xnd_error("mach_vm_map: %s (%s)\n", mach_error_string(kr),
+			  vm_page_string(rgn, page));
+		return -1;
+	}
+
+	xnd_assert((mach_vm_address_t)rgn->start == addr);
+	return 0;
+}
+
+static int ckpt_vm_page_restore(int fd, struct xnd_vm_region *rgn,
+			        struct xnd_vm_page *page)
+{
+	void *addr;
+	ssize_t bytes;
+
+	addr = (void *)((uintptr_t)rgn->start + page->offset);
+	bytes = sys_readall(fd, addr, VM_PAGE_SIZE);
+	if (bytes == VM_PAGE_SIZE)
+		return 0;
+
+	/*
+	 * If read failed with EFAULT, we'll try to recover by mapping
+	 * in the page ourselves. Otherwise, the error is not handled.
+	 */
+	if (errno != EFAULT) {
+		xnd_perror("read");
+		return -1;
+	}
+
+	/*
+	 * If the error was EFAULT, we shouldn't witness a partial
+	 * read. The page should either be present or not accessible
+	 * at all. We will try to map the page in now and see if the
+	 * read succeeds.
+	 */
+	xnd_assert(bytes == 0);
+	if (ckpt_vm_map_page(rgn, page) != 0)
+		return -1;
+
+	bytes = sys_readall(fd, addr, VM_PAGE_SIZE);
+	if (bytes != VM_PAGE_SIZE) {
+		xnd_error("read: %s\n", strerror(errno));
+		xnd_error("Failed to restore page: %s\n",
+			  vm_page_string(rgn, page));
+		return -1;
+	}
+
+	if (ckpt_vm_refresh_page(rgn, page) != 0)
+		xnd_warn("Fail to restore page attributes\n");
+
+	return 0;
+}
+
+static int ckpt_vm_restore_pages(int fd, struct xnd_vm_region *rgn)
+{
+	ssize_t bytes;
+	struct xnd_vm_page pages[rgn->pages_dirtied];
+
+	for (uint idx = 0; idx < rgn->pages_dirtied; idx++) {
+		bytes = sys_readall(fd, &pages[idx], sizeof(pages[idx]));
+		if (bytes != sizeof(pages[idx])) {
+			xnd_perror("read");
+			return -1;
+		}
+		if (ckpt_vm_page_restore(fd, rgn, &pages[idx]) != 0)
+			return -1;
+	}
+
+	return 0;
 }
 
 static int ckpt_vm_restore_region_pages(int fd, struct xnd_vm_region *region)
 {
+	int ret;
         vm_prot_t prot;
-        bool writable = (region->prot & VM_PROT_WRITE) != 0;
         uintptr_t end = (uintptr_t)region->start + region->size;
 
-        writable = (region->prot & VM_PROT_WRITE) != 0;
-        if (NEEDS_REMAP_BEFORE_RESTORE(region)) {
-                if (ckpt_vm_map_region(region) != 0)
-                        return -1;
-        } else if (!writable) {
-                /**
-                 * If this region is not current writable, get a private,
-                 * writable copy via mach_vm_protect with
-                 * VM_PROT_READ | VM_PROT_WRITE | VM_PROT_COPY.
-                 */
-                prot = VM_PROT_DEFAULT | VM_PROT_COPY;
-                if (ckpt_vm_protect(region, false, prot) != 0)
-                        return -1;
-        }
+	/*
+	 * Memory regions in the dyld shared cache should not need
+	 * to be mapped in. However, we must ensure that the region
+	 * is writable before we try to restore memory. VM_PROT_COPY
+	 * handles the case where we must get a private copy in order
+	 * to make the region writable.
+	 *
+	 * For regions that are not in the shared cache, we must
+	 * obtain a fresh region before we restore memory.
+	 */
+	if (DYLD_SHARED_CACHE_REGION(region->start, region->size)) {
+		prot = VM_PROT_READ | VM_PROT_WRITE | VM_PROT_COPY;
+		ret = ckpt_vm_protect(region, false, prot);
+	} else {
+		ret = ckpt_vm_map_region(region);
+	}
 
-        if (ckpt_vm_restore_pages(fd, region) != 0) {
-                return -1;
-        }
+	if (ret != 0)
+		return -1;
+	if (ckpt_vm_restore_pages(fd, region) != 0)
+		return -1;
 
-        /**
+        /*
          * If cached mach task port (mach_task_self_) was overwritten by
          * restoring this region, restore the correct task port using
          * task_self_trap() to get the true task port value.
@@ -128,51 +237,39 @@ static int ckpt_vm_restore_region_pages(int fd, struct xnd_vm_region *region)
                 xnd_assert(mach_task_self() == task_self_trap());
         }
 
-        if (NEEDS_REMAP_BEFORE_RESTORE(region)) {
-                /**
-                 * If region had to be mapped in (not already in address
-                 * space by default), reset the region's protections to
-                 * reflect its original protections before checkpoint.
-                 * (by default, it would have been mapped in with rw-/rwx)
-                 */
-                if (ckpt_vm_refresh(region) != 0)
-                        return -1;
-        } else if (!writable) {
-                /**
-                 * Otherwise, if the region was freshly mapped in, but
-                 * had to be made writable (to restore checkpoint data),
-                 * reset its protections so that the region will no longer
-                 * be writable.
-                 */
-                if (ckpt_vm_protect(region, false, region->prot) != 0)
-                        return -1;
-        }
+	/*
+	 * For regions in the dyld shared cache that were not
+	 * originally writable, restore the region's orignal
+	 * protection attribute.
+	 *
+	 * For regions that were mapped in, protection, max protection,
+	 * and inheritance attributes must be refreshed to restore
+	 * the original attributes when we took a checkpoint.
+	 */
+	if (DYLD_SHARED_CACHE_REGION(region->start, region->size)) {
+		prot = region->prot;
+		ret = ckpt_vm_protect(region, false, prot);
+	} else {
+		ret = ckpt_vm_refresh_region(region);
+	}
 
-        return 0;
+	return ret;
 }
 
 static inline int ckpt_vm_map_region(struct xnd_vm_region *region)
 {
         kern_return_t kr;
-        mach_vm_address_t addr;
-        mach_vm_size_t size;
+        mach_vm_address_t addr = (mach_vm_address_t)region->start;
+        mach_vm_size_t size = (mach_vm_size_t)region->size;
 
-        addr = (mach_vm_address_t)region->start;
-        size = (mach_vm_size_t)region->size;
         kr = mach_vm_map(mach_task_self(), &addr, size, 0,
                          VM_FLAGS_FIXED | VM_FLAGS_OVERWRITE |
                          VM_MAKE_TAG(region->tag), MEMORY_OBJECT_NULL,
                          0, FALSE, VM_PROT_DEFAULT, VM_PROT_ALL,
                          VM_INHERIT_DEFAULT);
-
         if (kr != KERN_SUCCESS) {
-                xnd_error("mach_vm_map: %s\n"
-                          "(%p-%p %zu %s/%s %s)\n",
-                          mach_error_string(kr), region->start,
-                          region->start + region->size, region->size,
-                          VM_PROT_STRING(VM_PROT_DEFAULT),
-                          VM_PROT_STRING(VM_PROT_ALL),
-                          VM_INHERIT_STRING(VM_INHERIT_DEFAULT));
+		xnd_error("mach_vm_map: %s (%s)\n", mach_error_string(kr),
+			  vm_region_string(region));
                 return -1;
         }
 
@@ -180,13 +277,17 @@ static inline int ckpt_vm_map_region(struct xnd_vm_region *region)
         return 0;
 }
 
-/**
- * ckpt_vm_refresh:
+/*
+ * ckpt_vm_refresh_region:
  *  Refresh region protections and inheritance to reflect their
  *  original attributes (i.e. before checkpoint)
  */
-static inline int ckpt_vm_refresh(struct xnd_vm_region *region)
+static inline int ckpt_vm_refresh_region(struct xnd_vm_region *region)
 {
+	kern_return_t kr;
+	mach_vm_address_t addr;
+	mach_vm_size_t size;
+
         if (region->prot != VM_PROT_DEFAULT) {
                 if (ckpt_vm_protect(region, false, region->prot) != 0)
                         return -1;
@@ -198,12 +299,10 @@ static inline int ckpt_vm_refresh(struct xnd_vm_region *region)
         }
 
         if (region->inherit != VM_INHERIT_DEFAULT) {
-                kern_return_t kr;
-                mach_vm_address_t addr = (mach_vm_address_t)region->start;
-                mach_vm_size_t size = (mach_vm_size_t)region->size;
-                kr = mach_vm_inherit(mach_task_self(), addr, size,
-                                     region->inherit);
-
+		addr = (mach_vm_address_t)region->start;
+		size = (mach_vm_size_t)region->size;
+		kr = mach_vm_inherit(mach_task_self(), addr, size,
+				     region->inherit);
                 if (kr != KERN_SUCCESS) {
                         xnd_warn("mach_vm_inherit: %s (%s -> %s)\n",
                                  mach_error_string(kr),
@@ -236,7 +335,7 @@ int ckpt_vm_restore_region(int fd, struct xnd_vm_region *region)
         if (IN_VM_RANGE(&mach_task_self_, region->start, end))
                 mach_task_self_ = task_self_trap();
 
-        if (ckpt_vm_refresh(region) != 0)
+        if (ckpt_vm_refresh_region(region) != 0)
                 return -1;
 
         return 0;

@@ -2,6 +2,7 @@
 #ifndef XND_SYSCALL_H
 #define XND_SYSCALL_H
 #include "xnd/xnd.h"
+#include <errno.h>
 #include <sys/syscall.h>
 
 static __always_inline ssize_t sys_read(int fd, void *buf, size_t nbyte)
@@ -20,7 +21,12 @@ static __always_inline ssize_t sys_read(int fd, void *buf, size_t nbyte)
                 : "cc", "memory"
         );
 
-        return (ssize_t)(x17 ? -x0 : x0);
+	if (x17 != 0) {
+		errno = x0;
+		x0 = -1;
+	}
+
+	return (ssize_t)x0;
 }
 
 static __always_inline ssize_t sys_write(int fd, const void *buf,
@@ -40,7 +46,12 @@ static __always_inline ssize_t sys_write(int fd, const void *buf,
                 : "cc", "memory"
         );
 
-        return (ssize_t)(x17 ? -x0 : x0);
+	if (x17 != 0) {
+		errno = x0;
+		x0 = -1;
+	}
+
+	return (ssize_t)x0;
 }
 
 static __always_inline ssize_t sys_readall(int fd, void *buf,
