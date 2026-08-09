@@ -62,10 +62,15 @@
 
 #define barrier() __asm__ __volatile__("" ::: "memory")
 
-#define unreachable() do {              \
-        do { } while (0);               \
-        __builtin_unreachable();        \
-} while (0)
+#if __has_builtin(__builtin_unreachable)
+# define unreachable()				\
+	do {					\
+		do { } while (0);		\
+		__builtin_unreachable();	\
+	} while (0)
+#else
+# define unreachable() ((void)0)
+#endif
 
 #ifndef __noreturn
 # define __noreturn __attribute__((noreturn))
