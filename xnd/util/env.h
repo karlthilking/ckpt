@@ -18,7 +18,7 @@
 /*
  * Environment variables and definitions to control when
  * a temporary executable should be unlinked/removed. This is
- * only relevant if xnd_launch was given an arm64 executable,
+ * only relevant if xnd_launch was given an arm64e executable,
  * thus generating a temporary arm64 patched binary.
  */
 #define XND_TMP_BINARY_ENV "XND_TMP_BINARY"
