@@ -63,26 +63,32 @@ void xnd_postcheckpoint(void)
         epoch++;
 }
 
-/**
- * xnd_postrestart:
- *  Re-connect and register with coordinator, restore auxiliary state.
- *  xnd_postrestart should only be called by the checkpoint thread.
+/*
+ * xnd_postrestart_early:
+ *  Re-connect and re-register with the coordinator, and restore
+ *  any auxiliary state (signals, open files, etc.).
  */
-void xnd_postrestart(void)
+void xnd_postrestart_early(void)
 {
         int dirfd;
+
+	/*
+	 * Any function that may call into libpthread directly or
+	 * indirectly will crash if we have not yet patched the
+	 * checkpoint thread's signature and munge token, so
+	 * it is safest to do this right away.
+	 */
+	thread_ptr_munge_fixup();
 
         epoch++;
         connect_to_coord_on_restart();
         enter_coord_barrier(COORD_BARRIER_POSTRESTART);
 
-	thread_ptr_munge_fixup();
-        pid_table_postrestart();
         fd_table_restore();
         sig_state_restore();
 
-        /**
-         * If using compressed checkpoints, then we have to inflate
+        /*
+         * If using compressed checkpoints, then we had to inflate
          * the most recent checkpoint when we restarted. This is safe
          * to remove now as the compressed version is still on disk.
          */
@@ -96,6 +102,22 @@ void xnd_postrestart(void)
         xnd_log_shared_cache_info();
         xnd_log_main_thread_info();
 #endif
+}
+
+/*
+ * xnd_postrestart_late:
+ *  Finish any post-restart tasks that should happen after
+ *  the checkpoint thread has done some other preparation, but
+ *  before user threads are resumed.
+ *
+ *  Any functions that may call into libpthread or access thread
+ *  local-variables should be put here, as the checkpoint thread
+ *  does not restore/fixup its TCB and thread-local storage until
+ *  after xnd_postrestart_early is called.
+ */
+void xnd_postrestart_late(void)
+{
+	pid_table_postrestart();
 }
 
 void xnd_checkpoint(ucontext_t *uctx)
@@ -188,7 +210,6 @@ static __constructor(101) void xnd_setup(void)
         struct sigaction        sa;
         sigset_t                set;
         int                     sig;
-        char                    *tmp;
 
         connect_to_coord_on_launch();
 
@@ -208,11 +229,6 @@ static __constructor(101) void xnd_setup(void)
         pid_table_init();
         pid_table_init_pid_info();
 
-        if ((tmp = env_get_tmp_binary()) != NULL) {
-                if (env_should_unlink_tmp_binary())
-                        unlink(tmp);
-        }
-
         set_xnd_state(XND_RUNNING);
 
 #if DEVELOPMENT || DEBUG
@@ -225,10 +241,16 @@ static __constructor(101) void xnd_setup(void)
 
 static __destructor() void xnd_cleanup(void)
 {
+	char *tmp;
+
         set_xnd_state(XND_EXITING);
 
         fd_table_destroy();
         thread_list_destroy();
+
+	tmp = env_get_tmp_binary();
+	if (tmp != NULL && env_should_unlink_tmp_binary())
+		unlink(tmp);
 
         xnd_log_cleanup();
         disconnect_from_coord();

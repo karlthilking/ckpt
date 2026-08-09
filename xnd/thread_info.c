@@ -510,7 +510,7 @@ void *ckpt_thread_work(void *wait)
         getcontext(&myself->uctx);
 
         if (restart) {
-                xnd_postrestart();
+                xnd_postrestart_early();
 
                 thread_restore_tls(&ckpt_thread);
 		xnd_tlv_init();
@@ -518,6 +518,7 @@ void *ckpt_thread_work(void *wait)
                 myself = &ckpt_thread;
                 myself->self = pthread_self();
 
+		xnd_postrestart_late();
                 restore_threads();
                 barrier_arrival_wait();
 

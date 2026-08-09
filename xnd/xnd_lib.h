@@ -20,7 +20,8 @@ void set_xnd_state(enum xnd_state);
 
 void xnd_precheckpoint(void);
 void xnd_postcheckpoint(void);
-void xnd_postrestart(void);
+void xnd_postrestart_early(void);
+void xnd_postrestart_late(void);
 void xnd_checkpoint(ucontext_t *);
 
 void xnd_atfork_prepare(void);

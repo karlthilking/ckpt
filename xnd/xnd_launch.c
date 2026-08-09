@@ -52,7 +52,7 @@ static const char *help =
 "       Set the signal used for checkpoints\n"
 "       Default: SIGUSR2\n\n"
 "  --unlink-tmp [0 | 1]\n"
-"       Unlink temporary arm64 executable created by xnd_launch\n"
+"       Unlink the temporary arm64 executable created by xnd_launch\n"
 "       (Only relevant when xnd_launch is given an arm64e executable)\n"
 "        Default: 1 (true)\n\n"
 "  --help\n"
