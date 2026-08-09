@@ -67,6 +67,10 @@ def verify(test_id: str, ckpt_interval: int, iterations: int,
         print(f"[{name}] PASS (exited with code 0 before checkpoint)")
         return True
 
+    top_level_dir = None
+    if ckpt_dir.rfind('/') != -1:
+        top_level_dir = ckpt_dir[:ckpt_dir.rfind('/')]
+        
     kill_process_group(proc.pid)
     proc.wait()
 
@@ -76,6 +80,7 @@ def verify(test_id: str, ckpt_interval: int, iterations: int,
               f"{' (final, running to completion)' if last else ''}")
 
         if last:
+            ret = False
             proc = subprocess.Popen(
                 [xnd["xnd_restart"], ckpt_dir],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -84,9 +89,13 @@ def verify(test_id: str, ckpt_interval: int, iterations: int,
             code = proc.wait()
             if code != 0:
                 print(f"[{name}] FAIL: restart exited with code {code}")
-                return False
-            print(f"[{name}] PASS")
-            return True
+            else:
+                print(f"[{name}] PASS")
+                ret = True
+
+            if top_level_dir is not None:
+                os.system(f"rm -rf {top_level_dir}")
+            return ret
 
         master_fd, slave_fd = pty.openpty()
         proc = subprocess.Popen(
@@ -98,19 +107,25 @@ def verify(test_id: str, ckpt_interval: int, iterations: int,
 
         next_ckpt_dir = wait_for_checkpoint(master_fd)
         if next_ckpt_dir is None:
+            ret = False
             code = proc.wait()
             if code != 0:
                 print(f"[{name}] FAIL (exited with code {code} after "
                       f"{cycle + 1}/{iterations} cycles)")
-                return False
-            print(f"[{name}] PASS (exited with code 0 after "
-                  f"{cycle + 1}/{iterations} cycles)")
-            return True
+            else:
+                print(f"[{name}] PASS (exited with code 0 after "
+                      f"{cycle + 1}/{iterations} cycles)")
+                ret = True
+            if top_level_dir is not None:
+                os.system(f"rm -rf {top_level_dir}")
+            return ret
 
         kill_process_group(proc.pid)
         proc.wait()
         ckpt_dir = next_ckpt_dir
 
+    if top_level_dir is not None:
+        os.system(f"rm -rf {top_level_dir}")
     return True
 
 if __name__ == "__main__":
