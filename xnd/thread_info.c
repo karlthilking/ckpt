@@ -22,18 +22,18 @@
 #include <errno.h>
 #include <unistd.h>
 
-_Thread_local struct thread_info        *myself = NULL;
-static struct thread_info               *_main_thread = NULL;
-__hidden struct thread_info             ckpt_thread;
+_Thread_local struct thread_info *myself = NULL;
+static struct thread_info *_main_thread = NULL;
+__hidden struct thread_info ckpt_thread = {0};
 
-static struct thread_list       thread_list;
-static struct thread_list       zombie_list;
+static struct thread_list thread_list;
+static struct thread_list zombie_list;
 
-static int              threads_expected;
-static int              threads_arrived;
-static pthread_cond_t   cond_arrived    = PTHREAD_COND_INITIALIZER;
-static pthread_cond_t   cond_released   = PTHREAD_COND_INITIALIZER;
-static pthread_mutex_t  ckpt_mtx        = PTHREAD_MUTEX_INITIALIZER;
+static int threads_expected;
+static int threads_arrived;
+static pthread_cond_t cond_arrived = PTHREAD_COND_INITIALIZER;
+static pthread_cond_t cond_released = PTHREAD_COND_INITIALIZER;
+static pthread_mutex_t ckpt_mtx = PTHREAD_MUTEX_INITIALIZER;
 
 void thread_list_init(void)
 {
@@ -88,9 +88,9 @@ void thread_list_destroy(void)
                 ckpt_thread_reap();
 
         thread_list_acquire();
-        for_each_thread_safe(th, next, &thread_list) {
-                thread_reap(th);
-        }
+	THREAD_FOREACH_SAFE(th, next, &thread_list) {
+		thread_reap(th);
+	}
         thread_list_release();
         pthread_mutex_destroy(&thread_list.lock);
 
@@ -204,11 +204,11 @@ void thread_list_atfork_child(void)
         struct thread_info      *th, *next;
 
         set_xnd_state(XND_ATFORK);
-        for_each_thread_safe(th, next, &thread_list) {
+        THREAD_FOREACH_SAFE(th, next, &thread_list) {
                 free(th);
         }
 
-        for_each_thread_safe(th, next, &zombie_list) {
+        THREAD_FOREACH_SAFE(th, next, &zombie_list) {
                 free(th);
         }
 
@@ -281,7 +281,7 @@ void zombie_list_destroy(void)
         struct thread_info *th, *next;
 
         zombie_list_acquire();
-        for_each_thread_safe(th, next, &zombie_list) {
+        THREAD_FOREACH_SAFE(th, next, &zombie_list) {
                 thread_reap(th);
         }
         zombie_list_release();
@@ -314,7 +314,7 @@ void zombie_list_filter(void)
         struct thread_info *th, *next;
 
         zombie_list_acquire();
-        for_each_thread_safe(th, next, &zombie_list) {
+        THREAD_FOREACH_SAFE(th, next, &zombie_list) {
                 if (th->joined)
                         zombie_list_remove(th);
         }
@@ -363,7 +363,7 @@ void zombie_list_remove(struct thread_info *zombie)
         thread_reap(zombie);
 }
 
-/**
+/*
  * thread_init:
  *  Initialize new thread with start routine and argument that were
  *  included as arguments to pthread_create.
@@ -373,21 +373,43 @@ void zombie_list_remove(struct thread_info *zombie)
  *  list by calling thread_list_add in the thread start routine
  *  wrapper/trampoline function.
  */
-struct thread_info *thread_init(void *(*fn)(void *), void *arg)
+struct thread_info *
+thread_init(void *(*start_routine)(void *), void *arg)
 {
-        struct thread_info *new;
+	int err;
+	bool fail = true;
+	struct thread_info *t = NULL;
 
-        new = calloc(1, sizeof(struct thread_info));
-        xnd_assert(new != NULL);
+	t = calloc(1, sizeof(*t));
+	if (!t) {
+		xnd_error("calloc(1, %zu) failed\n", sizeof(*t));
+		goto out;
+	}
 
-        new->fn = fn;
-        new->arg = arg;
-        new->state = ST_EMBRYO;
+	t->start_routine = start_routine;
+	t->arg = arg;
+	t->state = ST_EMBRYO;
 
-        xnd_assert(pthread_mutex_init(&new->lock, NULL) == 0);
-        xnd_assert(pthread_cond_init(&new->cond, NULL) == 0);
+	err = pthread_mutex_init(&t->lock, NULL);
+	if (err) {
+		xnd_error("pthread_mutex_init: %s\n", strerror(err));
+		goto out;
+	}
 
-        return new;
+	err = pthread_cond_init(&t->cond, NULL);
+	if (err) {
+		xnd_error("pthread_cond_init: %s\n", strerror(err));
+		goto out;
+	}
+
+	fail = false;
+out:
+	if (fail) {
+		free(t);
+		t = NULL;
+	}
+
+	return t;
 }
 
 /**
@@ -402,19 +424,23 @@ void thread_reap(struct thread_info *th)
         free(th);
 }
 
-__noreturn void thread_exit(void *exit_value)
+__noreturn void
+thread_exit(void *exit_value)
 {
-        xnd_assert(myself);
-        xnd_assert(pthread_mutex_lock(&myself->lock) == 0);
+	pthread_mutex_lock(&myself->lock);
+	xnd_tlv_fini();
 
-        xnd_tlv_fini();
-        myself->exiting = 1;
+	/*
+	 * Signal a waiter, if any, in __pthread_join_hook. Once,
+	 * t->exiting is non-zero, the waiter can call the real
+	 * pthread_join while checkpointing is disabled.
+	 */
+	myself->exiting = 1;
+	pthread_cond_signal(&myself->cond);
+	pthread_mutex_unlock(&myself->lock);
 
-        pthread_cond_signal(&myself->cond);
-        xnd_assert(pthread_mutex_unlock(&myself->lock) == 0);
-
-        pthread_exit(exit_value);
-        unreachable();
+	pthread_exit(exit_value);
+	unreachable();
 }
 
 struct thread_info *thread_self(void)
@@ -640,7 +666,7 @@ again:
 
         suspended = 0;
         rescan = false;
-        for_each_thread_safe(th, next, &thread_list) {
+        THREAD_FOREACH_SAFE(th, next, &thread_list) {
                 xnd_assert(th->state != ST_CKPT_THREAD);
                 if (th->exiting) {
                         continue;
@@ -702,7 +728,7 @@ void restore_threads(void)
         threads_arrived = 0;
         threads_expected = 0;
 
-        for_each_thread(th, &thread_list) {
+        THREAD_FOREACH(th, &thread_list) {
                 xnd_assert(!th->exiting && th != &ckpt_thread);
                 err = pthread_create(&th->self, NULL, thread_restart, th);
                 if (unlikely(err != 0)) {
@@ -725,7 +751,7 @@ void wait_for_exiting_threads(void)
 		thread_list_acquire();
 		killed = 0;
 		exiting = 0;
-		for_each_thread_safe(th, next, &thread_list) {
+		THREAD_FOREACH_SAFE(th, next, &thread_list) {
 			if (!(th->joined || th->exiting)) {
 				xnd_assert(th->state == ST_SUSPENDED ||
 					   th->state == ST_SUSPINPROG);
@@ -808,60 +834,60 @@ void thread_sighandler(int sig, siginfo_t *info, void *uctx)
         xnd_assert(thread_state_cas(myself, ST_SUSPENDED, ST_RUNNING));
 }
 
-__noreturn void *thread_start(void *thread)
+__noreturn void *
+thread_start(void *thread)
 {
-        void *retval;
+	void *ret;
 
-        xnd_tlv_init();
-        /**
-         * Set thread local pointer to thread descriptor to point to
-         * newly allocated thread struct, and initialize pthread_t
-         * field.
-         */
-        myself = (struct thread_info *)thread;
-        myself->self = pthread_self();
-        thread_list_add();
+	xnd_tlv_init();
 
-        /**
-         * Signal to thread that spawned this thread in
-         * __pthread_create_hook that this thread has started and added
-         * itself to the thread list.
-         */
-        pthread_mutex_lock(&myself->lock);
-        myself->state = ST_RUNNING;
-        pthread_cond_signal(&myself->cond);
-        pthread_mutex_unlock(&myself->lock);
+	myself = (struct thread_info *)thread;
+	myself->self = pthread_self();
+	thread_list_add();
 
-        retval = myself->fn(myself->arg);
-        thread_exit(retval);
+	/*
+	 * The parent thread in __pthread_create_hook is waiting
+	 * for this thread to be added to the thread list and
+	 * ready to execute; signal the parent now.
+	 */
+	pthread_mutex_lock(&myself->lock);
+	myself->state = ST_RUNNING;
+	pthread_cond_signal(&myself->cond);
+	pthread_mutex_unlock(&myself->lock);
 
-        unreachable();
+	/*
+	 * We only return from this if the thread does not manually
+	 * exit via pthread_exit, but a wrapper around pthread_exit
+	 * will ensure that the thread still goes through thread_exit
+	 * regardless.
+	 */
+	ret = (*myself->start_routine)(myself->arg);
+	thread_exit(ret);
+
+	unreachable();
 }
 
-__noreturn void *thread_restart(void *thread)
+__noreturn void *
+thread_restart(void *thread)
 {
-        xnd_tlv_init();
+	/*
+	 * Restore tls before we do anything else. This first time
+	 * we reference a thread-local, libmalloc will allocate
+	 * space for the thread-local variable as might try to
+	 * read thread-specific data that hasn't been restored.
+	 */
+	thread_restore_tls((struct thread_info *)thread);
+	xnd_tlv_init();
 
-        /**
-         * Reinitialize thread local struct thread_info pointer to
-         * the current thread
-         */
-        myself = (struct thread_info *)thread;
-        myself->self = pthread_self();
-        myself->state = ST_RUNNING;
+	myself = (struct thread_info *)thread;
+	myself->self = pthread_self();
+	myself->state = ST_RUNNING;
 
-        /* Restore tls/tsd and signal state */
-        thread_restore_tls(myself);
-        thread_restore_sig_state();
+	thread_restore_sig_state();
+	thread_barrier();
+	thread_restore_context();
 
-        /**
-         * Wait in barrier until all threads have restored their
-         * tls and signal state. Then, restore context via setcontext().
-         */
-        thread_barrier();
-        thread_restore_context();
-
-        unreachable();
+	unreachable();
 }
 
 void thread_save_tls(void)
@@ -877,7 +903,7 @@ void thread_save_tls(void)
 		return;
 	}
 
-	/**
+	/*
 	 * If checkpoint thread is saving tls for the first time,
 	 * save the tls register directly so tsd pointers can be
 	 * copied to new tls on restart.
@@ -888,7 +914,7 @@ void thread_save_tls(void)
 		return;
 	}
 
-	/**
+	/*
 	 * Otherwise, this is not the first time the checkpoint thread
 	 * is saving its tls register, i.e. we have restarted one or
 	 * more times. In order to save tls, reuse the first tls
@@ -909,7 +935,7 @@ void thread_save_tls(void)
 	}
 }
 
-/**
+/*
  * thread_restore_tls:
  *  TPIDRRO_EL0 can not be written to directly. Instead, restore tsd
  *  slots 20-767 for thread locals.
@@ -954,9 +980,10 @@ __noreturn void thread_restore_context(void)
 {
 	u64 *fp = (u64 *)get_ucontext_fp(&myself->uctx);
 
-	/**
-	 * Re-sign link register saved on stack frames, and call
-	 * xnd_setcontext to switch to the saved user context.
+	/*
+	 * Re-sign every link register saved in a stack frame before
+	 * we restore the saved user context. Then, we can jump back
+	 * to the previous user context safely.
 	 */
 	ptrauth_resign_frames(fp);
         xnd_setcontext(&myself->uctx);
@@ -976,7 +1003,7 @@ void thread_save_sig_state(void)
         }
 
         if (is_ckpt_thread && !sigismember(blocked, ckpt_sig)) {
-                xnd_warn("Checkpoint signal not blocked by checkpoint thread");
+		xnd_warn("Checkpoint signal is not blocked by checkpoint thread\n");
                 sigaddset(blocked, ckpt_sig);
         }
 
@@ -993,7 +1020,7 @@ void thread_restore_sig_state(void)
         bool is_ckpt_thread = (myself == &ckpt_thread);
 
         if (is_ckpt_thread && !sigismember(blocked, ckpt_sig)) {
-                xnd_warn("Checkpoint signal isn't in checkpoint thread's blocked signal set");
+		xnd_warn("Checkpoint signal is not blocked by checkpoint thread\n");
                 sigaddset(blocked, ckpt_sig);
         }
 

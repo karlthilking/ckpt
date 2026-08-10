@@ -10,15 +10,13 @@
 #include <pthread.h>
 #include <signal.h>
 
-#define for_each_thread(th, list) \
-        for ((th) = (list)->head; (th) != NULL; (th) = (th)->next)
+#define THREAD_FOREACH(t, list) \
+	for ((t) = (list)->head; (t) != NULL; (t) = (t)->next)
 
-#define for_each_thread_safe(th, next, list)    \
-        for ((th) = (list)->head,               \
-             (next) = (th) ? (th)->next : NULL; \
-             (th) != NULL;                      \
-             (th) = next,                       \
-             (next) = (th) ? (th)->next : NULL) \
+#define THREAD_FOREACH_SAFE(t, next, list)			  \
+	for ((t) = (list)->head, (next) = (t) ? (t)->next : NULL; \
+	     (t) != NULL;					  \
+	     (t) = next, (next) = (t) ? (t)->next : NULL)
 
 enum thread_state {
         ST_EMBRYO,
@@ -31,31 +29,37 @@ enum thread_state {
 };
 
 struct thread_list {
-       struct thread_info       *head;
-       pthread_mutex_t          lock;
+	struct thread_info *head;
+	pthread_mutex_t lock;
 };
 
 struct thread_info {
-        pthread_t                       self;
-        void                            *(*fn)(void *);
-        void                            *arg;
-        
-        _Atomic enum thread_state       state;
-        u8                              exiting         : 1,
-                                        joined          : 1,
-                                        unused          : 6;
-        void                            *exit_value;
+	pthread_t self;
+	void *(*start_routine)(void *);
+	void *arg;
 
-        u32                             wrapper_depth;
-        ucontext_t                      uctx;
-        uintptr_t                       tls;
-        stack_t                         ss;
-        sigset_t                        sigblocked;
+	/* Current execution state */
+	_Atomic enum thread_state state;
+	u32 wrapper_depth;
+	u8 exiting : 1,
+	   joined : 1,
+	   unused : 6;
 
-        pthread_mutex_t                 lock;
-        pthread_cond_t                  cond;
-        struct thread_info              *next;
-        struct thread_info              *prev;
+	/* User context to restore */
+	ucontext_t uctx;
+
+	/* Thread-specific signal state */
+	stack_t ss;
+	sigset_t sigblocked;
+
+	/* Thread-local storage */
+	uintptr_t tls;
+	void **tsd_key_buf;
+
+	pthread_mutex_t lock;
+	pthread_cond_t cond;
+	struct thread_info *next;
+	struct thread_info *prev;
 };
 
 void thread_list_init(void);
@@ -139,4 +143,4 @@ static __always_inline void unsafe_exit(void)
 }
 
 
-#endif /* XND_THREAD_INFO_H  */ 
+#endif /* XND_THREAD_INFO_H  */

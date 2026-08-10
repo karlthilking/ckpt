@@ -31,66 +31,85 @@ static __always_inline bool validate_pthread(pthread_t p)
         return (PTHREAD_TAG_MASK & (uintptr_t)p) == PTHREAD_MAGIC;
 }
 
-int __pthread_create_hook(pthread_t *p, const pthread_attr_t *attr,
-                          void *(*start_routine)(void *), void *arg)
+int
+__pthread_create_hook(pthread_t *p, const pthread_attr_t *attr,
+		      void *(*start_routine)(void *), void *arg)
 {
-        int                     retval;
-        struct thread_info      *new;
+	int err;
+	struct thread_info *t;
 
-        new = thread_init(start_routine, arg);
+	/*
+	 * Return some reasonable error if we really failed to
+	 * allocate our internal thread descriptor or failed
+	 * to initialize locks/condition variables.
+	 */
+	t = thread_init(start_routine, arg);
+	if (!t)
+		return EAGAIN;
 
-        unsafe_enter();
-        retval = pthread_create(p, attr, thread_start, new);
-        if (retval != 0) {
-                xnd_warn("pthread_create: %s\n", strerror(retval));
-                free(new);
-                return retval;
-        }
+	unsafe_enter();
+	err = pthread_create(p, attr, thread_start, t);
+	if (err) {
+		free(t);
+		unsafe_exit();
+		return err;
+	}
 
-        xnd_assert(pthread_mutex_lock(&new->lock) == 0);
-        while (new->state == ST_EMBRYO) {
-                pthread_cond_wait(&new->cond, &new->lock);
-        }
-        xnd_assert(pthread_mutex_unlock(&new->lock) == 0);
-        unsafe_exit();
+	pthread_mutex_lock(&t->lock);
+	while (t->state == ST_EMBRYO) {
+		pthread_cond_wait(&t->cond, &t->lock);
+	}
+	pthread_mutex_unlock(&t->lock);
 
-        /**
-         * Set pthread_t to be an opaque pointer to a libckpt internal
-         * thread descriptor struct instead of the thread struct within
-         * libpthread. This way, pthread_t's passed into other hook
-         * functions will map to their thread struct in libckpt even
-         * after pthread_t values have changed after a restart.
-         *
-         * encode_pthread will also tag the high bits of the value
-         * so it can be validated before being dereferenced.
-         */
-        *p = encode_pthread(new);
-        return retval;
+	/*
+	 * Manipulate pthread descriptor to point to our internal
+	 * thread descriptor with a magic value in the high bits
+	 * for identification.
+	 */
+	*p = encode_pthread(t);
+	unsafe_exit();
+
+	return 0;
 }
 
-int __pthread_join_hook(pthread_t p, void **value_ptr)
+int
+__pthread_join_hook(pthread_t p, void **value_ptr)
 {
-        int                     err;
-        struct thread_info      *th;
+	int err;
+	struct thread_info *t;
 
-        if (validate_pthread(p)) {
-                th = decode_pthread(p);
-        } else {
-                return ESRCH;
-        }
+	if (!validate_pthread(p))
+		return ESRCH;
 
-        xnd_assert(pthread_mutex_lock(&th->lock) == 0);
-        while (!th->exiting) {
-                xnd_assert(pthread_cond_wait(&th->cond, &th->lock) == 0);
-        }
-        xnd_assert(pthread_mutex_unlock(&th->lock) == 0);
+	/*
+	 * If the calling thread is trying to join themselves, lets
+	 * handle the error independently so we don't deadlock
+	 * in our own wrapper.
+	 */
+	t = decode_pthread(p);
+	if (t == thread_self_or_null())
+		return EDEADLK;
 
-        unsafe_enter();
-        err = pthread_join(th->self, value_ptr);
-        th->joined = 1;
-        unsafe_exit();
+	pthread_mutex_lock(&t->lock);
+	while (!t->exiting) {
+		pthread_cond_wait(&t->cond, &t->lock);
+	}
+	pthread_mutex_unlock(&t->lock);
 
-        return err;
+	/*
+	 * Now that we know the thread is really exiting, we can
+	 * make this join a fast, atomic operation.
+	 *
+	 * Only mark the thread as joined if pthread_join really
+	 * succeeds. Otherwise, we might free the thread descriptor
+	 * while the thread is still alive.
+	 */
+	unsafe_enter();
+	err = pthread_join(t->self, value_ptr);
+	t->joined = (err == 0);
+	unsafe_exit();
+
+	return err;
 }
 
 void __pthread_exit_hook(void *value_ptr)
@@ -106,10 +125,8 @@ pthread_t __pthread_self_hook(void)
 		return pthread_self();
 
 	self = thread_self_or_null();
-	if (self == NULL) {
-		xnd_error("thread descriptor is NULL\n");
-		xnd_abort();
-	}
+	if (!self)
+		xnd_panic("internal error: thread descriptor is NULL\n");
 
 	return encode_pthread(self);
 }
@@ -123,15 +140,14 @@ int __pthread_equal_hook(pthread_t p1, pthread_t p2)
         return (uintptr_t)p1 == (uintptr_t)p2;
 }
 
-int __pthread_kill_hook(pthread_t p, int sig)
+int
+__pthread_kill_hook(pthread_t p, int sig)
 {
 	int err, ckpt_sig;
-	struct thread_info *th;
+	struct thread_info *t;
 
-	if (!validate_pthread(p)) {
-		xnd_warn("pthread is invalid: 0x%lx\n", (uintptr_t)p);
+	if (!validate_pthread(p))
 		return ESRCH;
-	}
 
 	ckpt_sig = env_get_ckpt_signal();
 	if (sig == ckpt_sig) {
@@ -139,15 +155,9 @@ int __pthread_kill_hook(pthread_t p, int sig)
 		return EINVAL;
 	}
 
-	/*
-	 * Wrap pthread_kill in a critical section; __pthread_kill
-	 * will use the thread's mach port, which will be invalid if
-	 * we restart after taking a checkpoint in the middle of
-	 * __pthread_kill.
-	 */
-	th = decode_pthread(p);
+	t = decode_pthread(p);
 	unsafe_enter();
-	err = pthread_kill(th->self, sig);
+	err = pthread_kill(t->self, sig);
 	unsafe_exit();
 
 	return err;
