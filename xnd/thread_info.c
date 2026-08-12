@@ -1,9 +1,20 @@
 /* thread_info.c */
+#include <errno.h>
+#include <mach/mach_vm.h>
+#include <pthread.h>
+#include <signal.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
+#include <ucontext.h>
+#include <unistd.h>
+
 #include "xnd.h"
 #include "thread_info.h"
 #include "xnd_lib.h"
 #include "pac.h"
 #include "tls.h"
+#include "vm_region.h"
 #include "util/env.h"
 #include "util/log.h"
 #include "coordinator/xnd_coord_api.h"
@@ -11,16 +22,6 @@
 #include "wrappers/signal_wrappers.h"
 #include "wrappers/pthread_wrappers.h"
 #include "platform/ucontext/ucontext.h"
-
-#include <ucontext.h>
-#include <stdlib.h>
-#include <signal.h>
-#include <pthread.h>
-#include <assert.h>
-#include <stdio.h>
-#include <string.h>
-#include <errno.h>
-#include <unistd.h>
 
 _Thread_local struct thread_info *myself = NULL;
 static struct thread_info *_main_thread = NULL;
@@ -380,11 +381,14 @@ thread_init(void *(*start_routine)(void *), void *arg)
 	bool fail = true;
 	struct thread_info *t = NULL;
 
+	unsafe_enter();
 	t = calloc(1, sizeof(*t));
 	if (!t) {
-		xnd_error("calloc(1, %zu) failed\n", sizeof(*t));
-		goto out;
+		xnd_error("Failed to allocate %zu bytes\n", sizeof(*t));
+		unsafe_exit();
+		return NULL;
 	}
+	unsafe_exit();
 
 	t->start_routine = start_routine;
 	t->arg = arg;
@@ -445,7 +449,7 @@ thread_exit(void *exit_value)
 
 struct thread_info *thread_self(void)
 {
-        assert(myself != NULL);
+        xnd_assert(myself != NULL);
         return myself;
 }
 
@@ -456,7 +460,7 @@ struct thread_info *thread_self_or_null(void)
 
 struct thread_info *main_thread(void)
 {
-        assert(_main_thread != NULL);
+        xnd_assert(_main_thread != NULL);
         return _main_thread;
 }
 
@@ -502,10 +506,11 @@ void ckpt_thread_wait(void)
 	set_xnd_state(XND_CKPT_PENDING);
 }
 
-void *ckpt_thread_work(void *wait)
+void *
+ckpt_thread_work(void *wait)
 {
-        static volatile bool    restart;
-        sigset_t                set;
+        sigset_t set;
+        static volatile bool restart;
 
         sigemptyset(&set);
         sigaddset(&set, env_get_ckpt_signal());
@@ -719,27 +724,24 @@ again:
 
 void restore_threads(void)
 {
-        int                     err;
-        struct thread_info      *th;
+	int err;
+	struct thread_info *t;
 
-        thread_list_acquire();
-        pthread_mutex_lock(&ckpt_mtx);
+	thread_list_acquire();
+	pthread_mutex_lock(&ckpt_mtx);
 
-        threads_arrived = 0;
-        threads_expected = 0;
+	threads_arrived = 0;
+	threads_expected = 0;
 
-        THREAD_FOREACH(th, &thread_list) {
-                xnd_assert(!th->exiting && th != &ckpt_thread);
-                err = pthread_create(&th->self, NULL, thread_restart, th);
-                if (unlikely(err != 0)) {
-                        xnd_error("pthread_create: %s\n", strerror(err));
-                        xnd_abort();
-                }
-                threads_expected++;
-        }
+	THREAD_FOREACH(t, &thread_list) {
+		threads_expected++;
+		err = pthread_create(&t->self, NULL, thread_restart, t);
+		if (err != 0)
+			xnd_panic("pthread_create: %s\n", strerror(err));
+	}
 
-        thread_list_release();
-        pthread_mutex_unlock(&ckpt_mtx);
+	thread_list_release();
+	pthread_mutex_unlock(&ckpt_mtx);
 }
 
 void wait_for_exiting_threads(void)
@@ -893,12 +895,13 @@ thread_restart(void *thread)
 void thread_save_tls(void)
 {
 	uintptr_t tls;
+	void **src;
+	void **dst;
 
         xnd_assert(myself != NULL);
 	asm volatile("mrs %0, tpidrro_el0" : "=r" (tls) :: "memory");
 
 	if (myself->state != ST_CKPT_THREAD) {
-		xnd_assert(myself != &ckpt_thread);
 		myself->tls = tls;
 		return;
 	}
@@ -928,8 +931,8 @@ void thread_save_tls(void)
 	 *   restore tls, we keep the original tls up-to-date and
 	 *   continue copying from there for each restart. ]
 	 */
-	void **src = (void **)tls;
-	void **dst = (void **)myself->tls;
+	src = (void **)tls;
+	dst = (void **)myself->tls;
 	for (uint slot = 20; slot < 768; slot++) {
 		dst[slot] = src[slot];
 	}
@@ -986,7 +989,8 @@ __noreturn void thread_restore_context(void)
 	 * to the previous user context safely.
 	 */
 	ptrauth_resign_frames(fp);
-        xnd_setcontext(&myself->uctx);
+	xnd_setcontext(&myself->uctx);
+
         unreachable();
 }
 

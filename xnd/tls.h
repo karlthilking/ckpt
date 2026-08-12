@@ -32,7 +32,7 @@
 #define TLS_CLEANUP_HANDLER_OFFSET \
 	(TLS_PTHREAD_OFFSET + PTHREAD_CLEANUP_HANDLER_OFFSET)
 
-#define TSD_SLOTS 768
+#define PTHREAD_TSD_END 768
 
 #define get_thread_cleanup_stack(tls)				 \
 	({							 \

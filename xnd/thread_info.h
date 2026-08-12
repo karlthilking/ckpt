@@ -54,7 +54,6 @@ struct thread_info {
 
 	/* Thread-local storage */
 	uintptr_t tls;
-	void **tsd_key_buf;
 
 	pthread_mutex_t lock;
 	pthread_cond_t cond;
