@@ -27,8 +27,9 @@ extern char **environ;
 static std::vector<xnd_restart_target *> targets;
 static std::vector<xnd_restart_target *> independent_roots;
 
-static xnd_restart_info *info   = nullptr;
-static xnd_restart_dag  *dag    = nullptr;
+static bool restart_pause = false;
+static xnd_restart_dag *dag = nullptr;
+static xnd_restart_info *info = nullptr;
 
 static void restore_parent_cleanup(void)
 {
@@ -84,26 +85,31 @@ static int restore_parent_setup(void)
 
 [[noreturn]] void xnd_restart_target::exec_restart(void) const noexcept
 {
-        int                     err;
-        short                   flags;
-        posix_spawnattr_t       attr;
+	int err;
+	short flags;
+	posix_spawnattr_t attr;
+	const char* argv[4] = { info->restart, this->path_to_ckpt() };
 
+	argv[2] = (restart_pause ? "--pause" : nullptr);
+	argv[3] = nullptr;
         xnd_log_mach_port_info();
 
-        posix_spawnattr_init(&attr);
-        flags = POSIX_SPAWN_SETEXEC | POSIX_SPAWN_DISABLE_ASLR;
-        if ((err = posix_spawnattr_setflags(&attr, flags)) != 0) {
-                xnd_error("posix_spawnattr_setflags: %s\n", strerror(err));
-                exit(XND_EXIT_FAILURE);
-        }
+	posix_spawnattr_init(&attr);
+	flags = POSIX_SPAWN_SETEXEC | POSIX_SPAWN_DISABLE_ASLR;
 
-        char *argv[] = { info->restart, this->path_to_ckpt(), nullptr };
-        err = posix_spawn(nullptr, argv[0], nullptr, &attr, argv, environ);
-        if (err != 0) {
-                posix_spawnattr_destroy(&attr);
-                xnd_error("posix_spawn: %s\n", strerror(err));
-                exit(XND_EXIT_FAILURE);
-        }
+	err = posix_spawnattr_setflags(&attr, flags);
+	if (err) {
+		xnd_error("posix_spawnattr_setflags: %s\n", strerror(err));
+		exit(XND_EXIT_FAILURE);
+	}
+
+	err = posix_spawn(nullptr, argv[0], nullptr, &attr,
+			  (char *const *)argv, environ);
+	if (err) {
+		xnd_error("posix_spawn: %s\n", strerror(err));
+		posix_spawnattr_destroy(&attr);
+		exit(XND_EXIT_FAILURE);
+	}
 
         unreachable();
 }
@@ -246,18 +252,27 @@ void xnd_restart_target::create_process(bool create_roots) const noexcept
 
 int main(int argc, char *argv[])
 {
-        int     stat, code;
-        pid_t   ret, child;
+	int stat, code;
+	pid_t ret, child;
+	const char *ckptdir = nullptr;
 
         xnd_log_setup();
-        if (argc != 2) {
-                xnd_error("Usage: ./xnd_restart <ckpt-dir>\n");
-                exit(0);
-        }
+	for (char **p = argv + 1; *p != NULL; p++) {
+		if (strncmp(*p, "--pause", sizeof("--pause")) == 0) {
+			restart_pause = true;
+		} else if (access(*p, F_OK) == 0) {
+			ckptdir = *p;
+		} else {
+			xnd_error("Invalid argument: %s\n", *p);
+			exit(XND_EXIT_FAILURE);
+		}
+	}
 
-        restore_parent_setup();
-        info = new xnd_restart_info(argv[1]);
-        switch ((child = fork())) {
+	restore_parent_setup();
+	info = new xnd_restart_info(ckptdir);
+
+	child = fork();
+        switch (child) {
         case -1:
                 xnd_error("fork: %s\n", strerror(errno));
                 goto fail;

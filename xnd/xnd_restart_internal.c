@@ -21,6 +21,14 @@
 #include <ucontext.h>
 #include <sys/mman.h>
 
+#define RESTART_PAUSE_WHILE(expr)		       \
+	if (expr) 				       \
+		printf("Pausing in %s (lldb -p %d)\n", \
+		       __func__, getpid());	       \
+	do { } while (expr)
+
+static bool restart_pause = false;
+
 __noreturn noinline void restart(int fd)
 {
         int ret;
@@ -43,10 +51,8 @@ __noreturn noinline void restart(int fd)
                 exit(XND_EXIT_FAILURE);
         }
 
-        // int DEBUG_ON=1;
-        // printf("Pausing for debugging (lldb -p %d)\n", _real_getpid());
-        // while (DEBUG_ON) {
-        // }
+	/* For debugging */
+	RESTART_PAUSE_WHILE(restart_pause == true);
 
         ucontext_t uctx;
         enum xnd_ckpt_entry entries[header.entry_count];
@@ -106,15 +112,28 @@ __noreturn void jump(int fd)
         unreachable();
 }
 
-__noreturn int main(int argc, char **argv)
+__noreturn int main(int argc, char *argv[])
 {
         int fd;
         mach_vm_address_t ubc_addr;
         mach_vm_size_t ubc_size;
+	const char *ckptfile = NULL;
 
-        if (argc != 2) {
-                exit(XND_EXIT_FAILURE);
-        }
+	for (char **p = argv + 1; *p != NULL; p++) {
+		if (strncmp(*p, "--pause", sizeof("--pause")) == 0) {
+			restart_pause = true;
+		} else if (strstr(*p, ".xnd") && access(*p, F_OK) == 0) {
+			ckptfile = *p;
+		} else {
+			xnd_error("Invalid argument: %s\n", *p);
+			exit(XND_EXIT_FAILURE);
+		}
+	}
+
+	if (ckptfile == NULL) {
+		xnd_error("No checkpoint file specified\n");
+		exit(XND_EXIT_FAILURE);
+	}
 
         ubc_addr = ckpt_vm_find_ubc_region(&ubc_size);
 	if (ubc_addr > 0 && ubc_addr < DYLD_SHARED_CACHE_BASE) {
@@ -131,11 +150,11 @@ __noreturn int main(int argc, char **argv)
                 exit(XND_EXIT_FAILURE);
         }
 
-        fd = open(argv[1], O_RDONLY);
-        if (fd < 0) {
-                xnd_error("open(%s): %s\n", argv[1], strerror(errno));
-                exit(XND_EXIT_FAILURE);
-        }
+	fd = open(ckptfile, O_RDONLY);
+	if (fd < 0) {
+		xnd_perror("open");
+		exit(XND_EXIT_FAILURE);
+	}
 
         xnd_printf("Restarting from %s (pid=%d)\n", argv[1], getpid());
         jump(fd);
