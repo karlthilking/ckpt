@@ -381,14 +381,11 @@ thread_init(void *(*start_routine)(void *), void *arg)
 	bool fail = true;
 	struct thread_info *t = NULL;
 
-	unsafe_enter();
 	t = calloc(1, sizeof(*t));
 	if (!t) {
 		xnd_error("Failed to allocate %zu bytes\n", sizeof(*t));
-		unsafe_exit();
 		return NULL;
 	}
-	unsafe_exit();
 
 	t->start_routine = start_routine;
 	t->arg = arg;

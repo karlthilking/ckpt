@@ -43,16 +43,17 @@ __pthread_create_hook(pthread_t *p, const pthread_attr_t *attr,
 	 * allocate our internal thread descriptor or failed
 	 * to initialize locks/condition variables.
 	 */
-	t = thread_init(start_routine, arg);
-	if (!t)
-		return EAGAIN;
-
 	unsafe_enter();
+	t = thread_init(start_routine, arg);
+	if (!t) {
+		err = EAGAIN;
+		goto out;
+	}
+
 	err = pthread_create(p, attr, thread_start, t);
 	if (err) {
 		free(t);
-		unsafe_exit();
-		return err;
+		goto out;
 	}
 
 	pthread_mutex_lock(&t->lock);
@@ -67,8 +68,9 @@ __pthread_create_hook(pthread_t *p, const pthread_attr_t *attr,
 	 * for identification.
 	 */
 	*p = encode_pthread(t);
-	unsafe_exit();
 
+out:
+	unsafe_exit();
 	return err;
 }
 
