@@ -17,9 +17,12 @@ struct Body {
 	double mass;
 };
 
-static int N = 1 << 11, steps = 10000, log_every = 100;
+static int N = 1 << 11;
+static int steps = 25000, log_every = 250;
+
 static std::vector<Body> bodies;
 static std::vector<double> fx, fy, fz;
+
 static double dt = 1e-3, softening = 0.01;
 static int nthreads = std::thread::hardware_concurrency();
 

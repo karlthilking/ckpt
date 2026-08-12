@@ -69,7 +69,7 @@ __pthread_create_hook(pthread_t *p, const pthread_attr_t *attr,
 	*p = encode_pthread(t);
 	unsafe_exit();
 
-	return 0;
+	return err;
 }
 
 int

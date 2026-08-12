@@ -50,7 +50,11 @@
 
 #define ARRAY_SIZE(a) (sizeof(a) / sizeof((a)[0]))
 
-#define concat(a, b) a##b
+#define CONCAT_X(a, b) a##b
+#define CONCAT(a, b) CONCAT_X(a, b)
+
+#define TOSTRING_x(s) #s
+#define TOSTRING(s) TOSTRING_X(s)
 
 #ifndef likely
 # define likely(x)       __builtin_expect(!!(x), 1)
@@ -76,6 +80,10 @@
 # define __noreturn __attribute__((noreturn))
 #endif
 
+#ifndef __naked
+# define __naked __attribute__((naked))
+#endif
+
 #define __constructor(x)        __attribute__((constructor(x)))
 #define __destructor(x)         __attribute__((destructor(x)))
 
@@ -83,7 +91,9 @@
 # define noinline __attribute__((noinline))
 #endif
 
-#define __always_inline inline __attribute__((always_inline))
+#ifndef __always_inline
+# define __always_inline inline __attribute__((always_inline))
+#endif
 
 #ifndef __used
 # define __used __attribute__((used))
@@ -101,6 +111,8 @@
 # define __hidden __attribute__((visibility("hidden")))
 #endif
 
-#define __no_stack_protector __attribute__((no_stack_protector))
+#ifndef __no_stack_protector
+# define __no_stack_protector __attribute__((no_stack_protector))
+#endif
 
 #endif /* XND_COMPILER_H */
