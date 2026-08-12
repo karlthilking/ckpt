@@ -140,11 +140,18 @@ int write_vm_region(int fd, struct xnd_vm_region *region)
 	bool read_protect;
 
 	/*
-	 * Only save dirty pages for shared cache regions, malloc
-	 * arenas, etc.
+	 * Only save dirty pages for shared cache regions and malloc
+	 * arenas if the optimization reduces checkpoint file size.
 	 */
-	if (ONLY_SAVE_DIRTY_PAGES(region))
-		return write_vm_region_dirty(fd, region);
+	if (ONLY_SAVE_DIRTY_PAGES(region)) {
+		const size_t cost = region->pages_dirtied *
+			(sizeof(struct xnd_vm_page) + VM_PAGE_SIZE);
+		if (cost < region->size + sizeof(*region)) {
+			region->dirty_only = true;
+			return write_vm_region_dirty(fd, region);
+		}
+		region->dirty_only = false;
+	}
 
 	/*
 	 * Save current position to manipulate region fields later

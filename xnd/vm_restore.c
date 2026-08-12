@@ -320,8 +320,16 @@ int ckpt_vm_restore_region(int fd, struct xnd_vm_region *region)
         ssize_t bread;
         uintptr_t end;
 
-        if (ONLY_RESTORE_DIRTY_PAGES(region))
-                return ckpt_vm_restore_region_pages(fd, region);
+	/*
+	 * ONLY_RESTORE_DIRTY_PAGES is a constant predicate
+	 * qualifying regions that should be considered for
+	 * only saving dirty pages from. However, dirty_only
+	 * can be set to false to override this decision if
+	 * only saving dirty pages is not beneficial. Only
+	 * restore by individual pages if both are true.
+	 */
+	if (ONLY_RESTORE_DIRTY_PAGES(region) && region->dirty_only)
+		return ckpt_vm_restore_region_pages(fd, region);
 
         if (ckpt_vm_map_region(region) != 0)
                 return -1;

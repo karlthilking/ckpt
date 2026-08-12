@@ -23,6 +23,7 @@ struct xnd_vm_region {
         u32             mode;
         u32             tag;
         uint            pages_dirtied;
+	bool		dirty_only;
 };
 
 struct xnd_vm_page {
