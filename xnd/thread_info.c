@@ -40,18 +40,22 @@ void thread_list_init(void)
 {
         int err;
 
-        if ((err = pthread_mutex_init(&thread_list.lock, NULL)) != 0) {
-                xnd_error("pthread_mutex_init: %s\n", strerror(err));
-                xnd_abort();
-        }
+	err = pthread_mutex_init(&thread_list.lock, NULL);
+	if (err)
+		xnd_panic("pthread_mutex_init: %s\n", strerror(err));
 
         /* Initialize main thread info */
         xnd_tlv_init();
-        thread_list.head = calloc(1, sizeof(struct thread_info));
-        xnd_assert(thread_list.head != NULL);
+	_main_thread = calloc(1, sizeof(*_main_thread));
+	if (!_main_thread)
+		xnd_panic("Failed to allocate thread descriptor\n");
 
-        myself = _main_thread = thread_list.head;
-        myself->self = pthread_self();
+	_main_thread->tsd_keys = calloc(TSD_KEYS_LEN, sizeof(void *));
+	if (!_main_thread->tsd_keys)
+		xnd_panic("Failed to allocate tsd keys buffer\n");
+
+	myself = thread_list.head = _main_thread;
+	myself->self = pthread_self();
 
         /**
          * If thread_list_init() was called form thread_list_atfork_child,
@@ -70,33 +74,36 @@ void thread_list_init(void)
                 myself->state = ST_RUNNING;
         }
 
-        if ((err = pthread_mutex_init(&myself->lock, NULL)) != 0) {
-                xnd_error("pthread_mutex_init: %s\n", strerror(err));
-                xnd_abort();
-        }
+	err = pthread_mutex_init(&myself->lock, NULL);
+	if (err)
+		xnd_panic("pthread_mutex_init: %s\n", strerror(err));
 
-        xnd_assert(pthread_cond_init(&myself->cond, NULL) == 0);
+	err = pthread_cond_init(&myself->cond, NULL);
+	if (err)
+		xnd_panic("pthread_cond_init: %s\n", strerror(err));
+
         zombie_list_init();
         ckpt_thread_init();
 }
 
-void thread_list_destroy(void)
+void
+thread_list_destroy(void)
 {
-        struct thread_info *th, *next;
+	struct thread_info *t, *next;
 
-        xnd_assert(get_xnd_state() == XND_EXITING);
-        if (myself != &ckpt_thread)
-                ckpt_thread_reap();
+	xnd_assert(get_xnd_state() == XND_EXITING);
+	if (myself != &ckpt_thread)
+		ckpt_thread_reap();
 
-        thread_list_acquire();
-	THREAD_FOREACH_SAFE(th, next, &thread_list) {
-		thread_reap(th);
+	thread_list_acquire();
+	THREAD_FOREACH_SAFE(t, next, &thread_list) {
+		thread_reap(t);
 	}
-        thread_list_release();
-        pthread_mutex_destroy(&thread_list.lock);
+	thread_list_release();
+	pthread_mutex_destroy(&thread_list.lock);
 
-        zombie_list_destroy();
-        xnd_tlv_fini();
+	zombie_list_destroy();
+	xnd_tlv_fini();
 }
 
 void thread_list_acquire(void)
@@ -104,10 +111,8 @@ void thread_list_acquire(void)
         int err;
 
         err = pthread_mutex_lock(&thread_list.lock);
-        if (unlikely(err != 0)) {
-                xnd_error("pthread_mutex_lock: %s\n", strerror(err));
-                xnd_abort();
-        }
+	if (unlikely(err))
+		xnd_panic("pthread_mutex_lock: %s\n", strerror(err));
 }
 
 void thread_list_release(void)
@@ -115,10 +120,8 @@ void thread_list_release(void)
         int err;
 
         err = pthread_mutex_unlock(&thread_list.lock);
-        if (unlikely(err != 0)) {
-                xnd_error("pthread_mutex_unlock: %s\n", strerror(err));
-                xnd_abort();
-        }
+	if (unlikely(err))
+		xnd_panic("pthread_mutex_unlock: %s\n", strerror(err));
 }
 
 /**
@@ -271,10 +274,9 @@ void zombie_list_init(void)
         int err;
 
         zombie_list.head = NULL;
-        if ((err = pthread_mutex_init(&zombie_list.lock, NULL)) != 0) {
-                xnd_error("pthread_mutex_init: %s\n", strerror(err));
-                xnd_abort();
-        }
+	err = pthread_mutex_init(&zombie_list.lock, NULL);
+	if (err)
+		xnd_panic("pthread_mutex_init: %s\n", strerror(err));
 }
 
 void zombie_list_destroy(void)
@@ -378,7 +380,6 @@ struct thread_info *
 thread_init(void *(*start_routine)(void *), void *arg)
 {
 	int err;
-	bool fail = true;
 	struct thread_info *t = NULL;
 
 	t = calloc(1, sizeof(*t));
@@ -391,38 +392,45 @@ thread_init(void *(*start_routine)(void *), void *arg)
 	t->arg = arg;
 	t->state = ST_EMBRYO;
 
+	t->tsd_keys = calloc(TSD_KEYS_LEN, sizeof(void *));
+	if (!t->tsd_keys) {
+		xnd_error("Failed to allocate %zu bytes\n", TSD_KEYS_SIZE);
+		free(t);
+		return NULL;
+	}
+
 	err = pthread_mutex_init(&t->lock, NULL);
 	if (err) {
 		xnd_error("pthread_mutex_init: %s\n", strerror(err));
-		goto out;
+		free(t->tsd_keys);
+		free(t);
+		return NULL;
 	}
 
 	err = pthread_cond_init(&t->cond, NULL);
 	if (err) {
 		xnd_error("pthread_cond_init: %s\n", strerror(err));
-		goto out;
-	}
-
-	fail = false;
-out:
-	if (fail) {
+		pthread_mutex_destroy(&t->lock);
+		free(t->tsd_keys);
 		free(t);
-		t = NULL;
+		return NULL;
 	}
 
 	return t;
 }
 
-/**
+/*
  * thread_reap:
  *  Free all resources associated with this thread. thread_reap should
  *  be called once a thread has exited and been joined by another thread.
  */
-void thread_reap(struct thread_info *th)
+void
+thread_reap(struct thread_info *t)
 {
-        pthread_mutex_destroy(&th->lock);
-        pthread_cond_destroy(&th->cond);
-        free(th);
+	pthread_mutex_destroy(&t->lock);
+	pthread_cond_destroy(&t->cond);
+	free(t->tsd_keys);
+	free(t);
 }
 
 __noreturn void
@@ -461,21 +469,24 @@ struct thread_info *main_thread(void)
         return _main_thread;
 }
 
-void ckpt_thread_init(void)
+void
+ckpt_thread_init(void)
 {
-        struct thread_info      *ct = &ckpt_thread;
-        bool                    wait = true;
+	bool wait = true;
+	struct thread_info *t = &ckpt_thread;
 
-        ct->state = ST_CKPT_THREAD;
-        xnd_assert(pthread_mutex_init(&ct->lock, NULL) == 0);
-        xnd_assert(pthread_cond_init(&ct->cond, NULL) == 0);
+	t->state = ST_CKPT_THREAD;
+	t->tls = 0;
 
-        pthread_mutex_lock(&ct->lock);
-        pthread_create(&ct->self, NULL, ckpt_thread_work, (void *)&wait);
-        while (wait) {
-                pthread_cond_wait(&ct->cond, &ct->lock);
-        }
-        pthread_mutex_unlock(&ct->lock);
+	pthread_mutex_init(&t->lock, NULL);
+	pthread_cond_init(&t->cond, NULL);
+
+	pthread_mutex_lock(&t->lock);
+	pthread_create(&t->self, NULL, ckpt_thread_work, (void *)&wait);
+	while (wait) {
+		pthread_cond_wait(&t->cond, &t->lock);
+	}
+	pthread_mutex_unlock(&t->lock);
 }
 
 __noreturn void ckpt_thread_exit(void)
@@ -515,9 +526,9 @@ ckpt_thread_work(void *wait)
 
         xnd_tlv_init();
         myself = &ckpt_thread;
-        myself->self = pthread_self();
+	xnd_assert(myself->self == pthread_self());
 
-        /**
+        /*
          * Signal to main thread that the checkpoint thread has
          * initialized itself and is ready
          */
@@ -525,13 +536,14 @@ ckpt_thread_work(void *wait)
         *(bool *)wait = false;
         pthread_cond_signal(&myself->cond);
 
-        /**
-         * If the main thread is still handling atfork routines, wait until
-         * the main thread is ready to resume (get_xnd_state() == XND_RUNNING)
-         */
-        while (get_xnd_state() == XND_ATFORK) {
-                pthread_cond_wait(&myself->cond, &myself->lock);
-        }
+	/*
+	 * If we are in a forked child and the main thread is still
+	 * handling atfork routines, wait on condition variable until
+	 * atfork routines have completed.
+	 */
+	while (get_xnd_state() == XND_ATFORK) {
+		pthread_cond_wait(&myself->cond, &myself->lock);
+	}
         pthread_mutex_unlock(&myself->lock);
 
         restart = false;
@@ -889,91 +901,64 @@ thread_restart(void *thread)
 	unreachable();
 }
 
-void thread_save_tls(void)
+void
+thread_save_tls(void)
 {
 	uintptr_t tls;
-	void **src;
-	void **dst;
 
-        xnd_assert(myself != NULL);
+	xnd_assert(myself != NULL);
 	asm volatile("mrs %0, tpidrro_el0" : "=r" (tls) :: "memory");
 
-	if (myself->state != ST_CKPT_THREAD) {
+	/*
+	 * User threads will restart on their old stack, so tsd
+	 * keys should be copied to a heap allocated buffer (tsd_keys).
+	 * On restart, keys will be copied from the buffer back to
+	 * thread-local storage.
+	 */
+	if (myself != &ckpt_thread) {
 		myself->tls = tls;
+		xnd_tsd_copy(myself->tsd_keys, (void **)tls);
 		return;
 	}
 
 	/*
-	 * If checkpoint thread is saving tls for the first time,
-	 * save the tls register directly so tsd pointers can be
-	 * copied to new tls on restart.
+	 * [ Checkpoint thread falls through here ]
+	 *  If this is the first checkpoint, the checkpoint thread
+	 *  should save tls register as is. On restart, the checkpoint
+	 *  thread will have a new TCB and can copy from saved
+	 *  tls to the new TCB's tls.
+	 *
+	 *  Otherwise, if the checkpoint thread is not saving tls
+	 *  for the first time, copy from current TCB to the original
+	 *  TCB. Because the original TCB is preserved from vm
+	 *  checkpoint/restore, it can be recycled as a buffer.
+	 *  Thus, during restore, the checkpoint thread can always
+	 *  copy from its original tls to current/new tls.
 	 */
-	xnd_assert(myself == &ckpt_thread);
 	if (myself->tls == 0) {
 		myself->tls = tls;
 		return;
 	}
-
-	/*
-	 * Otherwise, this is not the first time the checkpoint thread
-	 * is saving its tls register, i.e. we have restarted one or
-	 * more times. In order to save tls, reuse the first tls
-	 * buffer instead of saving the current tls register. Rebase
-	 * tsd pointers on top of the old tls buffer that was not in
-	 * use during this restart cycle.
-	 *
-	 * [ The checkpoint thread's thread descriptor will always be
-	 *   at the same address after restart, so we can not copy tls;
-	 *   the addresses will be indentical. Thus, in order to
-	 *   restore tls, we keep the original tls up-to-date and
-	 *   continue copying from there for each restart. ]
-	 */
-	src = (void **)tls;
-	dst = (void **)myself->tls;
-	for (uint slot = 20; slot < 768; slot++) {
-		dst[slot] = src[slot];
-	}
+	xnd_tsd_copy((void *)myself->tls, (void **)tls);
 }
 
-/*
- * thread_restore_tls:
- *  TPIDRRO_EL0 can not be written to directly. Instead, restore tsd
- *  slots 20-767 for thread locals.
- *  Also restore per-thread cleanup stack that was located in the
- *  thread's previous struct pthread_s.
- *
- * From Apple's libpthread:
- *      Keys 0 - 9 are for Libsyscall/libplatform usage
- *      Keys 10 - 29 are for Libc/Libsystem internal usage
- *      Keys 20-29,120-125 for libdispatch usage
- *      Keys 30-255 for Non Libsystem usage
- *      Keys 30-39 for Graphic frameworks usage
- *      Keys 40-49 for Objective-C runtime usage
- *      Keys 50-59 for Core Foundation usage
- *      Keys 60-69 for Foundation usage
- *      Keys 70-79 for Core Animation/QuartzCore usage
- *      Keys 80-89 for CoreData
- *      Keys 90-94 for JavaScriptCore Collection
- *      Keys 95 for CoreText
- *      Keys 100-109 are for the Swift runtime
- *      Keys 110-114 for libmalloc
- *      Keys 115-124 for libdispatch workgroups
- *      125 - 209 for shared cache dylibs __thread support
- */
-void thread_restore_tls(struct thread_info *th)
+void
+thread_restore_tls(struct thread_info *t)
 {
-        uintptr_t tls;
-        void **dst, **src;
+	void **src;
+	uintptr_t tls;
 
-        xnd_assert(th != NULL);
-        asm volatile("mrs %0, tpidrro_el0" : "=r" (tls) :: "memory");
-        set_thread_cleanup_stack(tls, NULL);
+	xnd_assert(t != NULL);
+	asm volatile("mrs %0, tpidrro_el0" : "=r" (tls) :: "memory");
+	set_thread_cleanup_stack(tls, NULL);
 
-        dst = (void **)tls;
-        src = (void **)th->tls;
-	for (uint slot = 20; slot < 768; slot++) {
-		dst[slot] = src[slot];
-	}
+	/*
+	 * Checkpoint thread copies thread-local storage from original
+	 * TCB to new TCB. User threads copy thread-local storage from
+	 * allocated buffer to current TCB.
+	 */
+	src = (t == &ckpt_thread ? (void **)t->tls : t->tsd_keys);
+	xnd_tsd_copy((void **)tls, src);
 }
 
 __noreturn void thread_restore_context(void)

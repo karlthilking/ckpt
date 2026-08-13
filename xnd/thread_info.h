@@ -45,6 +45,10 @@ struct thread_info {
 	   joined : 1,
 	   unused : 6;
 
+	/* Thread stack */
+	void *stackaddr;
+	size_t stacksize;
+
 	/* User context to restore */
 	ucontext_t uctx;
 
@@ -53,7 +57,10 @@ struct thread_info {
 	sigset_t sigblocked;
 
 	/* Thread-local storage */
+#define TSD_KEYS_LEN PTHREAD_TSD_END
+#define TSD_KEYS_SIZE (TSD_KEYS_LEN * sizeof(void *))
 	uintptr_t tls;
+	void **tsd_keys;
 
 	pthread_mutex_t lock;
 	pthread_cond_t cond;
@@ -112,34 +119,38 @@ void thread_restore_context(void);
 void thread_save_sig_state(void);
 void thread_restore_sig_state(void);
 
-static __always_inline bool thread_state_cas(struct thread_info *th,
-                                             enum thread_state expected,
-                                             enum thread_state desired)
+static __always_inline bool
+thread_state_cas(struct thread_info *t, enum thread_state old,
+		 enum thread_state new)
 {
-        return atomic_compare_exchange_strong(&th->state, &expected, desired);
+	return atomic_compare_exchange_strong(&t->state, &old, new);
 }
 
-static __always_inline void unsafe_enter(void)
+static __always_inline void
+unsafe_enter(void)
 {
-        struct thread_info *self = thread_self_or_null();
+	struct thread_info *self = thread_self_or_null();
 
-        if (unlikely(self == NULL || self->state == ST_EMBRYO ||
-                     self->state == ST_CKPT_THREAD))
-                return;
-        if (self->wrapper_depth++ == 0)
-                while (!thread_state_cas(self, ST_RUNNING, ST_UNSAFE));
+	if (unlikely(self == NULL))
+		return;
+	if (self->state == ST_EMBRYO || self->state == ST_CKPT_THREAD)
+		return;
+	if (self->wrapper_depth++ == 0)
+		while (!thread_state_cas(self, ST_RUNNING, ST_UNSAFE));
 }
 
-static __always_inline void unsafe_exit(void)
+static __always_inline void
+unsafe_exit(void)
 {
-        struct thread_info *self = thread_self_or_null();
+	struct thread_info *self = thread_self_or_null();
 
-        if (unlikely(self == NULL || self->state == ST_CKPT_THREAD ||
-                     self->state == ST_EMBRYO))
-                return;
-        if (--self->wrapper_depth == 0)
-                thread_state_cas(self, ST_UNSAFE, ST_RUNNING);
+	if (unlikely(self == NULL))
+		return;
+	if (self->state == ST_EMBRYO || self->state == ST_CKPT_THREAD)
+		return;
+	if (--self->wrapper_depth == 0 &&
+	    !thread_state_cas(self, ST_UNSAFE, ST_RUNNING))
+		xnd_panic("internal error: unexpected thread state\n");
 }
-
 
 #endif /* XND_THREAD_INFO_H  */

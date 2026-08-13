@@ -81,6 +81,39 @@ static inline bool xnd_tlv_ok(void)
 	return get_tls_slot(__TSD_XND_FLAG) == __TSD_XND_INIT;
 }
 
+/*
+ * Posix thread keys:
+ *  [0,     9] libsyscall/libplatorm
+ *  [10,   18] libc/libsystem
+ *  [20,   29] libdispatch
+ *  [30,   39] graphic frameworks
+ *  [40,   49] Objective-C runtime
+ *  [50,   59] Core Foundation
+ *  [60,   69] Foundation
+ *  [70,   79] Core Animation/Quartz Core
+ *  [80,   89] CoreData
+ *  [90,   94] JavaScriptCore Collection
+ *  [      95] CoreText
+ *  [100, 109] Swift Runtime
+ *  [110, 114] libmalloc
+ *  [115, 124] libdispatch workgroups
+ *  [125, 209] __thread support
+ *  [210, 216] iOS simulator libSystem
+ *  [217, 229] simulator libSystem
+ *  [     230] Objective-C trace
+ *  [231, 232] libsanitizers
+ */
+static inline void xnd_tsd_copy(void **dst, void **src)
+{
+	uint slot;
+
+	dst[__TSD_ERRNO] = src[__TSD_ERRNO];
+	dst[__TSD_PTR_MUNGE] = src[__TSD_PTR_MUNGE];
+
+	for (slot = 20; slot < PTHREAD_TSD_END; slot++)
+		dst[slot] = src[slot];
+}
+
 #ifdef __cplusplus
 extern "C" {
 #endif
