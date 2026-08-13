@@ -42,13 +42,13 @@ CONFIG = {
         "name": "N-Body",
         "path": str(BIN / "03_nbody"),
         "input": None,
-        "args": ["-s", "3000", "-n", "2048"],
+        "args": ["-s", "25000", "-n", "2048"],
     },
     "jacobi": {
         "name": "Jacobi",
         "path": str(BIN / "04_jacobi"),
         "input": None,
-        "args": [],
+        "args" : ["-i", "20000"],
     },
     "spectral_pde": {
         "name": "Spectral PDE",
