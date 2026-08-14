@@ -2,8 +2,6 @@
 #ifndef XND_TLS_H
 #define XND_TLS_H
 #include "xnd/xnd.h"
-#include "xnd/pac.h"
-#include "xnd/thread_info.h"
 #include "xnd/wrappers/pthread_wrappers.h"
 
 #define __TSD_THREAD_SELF 0
@@ -32,7 +30,10 @@
 #define TLS_CLEANUP_HANDLER_OFFSET \
 	(TLS_PTHREAD_OFFSET + PTHREAD_CLEANUP_HANDLER_OFFSET)
 
-#define PTHREAD_TSD_END 768
+#define EXTERNAL_POSIX_THREAD_KEYS_MAX 512
+#define INTERNAL_POSIX_THREAD_KEYS_MAX 256
+#define POSIX_THREAD_KEYS_END \
+	(EXTERNAL_POSIX_THREAD_KEYS_MAX + INTERNAL_POSIX_THREAD_KEYS_MAX)
 
 #define get_thread_cleanup_stack(tls)				 \
 	({							 \
@@ -55,19 +56,25 @@ static __always_inline uintptr_t *tls_slot_location(uint slot)
 	return (uintptr_t *)(tls + slot * sizeof(void *));
 }
 
-#define get_tls_slot(slot)		    \
-	({				    \
-		*(tls_slot_location(slot)); \
+#define get_tls_slot(slot)					\
+	({							\
+		uintptr_t *__slotp = tls_slot_location(slot);	\
+		*__slotp;					\
 	})
 
-#define set_tls_slot(slot, val)			    \
-	do {					    \
-		*(tls_slot_location(slot)) = (val); \
+#define set_tls_slot(slot, val)					\
+	do {							\
+		uintptr_t *__slotp = tls_slot_location(slot);	\
+		*__slotp = (uintptr_t)(val);			\
 	} while (0)
 
 static inline void xnd_tlv_init(void)
 {
+	extern struct thread_info *thread_self_or_null(void);
+
+	set_tls_slot(__TSD_XND_FLAG, 0ULL);
 	(void)thread_self_or_null();
+	barrier();
 	set_tls_slot(__TSD_XND_FLAG, __TSD_XND_INIT);
 }
 
@@ -107,10 +114,11 @@ static inline void xnd_tsd_copy(void **dst, void **src)
 {
 	uint slot;
 
+	xnd_assert(dst != src);
 	dst[__TSD_ERRNO] = src[__TSD_ERRNO];
 	dst[__TSD_PTR_MUNGE] = src[__TSD_PTR_MUNGE];
 
-	for (slot = 20; slot < PTHREAD_TSD_END; slot++)
+	for (slot = 20; slot < POSIX_THREAD_KEYS_END; slot++)
 		dst[slot] = src[slot];
 }
 

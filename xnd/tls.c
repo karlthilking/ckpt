@@ -15,10 +15,7 @@ int thread_ptr_munge_save(void)
 	self = (uintptr_t)pthread_self();
 	tsd_self = get_tls_slot(__TSD_THREAD_SELF);
 	if (self != tsd_self) {
-		xnd_error("pthread_self() != __TSD_THREAD_SELF:\n"
-			  "     pthread_self(): 0x%lx\n"
-			  "  __TSD_THREAD_SELF: 0x%lx\n",
-			  self, tsd_self);
+		xnd_warn("pthread_self != __TSD_THREAD_SELF\n");
 		return -1;
 	}
 
@@ -26,10 +23,7 @@ int thread_ptr_munge_save(void)
 	munge = self ^ sig;
 	tsd_munge = get_tls_slot(__TSD_PTR_MUNGE);
 	if (munge != tsd_munge) {
-		xnd_error("_pthread_ptr_munge_token != __TSD_PTR_MUNGE:\n"
-			  " _pthread_ptr_munge_token: 0x%lx\n"
-			  "          __TSD_PTR_MUNGE: 0x%lx\n",
-			  munge, tsd_munge);
+		xnd_warn("_pthread_ptr_munge_token != __TSD_PTR_MUNGE\n");
 		return -1;
 	}
 
