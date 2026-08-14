@@ -1,6 +1,8 @@
 /* pthread_wrappers.h */
 #ifndef PTHREAD_WRAPPERS_H
 #define PTHREAD_WRAPPERS_H
+
+#include <mach/mach.h>
 #include <pthread.h>
 
 #define PTHREAD_SELF_DISCRIMINATOR      (0x5B9ULL)
@@ -13,10 +15,6 @@ extern size_t pthread_get_stacksize_np(pthread_t);
 extern pthread_t pthread_main_thread_np(void);
 extern int pthread_main_np(void);
 extern void _pthread_set_self(pthread_t);
-
-void __pthread_cookie(void);
-void __pthread_slot_fixup(void);
-void __main_thread_postrestart_fixup(void);
 
 int __pthread_create_hook(pthread_t *, const pthread_attr_t *,
                           void *(*)(void *), void *);

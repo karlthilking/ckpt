@@ -121,13 +121,16 @@ void __pthread_exit_hook(void *value_ptr)
 
 pthread_t __pthread_self_hook(void)
 {
+	uintptr_t p;
 	struct thread_info *self;
 
-	if (xnd_tlv_ok() == false)
-		return pthread_self();
+	if (xnd_tlv_ok() == false) {
+		p = get_tls_slot(__TSD_THREAD_SELF);
+		return (pthread_t)p;
+	}
 
 	self = thread_self_or_null();
-	if (!self)
+	if (self == NULL)
 		xnd_panic("internal error: thread descriptor is NULL\n");
 
 	return encode_pthread(self);
