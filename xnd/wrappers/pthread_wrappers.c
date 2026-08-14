@@ -287,7 +287,7 @@ int __pthread_cancel_hook(pthread_t p)
         return err;
 }
 
-/**
+/*
  * Return pthread_t of the main thread. Interpose so that the real
  * main thread is returned and not the checkpoint thread who will be
  * the main thread after restart.
@@ -297,14 +297,14 @@ pthread_t __pthread_main_thread_np_hook(void)
         return encode_pthread(main_thread());
 }
 
-/**
+/*
  * Return non-zero if current thead is the main thread. Needs to be
  * interposed because the main thread after restart will be checkpoint
  * thread which is not really true.
  */
 int __pthread_main_np_hook(void)
 {
-        return pthread_self() == main_thread()->self;
+	return pthread_self() == main_thread()->self;
 }
 
 INTERPOSE(__pthread_create_hook, pthread_create);

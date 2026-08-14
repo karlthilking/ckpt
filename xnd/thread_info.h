@@ -43,7 +43,8 @@ struct thread_info {
 
 	/* Thread-specific signal state */
 	stack_t ss;
-	sigset_t sigblocked;
+	sigset_t sigmask; /* Masked signals */
+	sigset_t siglist; /* Pending signals */
 
 	/* Thread-local storage */
 #define TSD_LEN POSIX_THREAD_KEYS_END

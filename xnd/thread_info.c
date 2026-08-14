@@ -57,6 +57,7 @@ static inline void zombie_list_release(void);
 
 static void barrier_arrival_wait(void);
 static void barrier_release(void);
+static void raise_pending_signals(void);
 static void suspend_threads(void);
 static void restore_threads(void);
 static void wait_for_exiting_threads(void);
@@ -70,6 +71,8 @@ static pthread_mutex_t thread_list_lock = PTHREAD_MUTEX_INITIALIZER;
 
 static struct thread_list zombie_list;
 static pthread_mutex_t zombie_list_lock = PTHREAD_MUTEX_INITIALIZER;
+
+static sigset_t proc_siglist;
 
 static volatile int barrier_seq = 0;
 static volatile int barrier_expected;
@@ -541,7 +544,15 @@ ckpt_thread_work(void *ready)
         sigset_t set;
         static volatile bool restart;
 
+	/*
+	 * Block checkpoint signal in checkpoint thread. Additionally,
+	 * block termination signals so user threads can handle
+	 * termination signals.
+	 */
         sigemptyset(&set);
+	sigaddset(&set, SIGINT);
+	sigaddset(&set, SIGTERM);
+	sigaddset(&set, SIGQUIT);
         sigaddset(&set, env_get_ckpt_signal());
         xpthread_sigmask(SIG_BLOCK, &set, NULL);
 
@@ -584,8 +595,9 @@ ckpt_thread_work(void *ready)
                 barrier_arrival_wait();
 
                 thread_restore_sig_state();
-
                 zombie_list_filter();
+
+		raise_pending_signals();
                 barrier_release();
         }
 
@@ -678,6 +690,26 @@ barrier_release(void)
 	xpthread_mutex_unlock(&ckpt_mtx);
 }
 
+/*
+ * raise_pending_signals:
+ *  Raise signals that were pending for all threads, assuming that
+ *  this means the signal was orignally directed to the entire
+ *  process rather than individual threads. raise_pending_signals()
+ *  should be called only once all threads have restored their signal
+ *  masks (in thread_restore_sig_state).
+ */
+void
+raise_pending_signals(void)
+{
+	int sig;
+	pid_t pid = _real_getpid();
+
+	for (sig = 1; sig < NSIG; sig++) {
+		if (sigismember(&proc_siglist, sig))
+			kill(pid, sig);
+	}
+}
+
 void
 suspend_threads(void)
 {
@@ -752,6 +784,7 @@ again:
 void
 restore_threads(void)
 {
+	sigset_t list, mask;
 	struct thread_info *t;
 
 	xpthread_mutex_lock(&ckpt_mtx);
@@ -760,11 +793,17 @@ restore_threads(void)
 	barrier_arrived = 0;
 	barrier_expected = 0;
 
+	sigfillset(&mask);
+	sigemptyset(&list);
+
 	TAILQ_FOREACH(t, &thread_list, entry) {
+		sigandset(&list, &mask, &t->siglist);
+		mask = list;
 		barrier_expected++;
 		xpthread_create(&t->self, NULL, thread_restart, t);
 	}
 
+	proc_siglist = list;
 	thread_list_release();
 	xpthread_mutex_unlock(&ckpt_mtx);
 }
@@ -916,7 +955,7 @@ thread_save_tls(void)
 	 * thread-local storage.
 	 */
 	if (myself != &ckpt_thread) {
-		xnd_assert(malloc_size(myself->tsd_keys) == TSD_SIZE);
+		xnd_assert(malloc_size(myself->tsd_keys) >= TSD_SIZE);
 		myself->tls = tls;
 		xnd_tsd_copy(myself->tsd_keys, (void **)tls);
 		return;
@@ -981,22 +1020,31 @@ thread_restore_context(void)
 static void
 thread_save_sig_state(void)
 {
-	int err, ckpt_sig = env_get_ckpt_signal();
+	int err, ret, ckpt_sig = env_get_ckpt_signal();
 
-	err = pthread_sigmask(SIG_SETMASK, NULL, &myself->sigblocked);
+	err = pthread_sigmask(SIG_SETMASK, NULL, &myself->sigmask);
 	if (err != 0) {
 		xnd_warn("pthread_sigmask: %s\n", strerror(err));
-		sigemptyset(&myself->sigblocked);
+		sigemptyset(&myself->sigmask);
 	}
 
 	if (myself->state == ST_CKPT_THREAD &&
-	    !sigismember(&myself->sigblocked, ckpt_sig)) {
+	    !sigismember(&myself->sigmask, ckpt_sig)) {
 		xnd_warn("ckpt signal isn't blocked by ckpt thread\n");
-		sigaddset(&myself->sigblocked, ckpt_sig);
+		sigaddset(&myself->sigmask, ckpt_sig);
 	}
 
-	if (sigaltstack(NULL, &myself->ss) != 0) {
+	ret = sigpending(&myself->siglist);
+	if (ret != 0) {
+		xnd_perror("sigpending");
+		sigemptyset(&myself->siglist);
+	}
+
+	ret = sigaltstack(NULL, &myself->ss);
+	if (ret != 0) {
 		xnd_perror("sigaltstack");
+		myself->ss.ss_sp = NULL;
+		myself->ss.ss_size = 0;
 		myself->ss.ss_flags = SS_DISABLE;
 	}
 }
@@ -1010,15 +1058,15 @@ thread_save_sig_state(void)
 static void
 thread_restore_sig_state(void)
 {
-	int err, ckpt_sig = env_get_ckpt_signal();
+	int err, ret, ckpt_sig = env_get_ckpt_signal();
 
 	if (myself->state == ST_CKPT_THREAD &&
-	    !sigismember(&myself->sigblocked, ckpt_sig)) {
+	    !sigismember(&myself->sigmask, ckpt_sig)) {
 		xnd_warn("ckpt thread isn't blocking ckpt signal\n");
-		sigaddset(&myself->sigblocked, ckpt_sig);
+		sigaddset(&myself->sigmask, ckpt_sig);
 	}
 
-	err = pthread_sigmask(SIG_SETMASK, &myself->sigblocked, NULL);
+	err = pthread_sigmask(SIG_SETMASK, &myself->sigmask, NULL);
 	if (err != 0)
 		xnd_warn("pthread_sigmask: %s\n", strerror(err));
 
@@ -1026,6 +1074,16 @@ thread_restore_sig_state(void)
 		return;
 
 	myself->ss.ss_flags &= ~SS_ONSTACK;
-	if (sigaltstack(&myself->ss, NULL) != 0)
+	ret = sigaltstack(&myself->ss, NULL);
+	if (ret != 0)
 		xnd_warn("sigaltstack: %s\n", strerror(errno));
+
+	/* Re-raise non-global pending signals */
+	for (int sig = 1; sig < NSIG; sig++) {
+		if (sigismember(&proc_siglist, sig))
+			continue;
+		if (sigismember(&myself->siglist, sig) &&
+		    sigismember(&myself->sigmask, sig))
+			pthread_kill(myself->self, sig);
+	}
 }
