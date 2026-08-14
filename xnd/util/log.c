@@ -12,6 +12,7 @@
 #include "xnd/xnd.h"
 #include "xnd/tls.h"
 #include "xnd/shared_cache.h"
+#include "xnd/thread_info.h"
 #include "xnd/util/log.h"
 #include "xnd/util/path.h"
 

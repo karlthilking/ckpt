@@ -3,6 +3,7 @@
 #define XND_LOG_H
 
 #include "xnd/xnd.h"
+
 #include <stdio.h>
 #include <unistd.h>
 #include <signal.h>
