@@ -28,7 +28,7 @@
 #include <unistd.h>
 #include <signal.h>
 
-static _Atomic enum xnd_state libxnd_state = XND_UNINITIALIZED;
+__hidden _Atomic enum xnd_state libxnd_state = XND_UNINITIALIZED;
 
 __hidden u32 xnd_pid;
 __hidden u32 xnd_ppid;
@@ -148,6 +148,7 @@ void xnd_checkpoint(ucontext_t *uctx)
 
 void xnd_atfork_prepare(void)
 {
+	set_xnd_state(XND_ATFORK);
         coord_client_atfork_prepare();
         pid_table_atfork_prepare();
         thread_list_atfork_prepare();
@@ -162,6 +163,7 @@ void xnd_atfork_child(void)
         coord_client_atfork_child();
         pid_table_atfork_child();
         thread_list_atfork_child();
+	set_xnd_state(XND_RUNNING);
 
 #if DEVELOPMENT || DEBUG
         xnd_log_mach_port_info();
@@ -174,6 +176,7 @@ void xnd_atfork_parent(void)
         coord_client_atfork_parent();
         pid_table_atfork_parent();
         thread_list_atfork_parent();
+	set_xnd_state(XND_RUNNING);
 }
 
 void xnd_atfork_failed(void)
@@ -181,6 +184,7 @@ void xnd_atfork_failed(void)
         coord_client_atfork_failed();
         pid_table_atfork_failed();
         thread_list_atfork_failed();
+	set_xnd_state(XND_RUNNING);
 }
 
 void xnd_register_fork_handlers(void)
