@@ -110,19 +110,19 @@ void xnd_log_shared_cache_info(void)
 
 void xnd_log_ckpt_thread_info(struct thread_info *ckpt_thread)
 {
-	uintptr_t tls, thread_self;
-	mach_port_t port;
-	const uint port_slot = __TSD_MACH_THREAD_SELF;
+	uintptr_t tls, self;
+	mach_port_t kport;
+	const uint kport_slot = __TSD_MACH_THREAD_SELF;
 
-	thread_self = (uintptr_t)ckpt_thread->self;
-	tls = thread_self + PTHREAD_TLS_OFFSET;
-	port = (mach_port_t)(uintptr_t)((void **)tls)[port_slot];
+	self = (uintptr_t)ckpt_thread->ti_self;
+	tls = self + PTHREAD_TLS_OFFSET;
+	kport = (mach_port_t)(uintptr_t)((void **)tls)[kport_slot];
 
 	xnd_trace("checkpoint thread info:\n"
 		  "     pthread_self(): 0x%016lx\n"
 		  "        tpidrro_el0: 0x%016lx (tsd base)\n"
 		  " mach_thread_self(): %u\n",
-		  thread_self, tls, (u32)port);
+		  self, tls, kport);
 }
 
 void xnd_log_main_thread_info(void)

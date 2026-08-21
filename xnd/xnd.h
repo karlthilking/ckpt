@@ -11,5 +11,7 @@
 #include "common/types.h"
 #include "common/compiler.h"
 #include "common/bits.h"
+#include "common/xalloc.h"
+#include "common/xthread.h"
 
 #endif /* XND_H */
