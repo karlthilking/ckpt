@@ -17,161 +17,160 @@
 #include <stdio.h>
 #include <err.h>
 
-static int last_ckpt_sig = -1;
-static struct sigaction sa_table[NSIG];
+static struct sigaction sa_table[SA_TABLE_LEN];
 
-void sig_state_save(void)
+void
+sig_state_save(void)
 {
-        int sig, ckpt_sig;
-        struct sigaction *ckpt_sa;
+        int ret, sig, ckptsig;
+        struct sigaction *sa;
 
-        ckpt_sig = env_get_ckpt_signal();
-        if (ckpt_sig <= 0 || ckpt_sig >= NSIG ||
-            ckpt_sig == SIGKILL || ckpt_sig == SIGSTOP) {
-                xnd_error("Illegal checkpoint signal: %d\n", ckpt_sig);
-                xnd_abort();
-        }
+	ckptsig = env_get_ckpt_signal();
+	if (ckptsig <= 0 || ckptsig >= NSIG ||
+	    ckptsig == SIGKILL || ckptsig == SIGSTOP)
+		xnd_panic("illegal checkpoint signal: %s\n",
+			  strsignal(ckptsig));
 
-        for (sig = 1; sig < NSIG; sig++) {
-                if (sig == SIGKILL || sig == SIGSTOP)
-                        continue;
-                if (__xnd_sigaction(sig, NULL, &sa_table[sig]) != 0) {
-                        xnd_warn("Error saving signal disposition "
-                                 "(signal: %d)\n", sig);
-                        bzero(&sa_table[sig], sizeof(sa_table[sig]));
-                }
-        }
-
-        ckpt_sa = &sa_table[ckpt_sig];
-        if (ckpt_sa->sa_sigaction != thread_sighandler) {
-                xnd_warn("Invalid checkpoint signal action:\n"
-                         "(thread_sighandler: %p, current: %p)\n",
-                         thread_sighandler, ckpt_sa->sa_sigaction);
-                ckpt_sa->sa_sigaction = thread_sighandler;
-        }
-
-	last_ckpt_sig = ckpt_sig;
-}
-
-void sig_state_restore(void)
-{
-        int sig, ckpt_sig;
-        struct sigaction *ckpt_sa;
-
-        /*
-         * Validate checkpoint signal and current signal handler
-         * being used for the checkpoint signal
-         */
-        ckpt_sig = env_get_ckpt_signal();
-	if (ckpt_sig != last_ckpt_sig) {
-		xnd_error("Checkpoint signal changed: %d -> %d\n",
-			  last_ckpt_sig, ckpt_sig);
-		xnd_abort();
+	for (sig = 1; sig < NSIG; sig++) {
+		if (sig == SIGKILL || sig == SIGSTOP)
+			continue;
+		sa = &sa_table[SA_TABLE_IDX(sig)];
+		ret = xnd_sigaction(sig, NULL, sa);
+		if (ret != 0) {
+			bzero(sa, sizeof(*sa));
+			xnd_warn("error saving signal action (%s)\n",
+				 strsignal(sig));
+		}
 	}
 
-        if (ckpt_sig <= 0  || ckpt_sig >= NSIG ||
-            ckpt_sig == SIGKILL || ckpt_sig == SIGSTOP) {
-                xnd_error("Illegal checkpoint signal: %d\n", ckpt_sig);
-                xnd_abort();
-        }
-
-        ckpt_sa = &sa_table[ckpt_sig];
-        if (ckpt_sa->sa_sigaction != thread_sighandler) {
-                xnd_warn("Invalid checkpoint signal action:\n"
-                         "(thread_sighandler: %p, current: %p)\n",
-                         thread_sighandler, ckpt_sa->sa_sigaction);
-                ckpt_sa->sa_sigaction = thread_sighandler;
-        }
-
-        for (sig = 1; sig < NSIG; sig++) {
-                if (sig == SIGKILL || sig == SIGSTOP)
-                        continue;
-                if (__xnd_sigaction(sig, &sa_table[sig], NULL) != 0)
-                        xnd_warn("Error restoring signal disposition "
-                                 "(signal: %d)\n", sig);
-        }
+	sa = &sa_table[SA_TABLE_IDX(ckptsig)];
+	if (sa->sa_sigaction != thread_sighandler)
+		xnd_panic("checkpoint signal action corrupt\n");
 }
 
-sig_t __signal_hook(int sig, sig_t handler)
+void
+sig_state_restore(void)
 {
+	int ret, sig, ckptsig;
+	struct sigaction *sa;
+
+	ckptsig = env_get_ckpt_signal();
+	if (ckptsig <= 0 || ckptsig >= NSIG ||
+	    ckptsig == SIGKILL || ckptsig == SIGSTOP)
+		xnd_panic("illegal checkpoint signal: %s\n",
+			  strsignal(ckptsig));
+
+	sa = &sa_table[SA_TABLE_IDX(ckptsig)];
+	if (sa->sa_sigaction != thread_sighandler)
+		xnd_panic("checkpoint signal action corrupt\n");
+
+	for (sig = 1; sig < NSIG; sig++) {
+		if (sig == SIGSTOP || sig == SIGKILL)
+			continue;
+		sa = &sa_table[SA_TABLE_IDX(sig)];
+		ret = xnd_sigaction(sig, sa, NULL);
+		if (ret != 0)
+			xnd_warn("error restoring signal action (%s)\n",
+				 strsignal(sig));
+	}
+}
+
+sig_t
+signal_hook(int sig, sig_t handler)
+{
+	int ret;
         struct sigaction sa;
 
-        if (sig == env_get_ckpt_signal()) {
-                xnd_warn("Signal %d is reserved\n", sig);
-                return SIG_ERR;
-        }
+	if (sig == env_get_ckpt_signal()) {
+		xnd_warn("%s is reserved\n", strsignal(sig));
+		return SIG_ERR;
+	}
 
         if (handler == SIG_DFL || handler == SIG_IGN)
                 return signal(sig, handler);
 
-        /**
+        /*
          * Register user signal handlers with __xnd_sigaction
          * so we can control the signal trampoline function
          */
         sigemptyset(&sa.sa_mask);
-        sa.sa_flags = 0;
+        sa.sa_flags = SA_RESTART;
         sa.sa_handler = handler;
-        if (__xnd_sigaction(sig, &sa, NULL) != 0)
-                return SIG_ERR;
 
-        return 0;
+	ret = xnd_sigaction(sig, &sa, NULL);
+	return (ret != 0 ? SIG_ERR : 0);
 }
 
-/**
+/*
  * __sigaction_hook:
  *  Protect against users setting up signal handlers for SIGUSR1 or
  *  SIGUSR2; these signals will be reserved for the implementation of xnd.
  */
-int __sigaction_hook(int sig, const struct sigaction *act,
-                     struct sigaction *oact)
+int
+sigaction_hook(int sig, const struct sigaction *act, struct sigaction *oact)
 {
-        /**
-         * This makes the thread signal handler (in thread_info.c)
-         * not transparent to user threads; maybe should hide the
-         * signal handler?
+	int ret, ckptsig = env_get_ckpt_signal();
+
+        /*
+	 * If a user thread is querying information about the
+	 * checkpoint signal, hide the associated signal state.
          */
-        if (act == NULL)
-                return sigaction(sig, NULL, oact);
+	if (act == NULL) {
+		ret = sigaction(sig, NULL, oact);
+		if (sig == ckptsig) {
+			sigemptyset(&oact->sa_mask);
+			oact->sa_flags = 0;
+			oact->sa_handler = SIG_DFL;
+		}
+		return ret;
+	}
 
-        if (sig == env_get_ckpt_signal()) {
-                xnd_warn("Signal %d is reserved\n", sig);
-                return -1;
-        }
+	/*
+	 * Don't let a user thread establish a different signal
+	 * dispostion for the checkpoint signal.
+	 */
+	if (sig == ckptsig) {
+		xnd_warn("%s is reserved\n", strsignal(sig));
+		return -1;
+	}
 
-        if (act->sa_handler == SIG_DFL || act->sa_handler == SIG_IGN)
-                return sigaction(sig, act, oact);
+	if (act->sa_handler == SIG_DFL || act->sa_handler == SIG_IGN)
+		return sigaction(sig, act, oact);
 
-        /**
-         * If user thread is registering their own signal handler,
-         * call __xnd_sigaction instead of sigaction in order to
-         * avoid libc's signal trampoline (_sigtramp)
-         */
-        return __xnd_sigaction(sig, act, oact);
+	/*
+	 * If a user thread is registering their own signal handler,
+	 * route the registery through xnd_sigaction so we can
+	 * specify our own signal trampoline (xnd_sigtramp).
+	 */
+	return xnd_sigaction(sig, act, oact);
 }
 
-int __sigprocmask_hook(int how, const sigset_t *set, sigset_t *oset)
+int
+sigprocmask_hook(int how, const sigset_t *set, sigset_t *oset)
 {
-        return __pthread_sigmask_hook(how, set, oset);
+        return pthread_sigmask_hook(how, set, oset);
 }
 
-int __pthread_sigmask_hook(int how, const sigset_t *set, sigset_t *oset)
+int
+pthread_sigmask_hook(int how, const sigset_t *set, sigset_t *oset)
 {
-        sigset_t clean;
-        int ckpt_sig = env_get_ckpt_signal();
+	int ckptsig;
+	sigset_t clean;
 
-        if (set == NULL)
-                return pthread_sigmask(how, NULL, oset);
+	if (set == NULL || how == SIG_UNBLOCK)
+		return pthread_sigmask(how, set, oset);
 
-        clean = *set;
-        if (how == SIG_BLOCK || how == SIG_SETMASK) {
-                if (sigismember(set, ckpt_sig))
-                        sigdelset(&clean, ckpt_sig);
-        }
+	clean = *set;
+	ckptsig = env_get_ckpt_signal();
+	if (sigismember(set, ckptsig)) {
+		xnd_warn("%s should not be masked\n", strsignal(ckptsig));
+		sigdelset(&clean, ckptsig);
+	}
 
-        return pthread_sigmask(how, &clean, oset);
+	return pthread_sigmask(how, &clean, oset);
 }
 
-INTERPOSE(__signal_hook, signal);
-INTERPOSE(__sigaction_hook, sigaction);
-INTERPOSE(__sigprocmask_hook, sigprocmask);
-INTERPOSE(__pthread_sigmask_hook, pthread_sigmask);
+INTERPOSE(signal_hook, signal);
+INTERPOSE(sigaction_hook, sigaction);
+INTERPOSE(sigprocmask_hook, sigprocmask);
+INTERPOSE(pthread_sigmask_hook, pthread_sigmask);

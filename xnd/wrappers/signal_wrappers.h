@@ -10,17 +10,16 @@
 
 typedef void (*sig_t)(int);
 
-struct __internal_sigaction {
-        union __sigaction_u     __sigaction_u;
-        bool                    sa_siginfo;
-};
+#define SA_TABLE_LEN (NSIG - 3)
+#define SA_TABLE_IDX(sig) \
+	((sig) < 9 ? (sig) - 1 : (sig) < 17 ? (sig) - 2 : (sig) - 3)
 
 void sig_state_save(void);
 void sig_state_restore(void);
 
-sig_t __signal_hook(int, sig_t);
-int __sigaction_hook(int, const struct sigaction *, struct sigaction *);
-int __sigprocmask_hook(int, const sigset_t *, sigset_t *);
-int __pthread_sigmask_hook(int, const sigset_t *, sigset_t *);
+sig_t signal_hook(int, sig_t);
+int sigaction_hook(int, const struct sigaction *, struct sigaction *);
+int sigprocmask_hook(int, const sigset_t *, sigset_t *);
+int pthread_sigmask_hook(int, const sigset_t *, sigset_t *);
 
 #endif // SIGNAL_WRAPPERS_H
