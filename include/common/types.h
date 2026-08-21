@@ -3,7 +3,6 @@
 #define TYPES_H
 #include <stdint.h>
 #include <stddef.h>
-#include <ucontext.h>
 
 #if __STDC_VERSION__ < 202311L
 # include <stdbool.h>

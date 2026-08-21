@@ -53,7 +53,7 @@
 #define CONCAT_X(a, b) a##b
 #define CONCAT(a, b) CONCAT_X(a, b)
 
-#define TOSTRING_x(s) #s
+#define TOSTRING_X(s) #s
 #define TOSTRING(s) TOSTRING_X(s)
 
 #ifndef likely
@@ -88,7 +88,8 @@
 #define __ATTRIBUTE_1(name, a1) __attribute__((name(a1)))
 
 #define __ATTRIBUTE_NARGS_X(a, b, c, d, n, ...) n
-#define __ATTRIBUTE_NARGS(...) __ATTRIBUTE_NARGS_X(__VA_ARGS__, 3, 2, 1, 0,)
+#define __ATTRIBUTE_NARGS(...) \
+	__ATTRIBUTE_NARGS_X(__VA_ARGS__, 3, 2, 1, 0,)
 
 #define __ATTRIBUTE_DISP(a, ...) \
 	CONCAT(a, __ATTRIBUTE_NARGS(__VA_ARGS__))(__VA_ARGS__)
