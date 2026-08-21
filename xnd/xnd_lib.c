@@ -211,22 +211,22 @@ void xnd_register_fork_handlers(void)
 
 static __constructor(101) void xnd_setup(void)
 {
+	int ret, sig;
 	char *tmp;
-        int sig;
-        sigset_t set;
         struct sigaction sa;
 
         connect_to_coord_on_launch();
 
-        sigfillset(&set);
-        sa.sa_flags = SA_SIGINFO;
-        sa.sa_sigaction = thread_sighandler;
+	sigfillset(&sa.sa_mask);
+	sa.sa_flags = SA_SIGINFO | SA_RESTART;
+	sa.sa_sigaction = thread_sighandler;
 
-        sig = env_get_ckpt_signal();
-        if (__xnd_sigaction(sig, &sa, NULL) != 0) {
-                xnd_error("__xnd_sigaction failed!\n");
-                xnd_abort();
-        }
+	sig = env_get_ckpt_signal();
+	ret = xnd_sigaction(sig, &sa, NULL);
+	if (ret != 0) {
+		xnd_perror("xnd_sigaction");
+		xnd_abort();
+	}
 
         fd_table_init();
         thread_list_init();
