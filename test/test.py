@@ -5,6 +5,7 @@ import pty
 import signal
 import subprocess
 import config
+import time
 from typing import Dict, List, Optional
 
 USAGE = \
@@ -25,22 +26,45 @@ f"Usage: {sys.argv[0]} [options] ...\n" \
 
 CKPT_MSG = "Checkpoint complete: "
 
-def wait_for_checkpoint(master_fd: int) -> Optional[str]:
+def do_checkpoint(xnd: Dict[str, str], master_fd: int) -> Optional[str]:
+    args = [xnd["xnd_command"], "--checkpoint"]
+    stat = subprocess.run(
+        args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+    ).returncode
+    if stat != 0:
+        return None
     with os.fdopen(master_fd, "r", errors="ignore") as pipe:
         for line in pipe:
             if CKPT_MSG in line:
                 l = line.find(CKPT_MSG) + len(CKPT_MSG)
-                return line[l:].rstrip("\n")
+                return line[l:].rstrip('\n')
     return None
 
-def kill_process_group(pgid: int):
-    try:
-        os.killpg(pgid, signal.SIGINT)
-    except (ProcessLookupError, PermissionError):
-        pass
+def await_checkpoint(
+    xnd: Dict[str, str], fd: int, interval: int
+) -> Optional[str]:
+    time.sleep(interval)
+    return do_checkpoint(xnd, fd)
 
-def verify(test_id: str, ckpt_interval: int, iterations: int,
-           xnd: Dict[str, str]) -> bool:
+def kill_computation(pgid: int):
+    try:
+        os.killpg(pgid, signal.SIGTERM)
+    except:
+        pass
+    ret = subprocess.run(['pgrep', 'xnd'], capture_output=True, text=True)
+    pidlist = [int(p) for p in ret.stdout.split('\n') if len(p) != 0]
+    for pid in pidlist:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except:
+            pass
+
+def verify(
+    test_id: str,
+    ckpt_interval: int,
+    iterations: int,
+    xnd: Dict[str, str]
+) -> bool:
     name = config.CONFIG[test_id]["name"]
     config.prepare_test(test_id)
     argv = config.get_test_argv(test_id)
@@ -49,29 +73,32 @@ def verify(test_id: str, ckpt_interval: int, iterations: int,
 
     master_fd, slave_fd = pty.openpty()
     proc = subprocess.Popen(
-        [xnd["xnd_launch"], "-i", str(ckpt_interval)] + argv,
+        [xnd["xnd_launch"]] + argv,
         stdout=slave_fd, stderr=slave_fd,
         start_new_session=True, text=True, close_fds=True
     )
     os.close(slave_fd)
 
-    ckpt_dir = wait_for_checkpoint(master_fd)
+    ckpt_dir = await_checkpoint(xnd, master_fd, ckpt_interval)
     if ckpt_dir is None:
-        code = proc.wait()
-        print(f"[{name}] process exited before checkpoint\n"
-               "Decrease checkpoint interval or choose longer running "
-               "program for testing")
+        code = 0
+        print(f"[{name}] Exit before first checkpoint\n")
+        try:
+            code = proc.wait(timeout=1)
+        except:
+            code = 1
         if code != 0:
             print(f"[{name}] FAIL: exited with code {code}")
             return False
-        print(f"[{name}] PASS (exited with code 0 before checkpoint)")
-        return True
+        else:
+            print(f"[{name}] PASS: exited with code 0")
+            return True
 
     top_level_dir = None
     if ckpt_dir.rfind('/') != -1:
         top_level_dir = ckpt_dir[:ckpt_dir.rfind('/')]
-        
-    kill_process_group(proc.pid)
+
+    kill_computation(proc.pid)
     proc.wait()
 
     for cycle in range(iterations):
@@ -88,9 +115,9 @@ def verify(test_id: str, ckpt_interval: int, iterations: int,
             )
             code = proc.wait()
             if code != 0:
-                print(f"[{name}] FAIL: restart exited with code {code}")
+                print(f"[{name}] FAIL: exited with code {code}")
             else:
-                print(f"[{name}] PASS")
+                print(f"[{name}] PASS: exited with code 0")
                 ret = True
 
             if top_level_dir is not None:
@@ -105,22 +132,24 @@ def verify(test_id: str, ckpt_interval: int, iterations: int,
         )
         os.close(slave_fd)
 
-        next_ckpt_dir = wait_for_checkpoint(master_fd)
+        next_ckpt_dir = await_checkpoint(xnd, master_fd, ckpt_interval)
         if next_ckpt_dir is None:
-            ret = False
-            code = proc.wait()
-            if code != 0:
-                print(f"[{name}] FAIL (exited with code {code} after "
-                      f"{cycle + 1}/{iterations} cycles)")
-            else:
-                print(f"[{name}] PASS (exited with code 0 after "
-                      f"{cycle + 1}/{iterations} cycles)")
-                ret = True
+            code = 0
+            kill_computation(proc.pid)
             if top_level_dir is not None:
                 os.system(f"rm -rf {top_level_dir}")
-            return ret
+            try:
+                code = proc.wait(timeout=1)
+            except:
+                code = 1
+            if code != 0:
+                print(f"[{name}] FAIL: exited with code {code}")
+                return False
+            else:
+                print(f"[{name}] PASS: exited with code 0")
+                return True
 
-        kill_process_group(proc.pid)
+        kill_computation(proc.pid)
         proc.wait()
         ckpt_dir = next_ckpt_dir
 

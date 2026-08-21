@@ -23,7 +23,7 @@ TESTS = (
     "openssl_enc",
 )
 
-XND_EXECUTABLES = ("xnd_launch", "xnd_restart")
+XND_EXECUTABLES = ("xnd_launch", "xnd_restart", "xnd_command")
 
 CONFIG = {
     "conjugate_gradient": {
@@ -52,7 +52,7 @@ CONFIG = {
     },
     "spectral_pde": {
         "name": "Spectral PDE",
-        "path": "/usr/bin/python3",
+        "path": "/opt/homebrew/bin/python3",
         "input": None,
         "args": [str(CWD / "05_spectral_pde.py")],
     },
