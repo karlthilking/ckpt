@@ -94,10 +94,9 @@ void connect_to_coord_on_launch(void)
 {
         int fd;
 
-        if ((fd = connect_to_coord()) < 0) {
-                xnd_error("Failed to connect to coordinator\n");
-                xnd_abort();
-        }
+	fd = connect_to_coord();
+	if (fd < 0)
+		xnd_panic("failed to connect to coordinator\n");
 
         coord_fd = xnd_fd_change(fd, XND_COORD_FD);
         xnd_assert(coord_fd == XND_COORD_FD);
@@ -117,10 +116,9 @@ void connect_to_coord_on_restart(void)
 {
         int fd;
 
-        if ((fd = connect_to_coord()) < 0) {
-                xnd_error("Failed to connect to coordinator\n");
-                xnd_abort();
-        }
+	fd = connect_to_coord();
+	if (fd < 0)
+		xnd_panic("failed to connect to coordinator\n");
 
         coord_fd = xnd_fd_change(fd, XND_COORD_FD);
         xnd_assert(coord_fd == XND_COORD_FD);
@@ -135,7 +133,7 @@ void connect_to_coord_on_restart(void)
                   xnd_pid, xnd_ppid, xnd_pgid);
 #endif
 
-        /**
+        /*
          * Set oob_fd = -1 so the next thread to use this file
          * descriptor will know to reinitialize it.
          */
@@ -332,35 +330,26 @@ void coord_client_atfork_failed(void)
         }
 }
 
-int wait_for_ckpt_request_from_coord(void)
+int
+wait_for_ckpt_request_from_coord(bool *exited)
 {
-	int err, fd;
+	int ret, fd;
+	bool did_exit;
         struct xnd_msg msg = {0};
 
-	err = recv_msg_from_coord(coord_fd, &msg);
-	if (err != 0) {
-		/*
-		 * If user thread called exit(), the socket to the
-		 * coordinator would have been closed in xnd_cleanup().
-		 * Don't treat this as an error, as we are preparing
-		 * to exit regardless.
-		 */
-		fd = *(volatile int *)&coord_fd;
-		if (fd == -1) {
-			usleep(1000);
+	ret = recv_msg_from_coord(coord_fd, &msg);
+	if (ret != 0) {
+		fd = READ_ONCE(coord_fd);
+		did_exit = ((fd > 0 && peer_exited(fd)) || (fd == -1));
+		if (did_exit) {
+			*exited = true;
 			return -1;
 		}
-		xnd_error("Failed to receive checkpoint request\n");
+		*exited = false;
 		return -1;
 	}
 
-	if (msg.hdr != XND_CKPT_REQUEST) {
-		xnd_error("Unexpected coordinator message: %s\n",
-			  xnd_msghdr_string(msg.hdr));
-		return -1;
-	}
-
-        return 0;
+	return (msg.hdr == XND_CKPT_REQUEST ? 0 : -1);
 }
 
 void enter_coord_barrier(enum coord_barrier_type type)

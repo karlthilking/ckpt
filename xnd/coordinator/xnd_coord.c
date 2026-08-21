@@ -14,6 +14,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <uuid/uuid.h>
 #include <signal.h>
 #include <sys/time.h>
@@ -31,6 +32,30 @@ static struct coord_info coord_info = {
         .num_peers      = 0,
         .ckpt_interval  = 0
 };
+
+static bool
+proc_exited(struct proc *p)
+{
+	int ret, flags;
+	bool blocking, exited;
+	char buf[1];
+
+	ret = kill(p->real_pid, 0);
+	if (ret == -1 && errno == ESRCH)
+		return true;
+
+	flags = fcntl(p->fd, F_GETFL);
+	blocking = (0 == (flags & O_NONBLOCK));
+	if (blocking)
+		fcntl(p->fd, F_SETFL, flags | O_NONBLOCK);
+
+	ret = recv(p->fd, buf, sizeof(buf), MSG_PEEK);
+	exited = ((ret == 0) || (ret < 0 && errno == ECONNRESET));
+	if (blocking)
+		fcntl(p->fd, F_SETFL, flags);
+
+	return exited;
+}
 
 void proc_exit_callback(struct proc *p)
 {
@@ -346,39 +371,44 @@ int coord_release_barrier(enum coord_barrier_type type)
         return 0;
 }
 
-int coord_collective_prepare(enum coord_comm_type type)
+int
+coord_collective_prepare(enum coord_comm_type type)
 {
-        struct proc     *p, *next;
-        int             err, nfds, total;
-        fd_set          set;
-        struct timeval  tv = { 0, COORD_TIMEOUT_USEC };
+	fd_set set;
+	int ret, nfds, total;
+	struct proc *p, *next;
+	struct timeval tv = { 0, COORD_TIMEOUT_USEC };
 
-        do {
-                nfds = 0;
-                total = 0;
-                FD_ZERO(&set);
-                proc_foreach_safe(p, next, proc_list) {
-                        err = kill(p->real_pid, 0);
-                        if (err != 0 && errno == ESRCH) {
-                                proc_list_remove(proc_list, p);
-                                continue;
-                        }
-                        total++;
-                        FD_SET(p->fd, &set);
-                        nfds = max(nfds, p->fd + 1);
-                }
+	do {
+		nfds = 0;
+		total = 0;
+		FD_ZERO(&set);
+		proc_foreach_safe(p, next, proc_list) {
+			if (proc_exited(p)) {
+				proc_list_remove(proc_list, p);
+				continue;
+			}
+			total++;
+			FD_SET(p->fd, &set);
+			nfds = max(nfds, p->fd + 1);
+		}
 
-                if (type == COMM_BROADCAST) {
-                        err = select(nfds, NULL, &set, NULL, &tv);
-                } else if (type == COMM_REDUCE) {
-                        err = select(nfds, &set, NULL, NULL, &tv);
-                }
+		switch (type) {
+		case COMM_BROADCAST:
+			ret = select(nfds, NULL, &set, NULL, &tv);
+			break;
+		case COMM_REDUCE:
+			ret = select(nfds, &set, NULL, NULL, &tv);
+			break;
+		default:
+			unreachable();
+		}
 
-                if (err < 0) {
-                        xnd_error("select: %s\n", strerror(errno));
-                        coord_exit(COORD_EXIT_FAILURE);
-                }
-        } while (err != total);
+		if (ret < 0) {
+			xnd_error("select: %s\n", strerror(errno));
+			coord_exit(COORD_EXIT_FAILURE);
+		}
+	} while (ret != total);
 
         return total;
 }
@@ -644,52 +674,60 @@ void coord_determine_roots(void)
         }
 }
 
-void coord_suspend_processes(void)
+static bool
+coord_try_suspend(int *cnt)
 {
-        struct proc     *p, *next;
-        struct xnd_msg  resp, msg = { .hdr = XND_CKPT_REQUEST };
-        int             err, total, ready;
+	bool alive;
+	int ret, total = 0, ready = 0;
+	struct proc *p, *next;
+	struct xnd_msg resp, msg = { .hdr = XND_CKPT_REQUEST };
 
-        do {
-                total = 0;
-                ready = 0;
-                proc_foreach_safe(p, next, proc_list) {
-                        switch (p->state) {
-                        case PROC_RUNNING: {
-                                err = coord_send_msg(p->fd, &msg);
-                                if (err == 0) {
-                                        p->state = PROC_RECV_CKPT_REQUEST;
-                                }
-                                break;
-                        }
-                        case PROC_RECV_CKPT_REQUEST: {
-                                err = coord_recv_msg(p->fd, &resp);
-                                if (err == 0 && resp.hdr == XND_CKPT_READY) {
-                                        p->state = PROC_READY_FOR_CKPT;
-                                        ready++;
-                                }
-                                break;
-                        }
-                        case PROC_READY_FOR_CKPT: {
-                                ready++;
-                                break;
-                        }
-                        default:
-                                break;
-                        }
+	proc_foreach_safe(p, next, proc_list) {
+		alive = true;
+		switch (p->state) {
+		case PROC_RUNNING:
+			ret = coord_send_msg(p->fd, &msg);
+			alive = (ret == 0);
+			if (alive)
+				p->state = PROC_RECV_CKPT_REQUEST;
+			break;
+		case PROC_RECV_CKPT_REQUEST:
+			ret = coord_recv_msg(p->fd, &resp);
+			alive = (ret == 0 && resp.hdr == XND_CKPT_READY);
+			if (alive)
+				p->state = PROC_READY_FOR_CKPT;
+			break;
+		case PROC_READY_FOR_CKPT:
+			alive = (proc_exited(p) == false);
+			if (alive)
+				ready++;
+			break;
+		default:
+			xnd_warn("unexpected proc state: %d\n", p->state);
+			break;
+		}
 
-                        err = kill(p->real_pid, 0);
-                        if (err != 0 && errno == ESRCH) {
-                                proc_list_remove(proc_list, p);
-                                continue;
-                        }
-                        total++;
-                }
+		if (alive)
+			total++;
+		else
+			proc_list_remove(proc_list, p);
+	}
 
-                if (ready != total) {
-                        usleep(100);
-                }
-        } while (ready != total);
+	*cnt = total;
+	return (ready != total);
+}
+
+int
+coord_suspend_processes(void)
+{
+	int cnt;
+	bool retry;
+
+	do {
+		retry = coord_try_suspend(&cnt);
+	} while (retry);
+
+	return cnt;
 }
 
 void coord_wait_for_ckpt_completions(void)
@@ -750,12 +788,16 @@ void coord_do_checkpoint(void)
          * allows them to complete their individual checkpoints (suspended)
          */
         total = coord_collective_prepare(COMM_BROADCAST);
-        if (unlikely(total == 0)) {
-                sigprocmask(SIG_UNBLOCK, &set, NULL);
-                return;
-        }
+	if (total == 0) {
+		sigprocmask(SIG_UNBLOCK, &set, NULL);
+		return;
+	}
 
-        coord_suspend_processes();
+	if (coord_suspend_processes() == 0) {
+		sigprocmask(SIG_UNBLOCK, &set, NULL);
+		return;
+	}
+
         /**
          * Now that each process is suspended, create the checkpoint
          * directory, determine which processes are roots of their process

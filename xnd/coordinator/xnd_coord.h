@@ -68,7 +68,7 @@ void coord_send_handshake(struct proc *);
 
 void coord_write_ckpt_manifest(void);
 void coord_determine_roots(void);
-void coord_suspend_processes(void);
+int coord_suspend_processes(void);
 void coord_wait_for_ckpt_completions(void);
 void coord_do_checkpoint(void);
 

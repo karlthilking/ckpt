@@ -1,4 +1,19 @@
 /* xnd_coord_api.c */
+#include <errno.h>
+#include <fcntl.h>
+#include <limits.h>
+#include <signal.h>
+#include <string.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <sys/select.h>
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <sys/un.h>
+#include <time.h>
+#include <unistd.h>
+
+#include "common/time.h"
 #include "xnd/xnd.h"
 #include "xnd/xnd_lib.h"
 #include "xnd/pid/pid.h"
@@ -6,21 +21,7 @@
 #include "xnd/util/path.h"
 #include "xnd/platform/exe.h"
 #include "xnd/pid/pid_table.h"
-#include "xnd/coordinator/xnd_coord_api.h"
-
-#include <stdlib.h>
-#include <stdio.h>
-#include <unistd.h>
-#include <fcntl.h>
-#include <string.h>
-#include <limits.h>
-#include <time.h>
-#include <errno.h>
-#include <signal.h>
-#include <sys/socket.h>
-#include <sys/types.h>
-#include <sys/un.h>
-#include <sys/select.h>
+#include "xnd_coord_api.h"
 
 pid_t launch_coordinator(bool restarting)
 {
@@ -76,47 +77,49 @@ pid_t get_coord_pid(void)
 
 int connect_to_coord(void)
 {
-        int                     fd, err, tries;
-        struct sockaddr_un      addr;
-        struct timespec         ts = { 0, 2 * 100000 };
-        bool			retry;
+	bool retry;
+	int fd, ret, tries = 0;
+	struct sockaddr_un addr;
+	struct timespec ts = {0};
 
-        if ((fd = socket(AF_UNIX, SOCK_STREAM, 0)) < 0) {
-                xnd_perror("socket");
-                return -1;
-        }
+	fd = socket(AF_UNIX, SOCK_STREAM, 0);
+	if (fd < 0) {
+		xnd_perror("socket");
+		return -1;
+	}
 
-        bzero(&addr, sizeof(addr));
-        addr.sun_family = AF_UNIX;
-        strncpy(addr.sun_path, XND_COORD_PATH, sizeof(addr.sun_path) - 1);
+	bzero(&addr, sizeof(addr));
+	addr.sun_family = AF_UNIX;
+	strlcpy(addr.sun_path, XND_COORD_PATH, sizeof(addr.sun_path));
 
-        tries = 0;
-        do {
-                err = connect(fd, (struct sockaddr *)&addr, sizeof(addr));
-                if (err != 0) {
-                        retry = (errno == ENOENT || errno == ECONNREFUSED);
-                        if (retry && tries++ < 100) {
-                                nanosleep(&ts, NULL);
-                                continue;
-                        }
-                        xnd_perror("connect");
-                        goto out;
-                }
-        } while (err != 0);
+	do {
+		ret = connect(fd, (struct sockaddr *)&addr, sizeof(addr));
+		if (ret != 0) {
+			retry = (errno == ENOENT || errno == ECONNREFUSED);
+			if (retry && tries++ < 100) {
+				ts.tv_sec = 0;
+				ts.tv_nsec = 2 * NSEC_PER_MSEC;
+				nanosleep(&ts, NULL);
+			} else {
+				xnd_perror("connect");
+				goto out;
+			}
+		}
+	} while (ret != 0);
 
-        err = fcntl(fd, F_SETFD, FD_CLOEXEC);
-        if (err != 0) {
-                xnd_perror("fcntl");
-                goto out;
-        }
-        xnd_trace("%s (path: %s, fd: %d)\n", __func__, XND_COORD_PATH, fd);
+	ret = fcntl(fd, F_SETFD, FD_CLOEXEC);
+	if (ret != 0) {
+		xnd_perror("fcntl");
+		goto out;
+	}
 
 out:
-        if (err) {
-                close(fd);
-                return -1;
-        }
-        return fd;
+	if (ret) {
+		close(fd);
+		return -1;
+	}
+
+	return fd;
 }
 
 int send_command_to_coord(enum xnd_cmd cmd)
@@ -181,38 +184,26 @@ int recv_msg_from_coord(int fd, struct xnd_msg *msg)
 	return 0;
 }
 
-bool coord_exited(int fd)
+bool
+peer_exited(int fd)
 {
-        int     err, flags;
-        pid_t   coord_pid;
-        char    *coord_pid_str, buf[32];
-        bool    exited;
+	char buf[1];
+	int flags;
+	ssize_t ret;
+	bool blocking, exited;
 
-        if ((coord_pid_str = getenv("XND_COORD_PID")) != NULL) {
-                coord_pid = atoi(coord_pid_str);
-                err = kill(coord_pid, 0);
-                if (err != 0 && errno == ESRCH) {
-                        return true;
-                }
-        }
+	flags = fcntl(fd, F_GETFL);
+	blocking = (0 == (flags & O_NONBLOCK));
+	if (blocking)
+		fcntl(fd, F_SETFL, flags | O_NONBLOCK);
 
-        if ((flags = fcntl(fd, F_GETFL)) == -1 ||
-             fcntl(fd, F_SETFL, flags | O_NONBLOCK) == -1) {
-                return true;
-        }
+	ret = recv(fd, buf, sizeof(buf), MSG_PEEK);
+	exited = ((ret == 0) || (ret < 0 && errno == ECONNRESET));
 
-        if (recv(fd, buf, sizeof(buf), MSG_PEEK) == 0) {
-                exited = true;
-        } else {
-                exited = false;
-        }
+	if (blocking)
+		fcntl(fd, F_SETFL, flags);
 
-        if ((flags = fcntl(fd, F_GETFL)) == -1 ||
-             fcntl(fd, F_SETFL, flags & ~O_NONBLOCK) == -1) {
-                return true;
-        }
-
-        return exited;
+	return exited;
 }
 
 int coord_socket_status(int fd)

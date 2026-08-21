@@ -22,7 +22,7 @@ void coord_client_atfork_child(void);
 void coord_client_atfork_parent(void);
 void coord_client_atfork_failed(void);
 
-int wait_for_ckpt_request_from_coord(void);
+int wait_for_ckpt_request_from_coord(bool *);
 void enter_coord_barrier(enum coord_barrier_type);
 
 pid_t virt_to_real_pid_from_coord(pid_t);

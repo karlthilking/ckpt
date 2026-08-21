@@ -107,7 +107,7 @@ int send_command_to_coord(enum xnd_cmd);
 int send_msg_to_coord(int, struct xnd_msg *);
 int recv_msg_from_coord(int, struct xnd_msg *);
 
-bool coord_exited(int);
+bool peer_exited(int);
 int coord_socket_status(int);
 
 #ifdef __cplusplus
