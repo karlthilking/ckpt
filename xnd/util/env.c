@@ -118,16 +118,19 @@ bool env_unlink_tmp_at_exit(void)
 	return ret;
 }
 
-void env_set_ckpt_signal(char *s)
+void
+env_set_ckpt_signal(char *sigstr)
 {
 	char buf[11];
-	int sig = atoi(s);
+	int sig, ckptsig;
 
+	sig = atoi(sigstr);
+	ckptsig = XND_DEFAULT_CKPT_SIGNAL;
 	if (sig <= 0 || sig >= NSIG || sig == SIGKILL || sig == SIGSTOP) {
-		xnd_warn("Checkpoint signal is invalid: %d\n"
-			 "Using default checkpoint signal: %d\n",
-			 sig, XND_DEFAULT_CKPT_SIGNAL);
-		sig = XND_DEFAULT_CKPT_SIGNAL;
+		sig = ckptsig;
+		xnd_warn("illegal checkpoint signal: %s\n"
+			 "continuing with default: %s\n",
+			 strsignal(sig), strsignal(ckptsig));
 	}
 
 	snprintf(buf, sizeof(buf), "%d", sig);
@@ -135,17 +138,20 @@ void env_set_ckpt_signal(char *s)
 	xnd_trace("%s=%d\n", XND_CKPT_SIGNAL_ENV, sig);
 }
 
-int env_get_ckpt_signal(void)
+int
+env_get_ckpt_signal(void)
 {
-	char *value;
-	static int ckpt_sig = -1;
+	char *val;
+	static int ckptsig = -1;
 
-	if (unlikely(ckpt_sig == -1)) {
-		value = getenv(XND_CKPT_SIGNAL_ENV);
-		ckpt_sig = (value ? atoi(value) : XND_DEFAULT_CKPT_SIGNAL);
+	if (unlikely(ckptsig == -1)) {
+		ckptsig = XND_DEFAULT_CKPT_SIGNAL;
+		val = getenv(XND_CKPT_SIGNAL_ENV);
+		if (val != NULL)
+			ckptsig = atoi(val);
 	}
 
-	return ckpt_sig;
+	return ckptsig;
 }
 
 void env_set_dyld_shared_region_private(void)
