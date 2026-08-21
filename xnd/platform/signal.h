@@ -7,28 +7,39 @@
 #include <signal.h>
 #include <ucontext.h>
 
-#define UC_TRAD         1
-#define UC_FLAVOR       30
+#define UC_TRAD 1
+#define UC_FLAVOR 30
 
 #define SA_VALIDATE_SIGRETURN_FROM_SIGTRAMP 0x0400
 
-#define sigandset(x, y, z)						\
-	do {								\
-		sigemptyset(x);						\
-		for (int __s = 1; __s < NSIG; __s++) {			\
-			if (__s == SIGSTOP || __s == SIGKILL)		\
-				continue;				\
-			if (sigismember(y, __s) && sigismember(z, __s)) \
-				sigaddset(x, __s);			\
-		}							\
+#define SIGTERMSET (sigmask(SIGINT) | sigmask(SIGTERM) | sigmask(SIGQUIT))
+#define SIGCANTSET (sigmask(SIGKILL) | sigmask(SIGKILL))
+
+#define sigandset(ret, s1, s2)				\
+	do {						\
+		sigset_t __ret;				\
+		sigemptyset(&__ret);			\
+		for (int sig = 1; sig < NSIG; sig++) {	\
+			if (sigismember(s1, sig) &&	\
+			    sigismember(s2, sig))	\
+				sigaddset(&__ret, sig); \
+		}					\
+		*(ret) = __ret;				\
 	} while (0)
 
-extern int __sigreturn(ucontext_t *, int, uintptr_t);
-extern int __sigaction(int, struct __sigaction *, struct __sigaction *);
+#define sigsetequal(s1, s2)			       \
+	({					       \
+		bool __eq = true;		       \
+		for (int sig = 1; sig < NSIG; sig++) { \
+			if (sigismember(s1, sig) !=    \
+			    sigismember(s2, sig)) {    \
+				__eq = false;	       \
+				break;		       \
+			}			       \
+		}				       \
+		__eq;				       \
+	})
 
-int __xnd_sigaction(int, const struct sigaction *, struct sigaction *);
-void __xnd_sigreturn(ucontext_t *, int, uintptr_t);
-void __xnd_sigtramp(union __sigaction_u, int, int, siginfo_t *,
-                    ucontext_t *, uintptr_t);
+int xnd_sigaction(int, const struct sigaction *, struct sigaction *);
 
 #endif /* XND_SIGNAL_H */
