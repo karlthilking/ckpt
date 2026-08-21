@@ -20,41 +20,48 @@ static const char *help =
 " --checkpoint\n"
 "    Send a checkpoint request to a computation\n"
 " --kill\n"
-"    Kill a computation running under XND\n";
+"    Kill a computation running under XND\n"
+" --help\n"
+"    Display this help message\n\n";
+
+#define CHECKPOINT(arg) \
+	(strncmp(arg, "--checkpoint", strlen("--checkpoint")) == 0)
+#define KILL(arg) \
+	(strncmp(arg, "--kill", strlen("--kill")) == 0)
+#define HELP(arg) \
+	(strncmp(arg, "--help", strlen("--help")) == 0)
 
 static void usage(void);
 
-int main(int argc, char *argv[])
+int
+main(int argc, char *argv[])
 {
-        int             err;
-        enum xnd_cmd    cmd;
+	int ret;
+	enum xnd_cmd cmd;
 
-        xnd_log_setup();
-        if (argc < 2) {
-                usage();
-                goto out;
-        }
+	if (argc < 2 || HELP(argv[1])) {
+		usage();
+		exit(0);
+	}
 
-        if (strcmp(argv[1], "--checkpoint") == 0) {
-                cmd = XND_CKPT_CMD;
-        } else if (strcmp(argv[1], "--kill") == 0) {
-                cmd = XND_KILL_CMD;
-        } else {
-                usage();
-                goto out;
-        }
+	if (CHECKPOINT(argv[1])) {
+		cmd = XND_CKPT_CMD;
+	} else if (KILL(argv[1])) {
+		 cmd = XND_KILL_CMD;
+	} else {
+		usage();
+		exit(-1);
+	}
 
-        if ((err = send_command_to_coord(cmd)) != 0) {
-                xnd_error("Command failed: %s\n", xnd_cmd_string(cmd));
-                goto out;
-        }
+	ret = send_command_to_coord(cmd);
+	if (ret != 0)
+		xnd_error("%s failed\n", xnd_cmd_string(cmd));
 
-out:
-        xnd_log_cleanup();
-        exit(XND_EXIT_SUCCESS);
+	exit(ret);
 }
 
-static void usage(void)
+static void
+usage(void)
 {
         xnd_error("%s", help);
 }
