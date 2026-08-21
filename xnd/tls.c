@@ -49,3 +49,23 @@ void thread_ptr_munge_fixup(void)
 	if (munge != _pthread_ptr_munge_token)
 		set_tls_slot(__TSD_PTR_MUNGE, _pthread_ptr_munge_token);
 }
+
+void
+xnd_tlv_init(void)
+{
+	extern struct thread_info *thread_self_or_null(void);
+
+	set_tls_slot(__TSD_XND_FLAG, 0ULL);
+	barrier();
+
+	(void)thread_self_or_null();
+
+	barrier();
+	set_tls_slot(__TSD_XND_FLAG, __TSD_XND_INIT);
+}
+
+void
+xnd_tlv_fini(void)
+{
+	set_tls_slot(__TSD_XND_FLAG, 0ULL);
+}

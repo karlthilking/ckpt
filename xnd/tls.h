@@ -21,7 +21,6 @@
  */
 #define __TSD_XND_FLAG 6
 #define __TSD_XND_INIT 0x0000000005203090ULL
-#define __TSD_XND_FINI 0x0000000020471120ULL
 
 #define PTHREAD_TLS_OFFSET (0x00000000000000E0LL)
 #define PTHREAD_CLEANUP_HANDLER_OFFSET (sizeof(long))
@@ -48,7 +47,8 @@
 		(struct __darwin_pthread_handler_rec *)(handler); \
 	} while (0)
 
-static __always_inline uintptr_t *tls_slot_location(uint slot)
+static __always_inline uintptr_t *
+tls_slot_location(uint slot)
 {
 	uintptr_t tls;
 
@@ -68,22 +68,8 @@ static __always_inline uintptr_t *tls_slot_location(uint slot)
 		*__slotp = (uintptr_t)(val);			\
 	} while (0)
 
-static inline void xnd_tlv_init(void)
-{
-	extern struct thread_info *thread_self_or_null(void);
-
-	set_tls_slot(__TSD_XND_FLAG, 0ULL);
-	(void)thread_self_or_null();
-	barrier();
-	set_tls_slot(__TSD_XND_FLAG, __TSD_XND_INIT);
-}
-
-static inline void xnd_tlv_fini(void)
-{
-	set_tls_slot(__TSD_XND_FLAG, __TSD_XND_FINI);
-}
-
-static inline bool xnd_tlv_ok(void)
+static inline bool
+xnd_tlv_ok(void)
 {
 	return get_tls_slot(__TSD_XND_FLAG) == __TSD_XND_INIT;
 }
@@ -110,7 +96,8 @@ static inline bool xnd_tlv_ok(void)
  *  [     230] Objective-C trace
  *  [231, 232] libsanitizers
  */
-static inline void xnd_tsd_copy(void **dst, void **src)
+static inline void
+xnd_tsd_copy(void **dst, void **src)
 {
 	uint slot;
 
@@ -128,6 +115,9 @@ extern "C" {
 
 int thread_ptr_munge_save(void);
 void thread_ptr_munge_fixup(void);
+
+void xnd_tlv_init(void);
+void xnd_tlv_fini(void);
 
 #ifdef __cplusplus
 }
