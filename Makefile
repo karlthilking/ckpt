@@ -47,6 +47,7 @@ LIBXND_OBJECTS := \
         $(BUILD)/exe.o \
         $(BUILD)/xnd_coord_api.o \
         $(BUILD)/xnd_coord_client.o \
+	$(BUILD)/xnd_coord_common.o \
         $(BUILD)/time_wrappers.o \
         $(BUILD)/stdlib_wrappers.o \
         $(BUILD)/signal_wrappers.o \
@@ -80,7 +81,8 @@ XND_LAUNCH_OBJECTS := \
         $(BUILD)/io.o \
         $(BUILD)/log.o \
         $(BUILD)/env.o \
-        $(BUILD)/xnd_coord_api.o
+        $(BUILD)/xnd_coord_api.o \
+	$(BUILD)/xnd_coord_common.o
 
 XND_COMMAND_OBJECTS := \
 	$(BUILD)/xnd_command.o \
@@ -88,7 +90,8 @@ XND_COMMAND_OBJECTS := \
 	$(BUILD)/path.o \
 	$(BUILD)/io.o \
 	$(BUILD)/exe.o \
-	$(BUILD)/xnd_coord_api.o
+	$(BUILD)/xnd_coord_api.o \
+	$(BUILD)/xnd_coord_common.o
 
 XND_COORD_OBJECTS := \
         $(BUILD)/shared_cache.o \
@@ -101,6 +104,7 @@ XND_COORD_OBJECTS := \
         $(BUILD)/pid_table_common.o \
         $(BUILD)/proc_list.o \
         $(BUILD)/xnd_coord.o \
+	$(BUILD)/xnd_coord_common.o
 
 XND_RESTART_OBJECTS := \
         $(BUILD)/xnd_restart.o \
@@ -109,6 +113,7 @@ XND_RESTART_OBJECTS := \
         $(BUILD)/io.o \
         $(BUILD)/env.o \
         $(BUILD)/xnd_coord_api.o \
+	$(BUILD)/xnd_coord_common.o \
         $(BUILD)/shared_cache.o \
         $(BUILD)/log.o \
         $(BUILD)/ckptfile.o \

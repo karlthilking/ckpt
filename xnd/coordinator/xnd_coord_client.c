@@ -6,6 +6,7 @@
 #include "xnd/pid/pid_table.h"
 #include "xnd_coord_api.h"
 #include "xnd_coord_client.h"
+#include "xnd_coord_common.h"
 #include <sys/socket.h>
 #include <stdlib.h>
 #include <string.h>
