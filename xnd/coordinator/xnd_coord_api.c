@@ -22,6 +22,7 @@
 #include "xnd/platform/exe.h"
 #include "xnd/pid/pid_table.h"
 #include "xnd_coord_api.h"
+#include "xnd_coord_common.h"
 
 pid_t launch_coordinator(bool restarting)
 {
@@ -62,17 +63,19 @@ pid_t launch_coordinator(bool restarting)
         return coord_pid;
 }
 
-pid_t get_coord_pid(void)
+pid_t
+get_coord_pid(void)
 {
-        static pid_t    coord_pid = -1;
-        char            *pid_str = NULL;
+	static pid_t coord_pid = -1;
+	char *pid_str = NULL;
 
-        if (coord_pid == -1) {
-                if ((pid_str = getenv("XND_COORD_PID")))
-                        coord_pid = atoi(pid_str);
-        }
+	if (coord_pid == -1) {
+		pid_str = getenv("XND_COORD_PID");
+		if (pid_str != NULL)
+			coord_pid = atoi(pid_str);
+	}
 
-        return coord_pid;
+	return coord_pid;
 }
 
 int connect_to_coord(void)
