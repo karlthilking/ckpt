@@ -8,6 +8,7 @@
 #include "proc_list.h"
 #include "xnd_coord.h"
 #include "xnd_coord_api.h"
+#include "xnd_coord_common.h"
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -393,6 +394,9 @@ coord_collective_prepare(enum coord_comm_type type)
 			nfds = max(nfds, p->fd + 1);
 		}
 
+		if (total == 0)
+			return 0;
+
 		switch (type) {
 		case COMM_BROADCAST:
 			ret = select(nfds, NULL, &set, NULL, &tv);
@@ -725,6 +729,8 @@ coord_suspend_processes(void)
 
 	do {
 		retry = coord_try_suspend(&cnt);
+		if (retry)
+			usleep(100);
 	} while (retry);
 
 	return cnt;
