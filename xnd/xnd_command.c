@@ -1,8 +1,4 @@
 /* xnd_command.c */
-#include "xnd/xnd.h"
-#include "xnd/util/io.h"
-#include "xnd/util/log.h"
-#include "xnd/coordinator/xnd_coord_api.h"
 #include <stdlib.h>
 #include <stdio.h>
 #include <unistd.h>
@@ -11,6 +7,11 @@
 #include <time.h>
 #include <sys/types.h>
 #include <sys/time.h>
+
+#include "xnd.h"
+#include "util/io.h"
+#include "coordinator/xnd_coord_api.h"
+#include "coordinator/xnd_coord_common.h"
 
 static const char *help =
 "OVERVIEW: xnd_command\n\n"
@@ -21,47 +22,74 @@ static const char *help =
 "    Send a checkpoint request to a computation\n"
 " --kill\n"
 "    Kill a computation running under XND\n"
+"--timeout SECONDS\n"
+"   Specify timeout to receiving coordintor response\n"
 " --help\n"
 "    Display this help message\n\n";
 
-#define CHECKPOINT(arg) \
-	(strncmp(arg, "--checkpoint", strlen("--checkpoint")) == 0)
-#define KILL(arg) \
-	(strncmp(arg, "--kill", strlen("--kill")) == 0)
-#define HELP(arg) \
-	(strncmp(arg, "--help", strlen("--help")) == 0)
+#define XND_COMMAND_DEFAULT_TIMEOUT 10
 
-static void usage(void);
+#define CHECKPOINT(arg) \
+	(strncmp(arg, "--checkpoint", sizeof("--checkpoint") - 1) == 0)
+#define KILL(arg) \
+	(strncmp(arg, "--kill", sizeof("--kill") - 1) == 0)
+#define TIMEOUT(arg) \
+	(strncmp(arg, "--timeout", sizeof("--timeout") - 1) == 0)
+#define HELP(arg) \
+	(strncmp(arg, "--help", sizeof("--help") - 1) == 0)
+
+static void usage_and_exit(int);
 
 int
 main(int argc, char *argv[])
 {
-	int ret;
+	int ret, timeout = XND_COMMAND_DEFAULT_TIMEOUT;
+	bool exited;
 	enum xnd_cmd cmd;
 
-	if (argc < 2 || HELP(argv[1])) {
-		usage();
-		exit(0);
+	if (argc < 2)
+		usage_and_exit(XND_EXIT_SUCCESS);
+
+#define shift argc--; argv++
+	shift;
+	while (argc) {
+		if (CHECKPOINT(argv[0])) {
+			cmd = XND_CKPT_CMD;
+			shift;
+		} else if (KILL(argv[0])) {
+			cmd = XND_KILL_CMD;
+			shift;
+		} else if (TIMEOUT(argv[0])) {
+			timeout = atoi(argv[1]);
+			shift; shift;
+		} else if (HELP(argv[0])) {
+			usage_and_exit(XND_EXIT_SUCCESS);
+		} else {
+			xnd_printf("unrecognized argument: %s\n", argv[0]);
+			usage_and_exit(XND_EXIT_FAILURE);
+		}
 	}
 
-	if (CHECKPOINT(argv[1])) {
-		cmd = XND_CKPT_CMD;
-	} else if (KILL(argv[1])) {
-		 cmd = XND_KILL_CMD;
-	} else {
-		usage();
-		exit(-1);
+	if (!coord_socket_exists()) {
+		xnd_error("coordinator is not running\n");
+		exit(XND_EXIT_FAILURE);
 	}
 
-	ret = send_command_to_coord(cmd);
-	if (ret != 0)
-		xnd_error("%s failed\n", xnd_cmd_string(cmd));
+	ret = send_command_to_coord(cmd, timeout, &exited);
+	if (ret != 0 && exited) {
+		xnd_warn("command timed out: %s\n", xnd_cmd_string(cmd));
+		exit(XND_EXIT_FAILURE);
+	} else if (ret != 0) {
+		xnd_error("command failed: %s\n", xnd_cmd_string(cmd));
+		exit(XND_EXIT_FAILURE);
+	}
 
-	exit(ret);
+	exit(XND_EXIT_SUCCESS);
 }
 
 static void
-usage(void)
+usage_and_exit(int status)
 {
-        xnd_error("%s", help);
+	xnd_printf("%s", help);
+	exit(status);
 }

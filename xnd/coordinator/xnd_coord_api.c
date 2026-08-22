@@ -122,41 +122,51 @@ out:
 	return fd;
 }
 
-int send_command_to_coord(enum xnd_cmd cmd)
+int
+send_command_to_coord(enum xnd_cmd cmd, int timeout, bool *exited)
 {
-        int             fd, err;
-        struct xnd_msg  msg;
+	int fd, ret;
+	struct timeval tv = { .tv_sec = timeout, .tv_usec = 0 };
+	struct xnd_msg msg = { .hdr = XND_COMMAND, .cmd = cmd };
 
-        msg.hdr = XND_COMMAND;
-        msg.cmd = cmd;
-        if ((fd = connect_to_coord()) < 0) {
-                xnd_error("Failed to connect to coordinator\n");
-                return -1;
-        }
+	if (exited != NULL)
+		*exited = false;
 
-        err = send_msg_to_coord(fd, &msg);
-        if (err != 0) {
-                xnd_error("Failed to send command to coordinator\n");
-                goto out;
-        }
+	fd = connect_to_coord();
+	if (fd < 0) {
+		xnd_error("failed to connect to coordinator\n");
+		return -1;
+	}
 
-        err = recv_msg_from_coord(fd, &msg);
-        if (err != 0) {
-                xnd_error("Failed to receive ack from coordinator\n");
-                goto out;
-        }
+	ret = send_msg_to_coord(fd, &msg);
+	if (ret != 0) {
+		xnd_error("failed to send command to coordinator\n");
+		goto out;
+	}
 
-        if (msg.hdr != XND_COORD_ACK || msg.ret != XND_SUCCESS) {
-                xnd_error("Command failed: %s\n", xnd_cmd_string(cmd));
-                err = -1;
-        }
+	ret = setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+	if (ret != 0) {
+		xnd_perror("failed to set receive timeout");
+		goto out;
+	}
+
+	ret = recv_msg_from_coord(fd, &msg);
+	if (ret != 0)
+		goto out;
+
+	if (msg.hdr != XND_COORD_ACK || msg.ret != XND_SUCCESS)
+		ret = -1;
 
 out:
+	if (ret != 0 && exited != NULL)
+		*exited = (!coord_socket_exists() || peer_exited(fd));
+
         close(fd);
-        return err;
+	return ret;
 }
 
-int send_msg_to_coord(int fd, struct xnd_msg *msg)
+int
+send_msg_to_coord(int fd, struct xnd_msg *msg)
 {
         ssize_t bytes;
 
@@ -170,7 +180,8 @@ int send_msg_to_coord(int fd, struct xnd_msg *msg)
         return 0;
 }
 
-int recv_msg_from_coord(int fd, struct xnd_msg *msg)
+int
+recv_msg_from_coord(int fd, struct xnd_msg *msg)
 {
 	ssize_t bytes;
 
@@ -206,17 +217,8 @@ peer_exited(int fd)
 	return exited;
 }
 
-int coord_socket_status(int fd)
+bool
+coord_socket_exists(void)
 {
-        int             err, stat;
-        socklen_t       len = sizeof(stat);
-
-        xnd_assert(fd != -1);
-        err = getsockopt(fd, SOL_SOCKET, SO_ERROR, &stat, &len);
-        if (err != 0) {
-                xnd_error("getsockopt: %s\n", strerror(errno));
-                return -1;
-        }
-
-        return stat;
+	return (access(XND_COORD_PATH, F_OK) == 0);
 }

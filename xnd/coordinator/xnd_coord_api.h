@@ -103,12 +103,12 @@ pid_t launch_coordinator(bool);
 pid_t get_coord_pid(void);
 
 int connect_to_coord(void);
-int send_command_to_coord(enum xnd_cmd);
+int send_command_to_coord(enum xnd_cmd, int, bool *);
 int send_msg_to_coord(int, struct xnd_msg *);
 int recv_msg_from_coord(int, struct xnd_msg *);
 
 bool peer_exited(int);
-int coord_socket_status(int);
+bool coord_socket_exists(void);
 
 #ifdef __cplusplus
 }
