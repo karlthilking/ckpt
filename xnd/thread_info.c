@@ -557,17 +557,15 @@ ckpt_thread_wait(void)
 	bool exited;
 
 	ret = wait_for_ckpt_request_from_coord(&exited);
-	if (ret == 0) {
-		set_xnd_state(XND_CKPT_PENDING);
-		return;
-	}
-
-	if (exited) {
-		ckpt_thread_exit();
-		unreachable();
-	} else {
+	if (ret != 0) {
+		if (exited) {
+			ckpt_thread_exit();
+			unreachable();
+		}
 		xnd_panic("failed to receive checkpoint request\n");
 	}
+
+	set_xnd_state(XND_CKPT_PENDING);
 }
 
 static void *
