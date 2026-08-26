@@ -18,25 +18,30 @@ static const char *help =
 "DESCRIPTION: Send a command to a computation under the control of XND\n\n"
 "USAGE: ./xnd_command <command>\n\n"
 "OPTIONS:\n"
-" --checkpoint\n"
+" -c, --checkpoint\n"
 "    Send a checkpoint request to a computation\n"
-" --kill\n"
+" -k, --kill\n"
 "    Kill a computation running under XND\n"
-"--timeout SECONDS\n"
-"   Specify timeout to receiving coordintor response\n"
-" --help\n"
+" -t, --timeout SECONDS\n"
+"   Specify timeout for sending/receiving coordinator messages\n"
+"   A timeout value of 0 will omit a timeout (default: 10)\n"
+" -h, --help\n"
 "    Display this help message\n\n";
 
 #define XND_COMMAND_DEFAULT_TIMEOUT 10
 
 #define CHECKPOINT(arg) \
-	(strncmp(arg, "--checkpoint", sizeof("--checkpoint") - 1) == 0)
+	(strncmp(arg, "-c", sizeof("-c") - 1) == 0 || \
+	 strncmp(arg, "--checkpoint", sizeof("--checkpoint") - 1) == 0)
 #define KILL(arg) \
-	(strncmp(arg, "--kill", sizeof("--kill") - 1) == 0)
+	(strncmp(arg, "-k", sizeof("-k") - 1) == 0 || \
+	 strncmp(arg, "--kill", sizeof("--kill") - 1) == 0)
 #define TIMEOUT(arg) \
-	(strncmp(arg, "--timeout", sizeof("--timeout") - 1) == 0)
+	(strncmp(arg, "-t", sizeof("-t") - 1) == 0 || \
+	 strncmp(arg, "--timeout", sizeof("--timeout") - 1) == 0)
 #define HELP(arg) \
-	(strncmp(arg, "--help", sizeof("--help") - 1) == 0)
+	(strncmp(arg, "-h", sizeof("-h") - 1) == 0 || \
+	 strncmp(arg, "--help", sizeof("--help") - 1) == 0)
 
 static void usage_and_exit(int);
 
@@ -44,8 +49,8 @@ int
 main(int argc, char *argv[])
 {
 	int ret, timeout = XND_COMMAND_DEFAULT_TIMEOUT;
+	enum xnd_cmd cmd = XND_NULL_CMD;
 	bool exited;
-	enum xnd_cmd cmd;
 
 	if (argc < 2)
 		usage_and_exit(XND_EXIT_SUCCESS);
@@ -60,6 +65,10 @@ main(int argc, char *argv[])
 			cmd = XND_KILL_CMD;
 			shift;
 		} else if (TIMEOUT(argv[0])) {
+			if (argv[1] == NULL) {
+				xnd_error("timeout value is missing\n");
+				usage_and_exit(XND_EXIT_FAILURE);
+			}
 			timeout = atoi(argv[1]);
 			shift; shift;
 		} else if (HELP(argv[0])) {
@@ -68,6 +77,11 @@ main(int argc, char *argv[])
 			xnd_printf("unrecognized argument: %s\n", argv[0]);
 			usage_and_exit(XND_EXIT_FAILURE);
 		}
+	}
+
+	if (cmd == XND_NULL_CMD) {
+		xnd_error("command argument is missing\n");
+		usage_and_exit(XND_EXIT_FAILURE);
 	}
 
 	if (!coord_socket_exists()) {

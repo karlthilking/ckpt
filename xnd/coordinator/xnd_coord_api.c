@@ -129,6 +129,7 @@ int
 send_command_to_coord(enum xnd_cmd cmd, int timeout, bool *exited)
 {
 	int fd, ret;
+	bool check_exit = true;
 	struct timeval tv = { .tv_sec = timeout, .tv_usec = 0 };
 	struct xnd_msg msg = { .hdr = XND_COMMAND, .cmd = cmd };
 
@@ -141,27 +142,25 @@ send_command_to_coord(enum xnd_cmd cmd, int timeout, bool *exited)
 		return -1;
 	}
 
-	ret = send_msg_to_coord(fd, &msg);
-	if (ret != 0) {
-		xnd_error("failed to send command to coordinator\n");
-		goto out;
+	if (timeout != 0) {
+		setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+		setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
 	}
 
-	ret = setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-	if (ret != 0) {
-		xnd_perror("failed to set receive timeout");
+	ret = send_msg_to_coord(fd, &msg);
+	if (ret != 0)
 		goto out;
-	}
 
 	ret = recv_msg_from_coord(fd, &msg);
 	if (ret != 0)
 		goto out;
 
+	check_exit = false;
 	if (msg.hdr != XND_COORD_ACK || msg.ret != XND_SUCCESS)
 		ret = -1;
 
 out:
-	if (ret != 0 && exited != NULL)
+	if (check_exit && ret != 0 && exited != NULL)
 		*exited = (!coord_socket_exists() || peer_exited(fd));
 
         close(fd);
