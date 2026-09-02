@@ -2,6 +2,8 @@
 #ifndef XND_COMPILER_H
 #define XND_COMPILER_H
 
+#include <sys/cdefs.h>
+
 #ifndef asm
 # define asm __asm__
 #endif
@@ -13,9 +15,12 @@
 #ifndef __has_include
 # define __has_include(x) (0)
 #endif
-
 #ifndef __has_builtin
 # define __has_builtin(x) (0)
+#endif
+
+#ifndef static_assert
+# define static_assert _Static_assert
 #endif
 
 #define min(x, y)                       \
@@ -57,11 +62,10 @@
 #define TOSTRING(s) TOSTRING_X(s)
 
 #ifndef likely
-# define likely(x)       __builtin_expect(!!(x), 1)
+# define likely(x) __builtin_expect(!!(x), 1)
 #endif
-
 #ifndef unlikely
-# define unlikely(x)    __builtin_expect(!!(x), 0)
+# define unlikely(x) __builtin_expect(!!(x), 0)
 #endif
 
 #define READ_ONCE(var) \
@@ -71,15 +75,7 @@
 
 #define barrier() __asm__ __volatile__("" ::: "memory")
 
-#if __has_builtin(__builtin_unreachable)
-# define unreachable()				\
-	do {					\
-		do { } while (0);		\
-		__builtin_unreachable();	\
-	} while (0)
-#else
-# define unreachable() ((void)0)
-#endif
+#define unreachable() __builtin_unreachable()
 
 #ifndef __noreturn
 # define __noreturn __attribute__((noreturn))
@@ -125,8 +121,12 @@
 # define __aligned(x) __attribute__((aligned(x)))
 #endif
 
-#ifndef __hidden
-# define __hidden __attribute__((visibility("hidden")))
+#ifndef __cold
+# define __cold __attribute__((cold))
+#endif
+
+#ifndef __private_extern
+# define __private_extern __attribute__((visibility("hidden")))
 #endif
 
 #ifndef __no_stack_protector

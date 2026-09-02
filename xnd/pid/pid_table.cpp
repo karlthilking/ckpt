@@ -10,10 +10,10 @@
 
 using namespace xnd;
 
-__hidden pid_t _virt_pid        = -1;
-__hidden pid_t _real_pid        = -1;
-__hidden pid_t _virt_ppid       = -1;
-__hidden pid_t _real_ppid       = -1;
+__private_extern pid_t _virt_pid = -1;
+__private_extern pid_t _real_pid = -1;
+__private_extern pid_t _virt_ppid = -1;
+__private_extern pid_t _real_ppid = -1;
 
 extern virtual_id_table<pid_t> *pid_table;
 
