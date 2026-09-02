@@ -55,7 +55,7 @@ bool env_dyld_shared_region_is_private(void);
 void env_set_zlib_compression(char *);
 bool env_use_zlib_compression(void);
 
-void env_set_ckpt_interval(char *);
+void env_set_ckpt_interval(const char *);
 int env_get_ckpt_interval(void);
 
 #ifdef __cplusplus

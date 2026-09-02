@@ -1,6 +1,7 @@
 /* xnd_coord.c */
 #include "xnd/xnd.h"
 #include "common/time.h"
+#include "common/xthread.h"
 #include "xnd/ckptfile.h"
 #include "xnd/util/io.h"
 #include "xnd/util/env.h"
@@ -24,6 +25,8 @@
 #include <sys/un.h>
 #include <sys/select.h>
 
+static void coord_broadcast_msg(struct xnd_msg *);
+
 static struct proc_list *proc_list = NULL;
 static struct coord_info coord_info = {
         .epoch          = 0,
@@ -33,6 +36,18 @@ static struct coord_info coord_info = {
         .num_peers      = 0,
         .ckpt_interval  = 0
 };
+
+static inline bool
+ckpt_interval_used(void)
+{
+	return (coord_info.ckpt_interval != 0);
+}
+
+static inline u64
+ckpt_interval_nsec(void)
+{
+	return (u64)coord_info.ckpt_interval * NSEC_PER_SEC;
+}
 
 static bool
 proc_exited(struct proc *p)
@@ -85,57 +100,66 @@ static inline u32 coord_next_xnd_pid(void)
         return coord_info.next_xnd_pid++;
 }
 
-void coord_work(void)
+void
+coord_work(void)
 {
-        struct timeval  tv_start, tv_end;
-        int             elapsed;
-        pid_t		ppid;
-        bool            refresh;
-        u64             iter = 0u;
+	pid_t ppid;
+	u64 now, deadline = 0, iter = 0;
+	bool refresh_deadline = false;
 
-        if ((ppid = getppid()) == 1) {
-                xnd_error("Coordinator orphaned unexpectedly\n");
-                coord_exit(COORD_EXIT_FAILURE);
-        }
+	ppid = getppid();
+	if (ppid == 1) {
+		xnd_error("coordinator orphaned\n");
+		coord_exit(COORD_EXIT_FAILURE);
+	}
 
         do {
                 coord_wait_for_connection();
                 if (proc_list->size != 0)
                         break;
                 if (kill(ppid, 0) != 0 && errno == ESRCH) {
-                        xnd_error("Parent process bailed\n");
+                        xnd_error("parent process bailed\n");
                         coord_exit(COORD_EXIT_FAILURE);
                 }
         } while (proc_list->size == 0);
 
-        refresh = false;
-        gettimeofday(&tv_start, NULL);
-        for (;;) {
-                if (coord_info.ckpt_interval && refresh) {
-                        gettimeofday(&tv_start, NULL);
-                        refresh = false;
-                }
+	if (ckpt_interval_used()) {
+		now = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
+		deadline = now + ckpt_interval_nsec();
+	}
 
-                coord_wait_for_connection();
-                coord_wait_for_msg();
+	for (;;) {
+		if (ckpt_interval_used() && refresh_deadline) {
+			now = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
+			deadline = now + ckpt_interval_nsec();
+			refresh_deadline = false;
+		}
 
-                if (coord_info.ckpt_interval != 0) {
-                        gettimeofday(&tv_end, NULL);
-                        elapsed = tv_end.tv_sec - tv_start.tv_sec;
-                        if (elapsed >= coord_info.ckpt_interval) {
-                                coord_do_checkpoint();
-                                refresh = true;
-                        }
-                }
+		coord_wait_for_connection();
+		coord_wait_for_msg();
 
-                if (proc_list->size == 0) {
-                        break;
-                } else if (COORD_CHECK_HEARTBEAT(iter++)) {
-                        proc_list_filter(proc_list);
-                        if (proc_list->size == 0)
-                                break;
-                }
-        }
+		if (ckpt_interval_used()) {
+			now = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
+			/*
+			 * If checkpoint interval was just set via
+			 * an xnd_command message to change the
+			 * checkpoint interval, then ckpt_interval_used()
+			 * returns true, but we need to initialize the
+			 * deadline before using it.
+			 */
+			if (deadline == 0) {
+				refresh_deadline = true;
+			} else if (now >= deadline) {
+				coord_do_checkpoint();
+				refresh_deadline = true;
+			}
+		}
+
+		if (proc_list->size > 0 && COORD_CHECK_HEARTBEAT(iter++))
+			proc_list_filter(proc_list);
+		if (proc_list->size == 0)
+			break;
+	}
 }
 
 void coord_init(void)
@@ -245,9 +269,10 @@ void coord_broadcast_kill(void)
 void coord_handle_command(int fd, struct xnd_msg *msg)
 {
         struct xnd_msg resp;
+	const char *cmdstr = xnd_cmd_string(msg->cmd);
 
         xnd_assert(msg->hdr == XND_COMMAND);
-        xnd_trace("Received command: %s\n", xnd_cmd_string(msg->cmd));
+	xnd_trace("received command: %s\n", cmdstr);
 
         switch (msg->cmd) {
         case XND_CKPT_CMD:
@@ -256,44 +281,64 @@ void coord_handle_command(int fd, struct xnd_msg *msg)
         case XND_KILL_CMD:
                 coord_broadcast_kill();
                 break;
+	case XND_CKPT_INTERVAL_CMD:
+		/*
+		 * Change current checkpoint interval and return
+		 * previous checkpoint interval to sender. Broadcast
+		 * checkpoint interval to all participating proceses
+		 * so they can update their local values of the
+		 * checkpoint interval.
+		 */
+		resp.ckpt_interval = coord_info.ckpt_interval;
+		coord_info.ckpt_interval = msg->ckpt_interval;
+		coord_broadcast_msg(msg);
+		break;
         default:
-                xnd_error("Invalid command: %s\n", xnd_cmd_string(msg->cmd));
-                coord_exit(COORD_EXIT_FAILURE);
+		xnd_warn("invalid command: %s\n", cmdstr);
+		resp.hdr = XND_COORD_ACK;
+		resp.ret = XND_FAILURE;
+		goto out;
         }
 
         resp.hdr = XND_COORD_ACK;
         resp.ret = XND_SUCCESS;
+out:
         xnd_assert(coord_send_msg(fd, &resp) == 0);
 }
 
-void coord_handle_msg(int fd, struct xnd_msg *msg)
+void
+coord_handle_msg(int fd, struct xnd_msg *msg)
 {
+	pid_t pid;
         struct proc *p;
+	bool error = false;
+	const char *msghdr_string = xnd_msghdr_string(msg->hdr);
 
-        switch (msg->hdr) {
-        case XND_EXIT: {
-                p = proc_list_find_by_real_pid(proc_list, msg->real_pid);
-                if (p) {
-                        proc_list_remove(proc_list, p);
-                } else {
-                        xnd_error("Exited process not found (pid: %d)\n",
-                                  msg->real_pid);
-                }
-                break;
-        }
-        case XND_VIRT_TO_REAL: {
-                coord_send_virt_to_real(fd, msg);
-                break;
-        }
-        case XND_REAL_TO_VIRT: {
-                coord_send_real_to_virt(fd, msg);
-                break;
-        }
-        default:
-                xnd_error("Unexpected message: %s\n",
-                          xnd_msghdr_string(msg->hdr));
-                coord_exit(COORD_EXIT_FAILURE);
-        }
+	switch (msg->hdr) {
+	case XND_EXIT:
+		pid = msg->real_pid;
+		p = proc_list_find_by_real_pid(proc_list, pid);
+		if (p == NULL) {
+			xnd_error("exited process not found: %d\n", pid);
+			error = true;
+		} else {
+			proc_list_remove(proc_list, p);
+		}
+		break;
+	case XND_VIRT_TO_REAL:
+		coord_send_virt_to_real(fd, msg);
+		break;
+	case XND_REAL_TO_VIRT:
+		coord_send_real_to_virt(fd, msg);
+		break;
+	default:
+		xnd_error("unexpected message: %s\n", msghdr_string);
+		error = true;
+		break;
+	}
+
+	if (error)
+		coord_exit(COORD_EXIT_FAILURE);
 }
 
 int coord_send_msg(int fd, struct xnd_msg *msg)
@@ -316,6 +361,27 @@ int coord_recv_msg(int fd, struct xnd_msg *msg)
 		return -1;
 
 	return 0;
+}
+
+/*
+ * coord_broadcast_msg:
+ *  Broadcast a message to all processes connected to the coordinator.
+ *  Additionally, take responsibility for removing disconnected
+ *  processes from the process list if a message send fails.
+ */
+static void
+coord_broadcast_msg(struct xnd_msg *msg)
+{
+	int ret;
+	struct proc *p, *next;
+
+	proc_foreach_safe(p, next, proc_list) {
+		ret = coord_send_msg(p->fd, msg);
+		if (ret != 0) {
+			xnd_warn("process %d exited\n", p->real_pid);
+			proc_list_remove(proc_list, p);
+		}
+	}
 }
 
 int coord_release_barrier(enum coord_barrier_type type)
@@ -782,9 +848,9 @@ void coord_do_checkpoint(void)
         sigaddset(&set, SIGINT);
         sigaddset(&set, SIGQUIT);
         sigaddset(&set, SIGTERM);
-        sigprocmask(SIG_BLOCK, &set, NULL);
+	xpthread_sigmask(SIG_BLOCK, &set, NULL);
 
-        /**
+        /*
          * Wait until each process's checkpoint thread is ready to receive
          * the checkpoint request on the read end of the socket. Then,
          * broadcast XND_CKPT_REQUEST and receive XND_CKPT_READY individually
@@ -793,16 +859,11 @@ void coord_do_checkpoint(void)
          * Now, each process will enter a barrier until the coordinator
          * allows them to complete their individual checkpoints (suspended)
          */
-        total = coord_collective_prepare(COMM_BROADCAST);
-	if (total == 0) {
-		sigprocmask(SIG_UNBLOCK, &set, NULL);
-		return;
-	}
-
-	if (coord_suspend_processes() == 0) {
-		sigprocmask(SIG_UNBLOCK, &set, NULL);
-		return;
-	}
+	total = coord_collective_prepare(COMM_BROADCAST);
+	if (total == 0)
+		goto sigmask_unblock;
+	if (coord_suspend_processes() == 0)
+		goto sigmask_unblock;
 
         /**
          * Now that each process is suspended, create the checkpoint
@@ -867,7 +928,8 @@ out:
                 xnd_ckptdir_unlink(coord_info.xnd_uuid, epoch);
         }
 
-        sigprocmask(SIG_UNBLOCK, &set, NULL);
+sigmask_unblock:
+	xpthread_sigmask(SIG_UNBLOCK, &set, NULL);
 }
 
 void coord_send_virt_to_real(int fd, struct xnd_msg *msg)

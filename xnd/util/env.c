@@ -198,18 +198,28 @@ bool env_use_zlib_compression(void)
         return false;
 }
 
-void env_set_ckpt_interval(char *interval)
+void
+env_set_ckpt_interval(const char *value)
 {
-        xnd_assert(setenv(XND_CKPT_INTERVAL_ENV, interval, 1) == 0);
+	int ckpt_interval = atoi(value);
+
+	if (value == NULL || ckpt_interval == 0) {
+		unsetenv(XND_CKPT_INTERVAL_ENV);
+		return;
+	}
+
+	xnd_assert(setenv(XND_CKPT_INTERVAL_ENV, value, 1) == 0);
 }
 
-int env_get_ckpt_interval(void)
+int
+env_get_ckpt_interval(void)
 {
-        char *value;
+	char *value = NULL;
+	int ckpt_interval = 0;
 
-        if ((value = getenv(XND_CKPT_INTERVAL_ENV))) {
-                return atoi(value);
-        }
+	value = getenv(XND_CKPT_INTERVAL_ENV);
+	if (value != NULL)
+		ckpt_interval = atoi(value);
 
-        return 0;
+	return ckpt_interval;
 }

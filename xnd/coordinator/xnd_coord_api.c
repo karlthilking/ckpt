@@ -126,12 +126,12 @@ out:
 }
 
 int
-send_command_to_coord(enum xnd_cmd cmd, int timeout, bool *exited)
+send_command_to_coord(struct xnd_msg *msg, int timeout, bool *exited)
 {
 	int fd, ret;
 	bool check_exit = true;
+	struct xnd_msg resp = {0};
 	struct timeval tv = { .tv_sec = timeout, .tv_usec = 0 };
-	struct xnd_msg msg = { .hdr = XND_COMMAND, .cmd = cmd };
 
 	if (exited != NULL)
 		*exited = false;
@@ -147,16 +147,16 @@ send_command_to_coord(enum xnd_cmd cmd, int timeout, bool *exited)
 		setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
 	}
 
-	ret = send_msg_to_coord(fd, &msg);
+	ret = send_msg_to_coord(fd, msg);
 	if (ret != 0)
 		goto out;
 
-	ret = recv_msg_from_coord(fd, &msg);
+	ret = recv_msg_from_coord(fd, &resp);
 	if (ret != 0)
 		goto out;
 
 	check_exit = false;
-	if (msg.hdr != XND_COORD_ACK || msg.ret != XND_SUCCESS)
+	if (resp.hdr != XND_COORD_ACK || resp.ret != XND_SUCCESS)
 		ret = -1;
 
 out:

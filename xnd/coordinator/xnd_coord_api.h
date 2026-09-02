@@ -42,7 +42,8 @@ enum xnd_cmd {
         XND_NULL_CMD,
         XND_CKPT_CMD,
         XND_EXIT_CMD,
-        XND_KILL_CMD
+        XND_KILL_CMD,
+	XND_CKPT_INTERVAL_CMD,
 };
 
 enum coord_barrier_type {
@@ -85,7 +86,7 @@ pid_t launch_coordinator(bool);
 pid_t get_coord_pid(void);
 
 int connect_to_coord(void);
-int send_command_to_coord(enum xnd_cmd, int, bool *);
+int send_command_to_coord(struct xnd_msg *, int, bool *);
 int send_msg_to_coord(int, struct xnd_msg *);
 int recv_msg_from_coord(int, struct xnd_msg *);
 

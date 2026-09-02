@@ -319,6 +319,17 @@ coord_client_atfork_failed(void)
 	xpthread_mutex_unlock(&oob_mutex);
 }
 
+static inline void
+handle_ckpt_interval_change(struct xnd_msg *msg)
+{
+	char buf[11];
+	const char *value;
+
+	snprintf(buf, sizeof(buf), "%d", msg->ckpt_interval);
+	value = buf;
+	env_set_ckpt_interval(value);
+}
+
 /*
  * wait_for_ckpt_request_from_coord:
  *  Try to receive a message from the coordinator with the header
@@ -329,17 +340,45 @@ int
 wait_for_ckpt_request_from_coord(bool *exited)
 {
 	int ret, fd;
-        struct xnd_msg msg = {0};
+	bool did_exit = false;
+	struct xnd_msg msg = {0};
+	const char *msghdr_str = NULL, *cmd_str = NULL;
 
-	ret = recv_msg_from_coord(coord_fd, &msg);
-	if (ret != 0) {
-		fd = __atomic_load_n(&coord_fd, __ATOMIC_ACQUIRE);
-		*exited = ((fd == -1) || (fd > 0 && peer_exited(fd)));
-		return -1;
-	}
+	do {
+		ret = recv_msg_from_coord(coord_fd, &msg);
+		if (ret != 0) {
+			fd = __atomic_load_n(&coord_fd, __ATOMIC_ACQUIRE);
+			if ((fd == -1) || (fd > 0 && peer_exited(fd)))
+				did_exit = true;
+			break;
+		}
 
-	*exited = false;
-	return (msg.hdr == XND_CKPT_REQUEST ? 0 : -1);
+		switch (msg.hdr) {
+		case XND_CKPT_REQUEST:
+			break;
+		case XND_COMMAND:
+			if (msg.cmd == XND_CKPT_INTERVAL_CMD) {
+				handle_ckpt_interval_change(&msg);
+				break;
+			}
+			ret = -1;
+			cmd_str = xnd_cmd_string(msg.cmd);
+			goto done;
+		default:
+			ret = -1;
+			msghdr_str = xnd_msghdr_string(msg.hdr);
+			goto done;
+		}
+	} while (msg.hdr != XND_CKPT_REQUEST);
+
+done:
+	if (ret == -1 && msghdr_str != NULL)
+		xnd_warn("unrecognized message: %s\n", msghdr_str);
+	else if (ret == -1 && cmd_str != NULL)
+		xnd_warn("unrecognized command: %s\n", cmd_str);
+
+	*exited = did_exit;
+	return ret;
 }
 
 void enter_coord_barrier(enum coord_barrier_type type)
