@@ -25,14 +25,62 @@ f"Usage: {sys.argv[0]} [options] ...\n" \
  "  Show available tests and test configurations\n"
 
 CKPT_MSG = "Checkpoint complete: "
+CKPT_ENABLED = False
 
-def do_checkpoint(xnd: Dict[str, str], master_fd: int) -> Optional[str]:
+def print_exit_status(name: str, code: int) -> bool:
+    if code == 0:
+        print(f"[{name}] PASS: exited with exit code 0")
+        return True
+    else:
+        print(f"[{name}] FAIL: exited with exit code {code}")
+        return False
+
+def try_set_ckpt_interval(xnd_command: str, interval: int) -> int:
+    code = subprocess.run(
+        [xnd_command, "--ckpt-interval", str(interval)],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+    ).returncode
+    return code
+
+def set_ckpt_interval(
+        xnd_command: str, interval: int, timeout: int) -> bool:
+    code = 255
+    deadline = time.time() + timeout
+    while code != 0:
+        time.sleep(1)
+        code = try_set_ckpt_interval(xnd_command, interval)
+        if code != 0 and time.time() >= deadline:
+            return False
+    return True
+
+def enable_checkpoint(
+        xnd: Dict[str, str], interval: int, timeout: int) -> bool:
+    global CKPT_ENABLED
+    xnd_command = xnd["xnd_command"]
+    success = set_ckpt_interval(xnd_command, interval, timeout)
+    if success:
+        CKPT_ENABLED = True
+    return success
+
+def disable_checkpoint(xnd: Dict[str, str], timeout: int) -> bool:
+    global CKPT_ENABLED
+    xnd_command = xnd["xnd_command"]
+    success = set_ckpt_interval(xnd_command, 0, timeout)
+    if success:
+        CKPT_ENABLED = False
+    return success
+
+def do_checkpoint(xnd: Dict[str, str]) -> bool:
     args = [xnd["xnd_command"], "--checkpoint"]
-    stat = subprocess.run(
+    code = subprocess.run(
         args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
     ).returncode
-    if stat != 0:
-        return None
+    if code != 0:
+        print(f"{' '.join(args)} exited with exit code {code}")
+        return False
+    return True
+
+def parse_checkpoint(master_fd: int) -> Optional[str]:
     with os.fdopen(master_fd, "r", errors="ignore") as pipe:
         for line in pipe:
             if CKPT_MSG in line:
@@ -41,10 +89,13 @@ def do_checkpoint(xnd: Dict[str, str], master_fd: int) -> Optional[str]:
     return None
 
 def await_checkpoint(
-    xnd: Dict[str, str], fd: int, interval: int
+        xnd: Dict[str, str], fd: int, interval: int
 ) -> Optional[str]:
-    time.sleep(interval)
-    return do_checkpoint(xnd, fd)
+    global CKPT_ENABLED
+    if not CKPT_ENABLED:
+        time.sleep(interval)
+        do_checkpoint(xnd)
+    return parse_checkpoint(fd)
 
 def kill_computation(pgid: int):
     try:
@@ -65,6 +116,7 @@ def verify(
     iterations: int,
     xnd: Dict[str, str]
 ) -> bool:
+    global CKPT_ENABLED
     name = config.CONFIG[test_id]["name"]
     config.prepare_test(test_id)
     argv = config.get_test_argv(test_id)
@@ -73,26 +125,18 @@ def verify(
 
     master_fd, slave_fd = pty.openpty()
     proc = subprocess.Popen(
-        [xnd["xnd_launch"]] + argv,
+        [xnd["xnd_launch"], "--interval", str(ckpt_interval)] + argv,
         stdout=slave_fd, stderr=slave_fd,
         start_new_session=True, text=True, close_fds=True
     )
+    CKPT_ENABLED = True
     os.close(slave_fd)
 
     ckpt_dir = await_checkpoint(xnd, master_fd, ckpt_interval)
     if ckpt_dir is None:
-        code = 0
         print(f"[{name}] Exit before first checkpoint\n")
-        try:
-            code = proc.wait(timeout=1)
-        except:
-            code = 1
-        if code != 0:
-            print(f"[{name}] FAIL: exited with code {code}")
-            return False
-        else:
-            print(f"[{name}] PASS: exited with code 0")
-            return True
+        code = proc.wait()
+        return print_exit_status(name, code)
 
     top_level_dir = None
     if ckpt_dir.rfind('/') != -1:
@@ -102,7 +146,7 @@ def verify(
     proc.wait()
 
     for cycle in range(iterations):
-        last = cycle == iterations - 1
+        last = True if cycle == iterations - 1 else False
         print(f"[{name}] restart {cycle + 1}/{iterations}"
               f"{' (final, running to completion)' if last else ''}")
 
@@ -113,13 +157,10 @@ def verify(
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 start_new_session=True, close_fds=True
             )
-            code = proc.wait()
-            if code != 0:
-                print(f"[{name}] FAIL: exited with code {code}")
-            else:
-                print(f"[{name}] PASS: exited with code 0")
-                ret = True
+            disable_checkpoint(xnd, timeout=5)
 
+            code = proc.wait()
+            ret = print_exit_status(name, code)
             if top_level_dir is not None:
                 os.system(f"rm -rf {top_level_dir}")
             return ret
@@ -134,20 +175,11 @@ def verify(
 
         next_ckpt_dir = await_checkpoint(xnd, master_fd, ckpt_interval)
         if next_ckpt_dir is None:
-            code = 0
-            kill_computation(proc.pid)
+            code = proc.wait()
+            ret = print_exit_status(name, code)
             if top_level_dir is not None:
                 os.system(f"rm -rf {top_level_dir}")
-            try:
-                code = proc.wait(timeout=1)
-            except:
-                code = 1
-            if code != 0:
-                print(f"[{name}] FAIL: exited with code {code}")
-                return False
-            else:
-                print(f"[{name}] PASS: exited with code 0")
-                return True
+            return ret
 
         kill_computation(proc.pid)
         proc.wait()
