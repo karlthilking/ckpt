@@ -23,48 +23,63 @@ extern pid_t _virt_ppid;
 extern pid_t _real_pid;
 extern pid_t _real_ppid;
 
-static inline pid_t virtual_to_real_pid(pid_t virt)
+static inline pid_t
+virtual_to_real_pid(pid_t virt)
 {
-        pid_t real;
+	pid_t real;
 
-        pid_table_acquire();
-        if ((real = pid_table_virtual_to_real(virt)) != -1) {
-                goto out;
-        }
+	if (virt == _virt_pid)
+		return _real_pid;
 
-        if ((real = virt_to_real_pid_from_coord(virt)) == -1)
-                xnd_trace("Virtual to real pid translation error "
-                          "(virtual pid: %d)\n", virt);
+	pid_table_acquire();
+	real = pid_table_virtual_to_real(virt);
+	if (real != -1)
+		goto out;
+
+	real = virt_to_real_pid_from_coord(virt);
+	if (real == -1)
+		xnd_error("failed to get real pid (virtual=%d)\n", virt);
 out:
-        pid_table_release();
-        return real;
+	pid_table_release();
+	return real;
 }
 
-static inline pid_t real_to_virtual_pid(pid_t real)
+static inline pid_t
+real_to_virtual_pid(pid_t real)
 {
-        pid_t virt;
+	pid_t virt;
 
-        pid_table_acquire();
-        if ((virt = pid_table_real_to_virtual(real)) != -1) {
-                goto out;
-        }
+	if (real == _real_pid)
+		return _virt_pid;
 
-        if ((virt = real_to_virt_pid_from_coord(real)) == -1)
-                xnd_trace("Real to virtual pid translation error "
-                          "(real pid: %d)\n", real);
+	pid_table_acquire();
+	virt = pid_table_real_to_virtual(real);
+	if (virt != -1)
+		goto out;
+
+	virt = real_to_virt_pid_from_coord(real);
+	if (virt == -1)
+		xnd_error("failed to get virtual pid (real=%d)\n", real);
+
 out:
-        pid_table_release();
-        return virt;
+	pid_table_release();
+	return virt;
 }
 
 pid_t __getpid_hook(void)
 {
-        return (_virt_pid != -1 ? _virt_pid : _real_getpid());
+	if (unlikely(_virt_pid == -1))
+		return _real_getpid();
+
+	return _virt_pid;
 }
 
 pid_t __getppid_hook(void)
 {
-        return (_virt_ppid != -1 ? _virt_ppid : _real_getppid());
+	if (unlikely(_virt_ppid == -1))
+		return _real_getppid();
+
+	return _virt_ppid;
 }
 
 pid_t __getpgrp_hook(void)
@@ -296,7 +311,8 @@ int __killpg_hook(pid_t pgrp, int sig)
         return retval;
 }
 
-static inline void bsdinfo_real_to_virt(struct proc_bsdinfo *bsd)
+static inline void
+bsdinfo_real_to_virt(struct proc_bsdinfo *bsd)
 {
         pid_t virt;
 
@@ -310,7 +326,8 @@ static inline void bsdinfo_real_to_virt(struct proc_bsdinfo *bsd)
                 bsd->e_tpgid = (u32)virt;
 }
 
-static inline void bsdshortinfo_real_to_virt(struct proc_bsdshortinfo *bsd)
+static inline void
+bsdshortinfo_real_to_virt(struct proc_bsdshortinfo *bsd)
 {
         pid_t virt;
 
@@ -331,30 +348,32 @@ static inline void pid_list_real_to_virt(pid_t *list, int count)
 {
         pid_t virt;
 
-        for (int i = 0; i < count; i++) {
-                if (list[i] == 0)
-                        continue;
-                if ((virt = real_to_virtual_pid(list[i])) != -1)
-                        list[i] = virt;
-        }
+	for (int i = 0; i < count; i++) {
+		if (list[i] == 0)
+			continue;
+		virt = real_to_virtual_pid(list[i]);
+		if (virt != -1)
+			list[i] = virt;
+	}
 }
 
 
-int __proc_pidinfo_hook(int pid, int flavor, u64 arg,
-                        void *buf, int bufsize)
+int
+__proc_pidinfo_hook(int pid, int flavor, u64 arg, void *buf, int bufsize)
 {
-        int     ret;
-        pid_t   real_pid;
+	int ret;
+	pid_t real_pid;
 
         if (XND_SKIP_INTERPOSE())
                 return proc_pidinfo(pid, flavor, arg, buf, bufsize);
 
         unsafe_enter();
-        if ((real_pid = virtual_to_real_pid(pid)) == -1) {
-                unsafe_exit();
-                errno = ESRCH;
-                return 0;
-        }
+	real_pid = virtual_to_real_pid(pid);
+	if (real_pid == -1) {
+		unsafe_exit();
+		errno = ESRCH;
+		return 0;
+	}
 
         ret = proc_pidinfo(real_pid, flavor, arg, buf, bufsize);
         if (ret > 0 && buf != NULL) {
