@@ -56,21 +56,25 @@
 #define TIMESPEC_NSEC_DIFF(end, begin) \
 	(TIMESPEC_TO_NSEC(end) - TIMESPEC_TO_NSEC(begin))
 
-#define TIMESPEC_TO_TIMEVAL(tsp, tvp)				   \
+#ifndef TIMESPEC_TO_TIMEVAL
+# define TIMESPEC_TO_TIMEVAL(tsp, tvp)				   \
 	do {							   \
 		(tvp)->tv_sec = (tsp)->tv_sec;			   \
 		(tvp)->tv_usec = ((tsp)->tv_nsec / NSEC_PER_USEC); \
 	} while (0)
+#endif /* TIMESPEC_TO_TIMEVAL */
 
-#define TIMEVAL_TO_TIMESPEC(tvp, tsp)				   \
+#ifndef TIMEVAL_TO_TIMESPEC
+# define TIMEVAL_TO_TIMESPEC(tvp, tsp)				   \
 	do {							   \
 		(tsp)->tv_sec = (tvp)->tv_sec;			   \
 		(tsp)->tv_nsec = ((tvp)->tv_usec * NSEC_PER_USEC); \
 	} while (0)
+#endif /* TIMEVAL_TO_TIMESPEC */
 
 /*
  * Convenience macros for timing certain events; TIMER_PUSH and TIMER_POP
- * must be placed in the same lexicographical scope.
+ * must be placed in the same lexical scope.
  */
 #if TIMING
 # define TIMER_PUSH(name)				\
@@ -84,9 +88,9 @@
 	__elapsed = TIMESPEC_MSEC_DIFF(&__tp_end, &__tp_start); \
 	xnd_printf("%s took %ldms\n", __event, __elapsed);	\
 }
-#else
+#else /* !TIMING */
 # define TIMER_PUSH(name) ((void)0)
 # define TIMER_POP() ((void)0)
-#endif
+#endif /* TIMING */
 
 #endif /* TIME_COMMON_H */
