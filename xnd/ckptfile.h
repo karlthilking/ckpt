@@ -37,7 +37,7 @@
 
 struct xnd_ckpt_header {
         char                            magic[16];
-        
+
         uuid_t                          xnd_uuid;
         u32                             xnd_pid;
         u32                             xnd_ppid;
@@ -58,6 +58,9 @@ struct xnd_ckpt_header {
         u32                             region_count;
         struct shared_cache_info        shared_cache_info;
 };
+
+static_assert(sizeof(((struct xnd_ckpt_header *)0)->magic) >=
+	      sizeof(XND_HEADER_MAGIC), "");
 
 enum xnd_ckpt_entry {
         XND_VM_REGION_ENTRY,
@@ -95,8 +98,7 @@ bool xnd_ckptfile_valid(const struct xnd_ckpt_header *);
 int xnd_ckptfile_parse(const char *, uuid_t, u64 *, u32 *);
 int xnd_ckptfile_name(char *, size_t, u32);
 int xnd_ckptfile_extract_header(char *, struct xnd_ckpt_header *);
-void xnd_ckptfile_write_header(struct xnd_ckpt_header *, 
-                               u32, u32, uuid_t, u32, u32, u32, u32, bool);
+void xnd_ckptfile_write_header(struct xnd_ckpt_header *);
 
 #ifdef __cplusplus
 }

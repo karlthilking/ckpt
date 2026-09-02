@@ -28,25 +28,30 @@
 #include <unistd.h>
 #include <signal.h>
 
-__hidden _Atomic enum xnd_state libxnd_state = XND_UNINITIALIZED;
+static void xnd_setup(void) __constructor(101);
+static void xnd_cleanup(void) __destructor();
 
-__hidden u32 xnd_pid;
-__hidden u32 xnd_ppid;
-__hidden u32 xnd_pgid;
-__hidden uuid_t xnd_uuid;
+__private_extern enum xnd_state libxnd_state = XND_UNINITIALIZED;
 
-__hidden u64 epoch = 0;
-__hidden u32 num_peers = 0;
-__hidden bool is_root_of_tree = false;
+__private_extern u32 xnd_pid;
+__private_extern u32 xnd_ppid;
+__private_extern u32 xnd_pgid;
+__private_extern uuid_t xnd_uuid;
 
-enum xnd_state get_xnd_state(void)
+__private_extern u64 epoch = 0;
+__private_extern u32 num_peers = 0;
+__private_extern bool is_root_of_tree = false;
+
+enum xnd_state
+get_xnd_state(void)
 {
-        return atomic_load(&libxnd_state);
+	return __atomic_load_n(&libxnd_state, __ATOMIC_ACQUIRE);
 }
 
-void set_xnd_state(enum xnd_state new_state)
+void
+set_xnd_state(enum xnd_state next)
 {
-        atomic_store(&libxnd_state, new_state);
+	__atomic_store_n(&libxnd_state, next, __ATOMIC_RELEASE);
 }
 
 void xnd_precheckpoint(void)
@@ -120,30 +125,54 @@ void xnd_postrestart_late(void)
 	pid_table_postrestart();
 }
 
-void xnd_checkpoint(ucontext_t *uctx)
+void
+xnd_checkpoint(ucontext_t *uctx)
 {
-        struct xnd_ckpt_header  header;
-        struct xnd_vm_region    regions[XND_CKPT_VM_REGION_MAX];
-        enum xnd_ckpt_entry     entries[XND_CKPT_ENTRY_MAX];
-        u32                     nr_regions, nr_entries;
+	static enum xnd_ckpt_entry entries[XND_CKPT_ENTRY_MAX];
+	static struct xnd_vm_region regions[XND_CKPT_VM_REGION_MAX];
+	static struct xnd_ckpt_header header;
 
-        nr_regions = ckpt_vm_save_regions(regions);
-        if (unlikely(nr_regions > XND_CKPT_VM_REGION_MAX)) {
-                xnd_error("Max memory regions exceeded\n");
-                return;
-        }
+	int ret;
+	u32 idx, nregions, nentries;
 
-        for (u32 i = 0; i < nr_regions; i++) {
-                *(entries + i) = XND_VM_REGION_ENTRY;
-        }
+	uuid_copy(header.xnd_uuid, xnd_uuid);
+	header.xnd_pid = xnd_pid;
+	header.xnd_ppid = xnd_ppid;
+	header.xnd_pgid = xnd_pgid;
+	header.num_peers = num_peers;
+	header.is_root_of_tree = (u32)is_root_of_tree;
 
-        *(entries + nr_regions) = XND_UCONTEXT_ENTRY;
-        nr_entries = nr_regions + 1;
+	nregions = ckpt_vm_save_regions(regions);
+	if (nregions > XND_CKPT_VM_REGION_MAX) {
+		xnd_error("max memory regions exceeded: %u\n", nregions);
+		return;
+	} else if (nregions == 0) {
+		xnd_error("ckpt_vm_save_regions saved 0 regions\n");
+		return;
+	}
 
-        xnd_ckptfile_write_header(&header, nr_regions, nr_entries,
-                                  xnd_uuid, xnd_pid, xnd_ppid, xnd_pgid,
-                                  num_peers, is_root_of_tree);
-        write_ckpt(&header, entries, regions, uctx);
+	idx = 0;
+	while (idx < nregions)
+		entries[idx++] = XND_VM_REGION_ENTRY;
+
+	entries[idx++] = XND_UCONTEXT_ENTRY;
+	nentries = idx;
+
+	header.entry_count = nentries;
+	header.region_count = nregions;
+
+	/*
+	 * xnd_ckptfile_write_header will write the remaining fields
+	 * of the checkpoint header that were not filled in here.
+	 */
+	xnd_ckptfile_write_header(&header);
+	ret = write_ckpt(&header, entries, regions, uctx);
+	if (ret != 0)
+		xnd_error("failed to write checkpoint file\n");
+
+	bzero(&entries, sizeof(entries));
+	bzero(&regions, sizeof(regions));
+	bzero(&header, sizeof(header));
 }
 
 void xnd_atfork_prepare(void)
@@ -209,7 +238,8 @@ void xnd_register_fork_handlers(void)
 	xnd_atfork_registered = true;
 }
 
-static __constructor(101) void xnd_setup(void)
+static void
+xnd_setup(void)
 {
 	int ret, sig;
 	char *tmp;
@@ -248,7 +278,8 @@ static __constructor(101) void xnd_setup(void)
 #endif
 }
 
-static __destructor() void xnd_cleanup(void)
+static void
+xnd_cleanup(void)
 {
 	char *tmp;
 

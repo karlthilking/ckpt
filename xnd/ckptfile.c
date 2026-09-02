@@ -431,33 +431,29 @@ fail:
         return -1;
 }
 
-void xnd_ckptfile_write_header(struct xnd_ckpt_header *hdr, 
-                               u32 nr_regions, u32 nr_entries,
-                               uuid_t xnd_uuid, u32 xnd_pid, u32 xnd_ppid, 
-                               u32 xnd_pgid, u32 num_peers, 
-                               bool is_root_of_tree)
+/*
+ * xnd_ckptfile_write_header:
+ *  Write checkpoint header magic field, process identity fields,
+ *  and mach port fields. xnd identity fields, region/entry counts,
+ *  number of xnd peers, and process tree root indicator should be
+ *  handled by the caller (xnd_lib.c:xnd_checkpoint).
+ */
+void
+xnd_ckptfile_write_header(struct xnd_ckpt_header *header)
 {
-        bzero(hdr, sizeof(*hdr));
-        strcpy(hdr->magic, XND_HEADER_MAGIC);
-        
-        xnd_assert(shared_cache_get_info(&hdr->shared_cache_info) == 0);
-        
-        memcpy(hdr->xnd_uuid, xnd_uuid, sizeof(uuid_t));
-        hdr->xnd_pid = xnd_pid;
-        hdr->xnd_ppid = xnd_ppid;
-        hdr->xnd_pgid = xnd_pgid;
-        
-        hdr->pid = _real_getpid();
-        hdr->ppid = _real_getppid();
-        hdr->sid = _real_getsid(0);
-        hdr->pgid = _real_getpgid(0);
+	int ret;
 
-        hdr->task_self = task_self_trap();
-        hdr->host_self = host_self_trap();
+	strcpy(header->magic, XND_HEADER_MAGIC);
 
-        hdr->num_peers = num_peers;
-        hdr->is_root_of_tree = is_root_of_tree;
+	ret = shared_cache_get_info(&header->shared_cache_info);
+	if (ret != 0)
+		xnd_panic("shared_cache_get_info: %d\n", ret);
 
-        hdr->region_count = nr_regions;
-        hdr->entry_count = nr_entries;
+	header->pid = _real_getpid();
+	header->ppid = _real_getppid();
+	header->sid = _real_getsid(0);
+	header->pgid = _real_getpgid(0);
+
+	header->task_self = mach_task_self();
+	header->host_self = mach_host_self();
 }
