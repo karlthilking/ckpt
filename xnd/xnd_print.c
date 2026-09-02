@@ -14,12 +14,12 @@
 #include "xnd/util/path.h"
 #include "xnd/util/io.h"
 
-#define KILOBYTES(__bytes) \
-        (((float)(__bytes)) / 1024.0f)
-#define MEGABYTES(__bytes) \
-        (KILOBYTES((__bytes)) / 1024.0f)
-#define GIGABYTES(__bytes) \
-        (MEGABYTES((__bytes)) / 1024.0f)
+#define KILOBYTES(bytes) \
+	(((float)(bytes)) / 1024.0f)
+#define MEGABYTES(bytes) \
+	(KILOBYTES(bytes) / 1024.0f)
+#define GIGABYTES(bytes) \
+	(MEGABYTES(bytes) / 1024.0f)
 
 #define ARG_IS_CKPT(arg) \
         (strstr(arg, XND_CKPTFILE_SUFFIX) != NULL)
@@ -112,13 +112,17 @@ static const char *help =
 static void parse_region_options(char *);
 static void parse_region_info_options(char *);
 static void usage(void);
+
 static const char *vm_inherit_string(struct xnd_vm_region *);
 static const char *vm_share_mode_string(struct xnd_vm_region *);
 static const char *vm_user_tag_string(struct xnd_vm_region *);
+
+static int read_vm_region(int, struct xnd_vm_region *);
 static int read_ckpt(int, struct xnd_ckpt_header *,
                      enum xnd_ckpt_entry *,
                      struct xnd_vm_region *,
                      ucontext_t *);
+
 static bool skip_vm_region(struct xnd_vm_region *);
 static void print_ckpt_header(struct xnd_ckpt_header *);
 static void print_vm_regions(struct xnd_vm_region *, u32);
@@ -288,15 +292,33 @@ static const char *vm_user_tag_string(struct xnd_vm_region *region)
         }
 }
 
-static int read_ckpt(int fd, struct xnd_ckpt_header *header,
-                     enum xnd_ckpt_entry *entries,
-                     struct xnd_vm_region *regions,
-                     ucontext_t *uctx)
+static int
+read_vm_region(int fd, struct xnd_vm_region *region)
 {
 	int ret;
 	off_t off;
+
+	if (ONLY_RESTORE_DIRTY_PAGES(region) && region->dirty_only) {
+		off = sizeof(struct xnd_vm_page) + VM_PAGE_SIZE;
+		off *= region->pages_dirtied;
+	} else {
+		off = region->size;
+	}
+
+	ret = (lseek(fd, off, SEEK_CUR) == -1 ? -1 : 0);
+	return ret;
+}
+
+static int
+read_ckpt(int fd,
+	  struct xnd_ckpt_header *header,
+	  enum xnd_ckpt_entry *entries,
+	  struct xnd_vm_region *regions,
+          ucontext_t *uctx)
+{
+	int ret;
 	ssize_t bread;
-	struct xnd_vm_region *r = &regions[0];
+	struct xnd_vm_region *region = regions;
 
         for (u32 i = 0; i < header->entry_count; i++) {
                 if (readall(fd, &entries[i], sizeof(entries[i])) < 0) {
@@ -306,20 +328,19 @@ static int read_ckpt(int fd, struct xnd_ckpt_header *header,
 
                 switch (entries[i]) {
                 case XND_VM_REGION_ENTRY: {
-			bread = readall(fd, r, sizeof(*r));
-			if (bread != sizeof(*r)) {
-				xnd_error("Failed to read vm region\n");
+			bread = readall(fd, region, sizeof(*region));
+			if (bread != sizeof(*region)) {
+				xnd_error("failed to read vm region\n");
 				goto bad;
 			}
-                        if (ONLY_RESTORE_DIRTY_PAGES(r)) {
-                                off = sizeof(struct xnd_vm_page);
-                                off += VM_PAGE_SIZE;
-                                off *= r->pages_dirtied;
-                        } else {
-                                off = r->size;
-                        }
-                        xnd_assert(lseek(fd, off, SEEK_CUR) != -1);
-                        r++;
+
+			ret = read_vm_region(fd, region);
+			if (ret != 0) {
+				xnd_error("failed to read vm region\n");
+				goto bad;
+			}
+
+                        region++;
                         break;
                 }
                 case XND_UCONTEXT_ENTRY: {
@@ -388,13 +409,13 @@ static bool skip_vm_region(struct xnd_vm_region *region)
                         return false;
                 return true;
         }
-        
+
         if (region->prot == (VM_PROT_EXECUTE | VM_PROT_READ)) {
                 if (print_options[PRINT_TEXT_REGIONS])
-                        return false; 
+                        return false;
                 return true;
         }
-        
+
         if (region->mode == SM_COW || region->mode == SM_PRIVATE) {
                 if (print_options[PRINT_DATA_REGIONS])
                         return false;
@@ -407,15 +428,25 @@ static bool skip_vm_region(struct xnd_vm_region *region)
         return true;
 }
 
-static void print_ckpt_header(struct xnd_ckpt_header *hdr)
+static void
+print_ckpt_header(struct xnd_ckpt_header *header)
 {
-        struct shared_cache_info        *dyld_cache_info;
-        char                            shared_cache_uuid[37];
-        
-        dyld_cache_info = &hdr->shared_cache_info;
-        uuid_unparse(dyld_cache_info->uuid, shared_cache_uuid);
+	struct shared_cache_info *dyld_cache_info;
+	char dyld_cache_uuid[37];
+	uintptr_t dyld_cache_base, dyld_cache_end;
+	size_t dyld_cache_size;
+	const char *root_of_tree = NULL;
 
-        printf("**************** Checkpoint Header ********************\n");
+	dyld_cache_info = &header->shared_cache_info;
+	uuid_unparse(dyld_cache_info->uuid, dyld_cache_uuid);
+
+	dyld_cache_base = (uintptr_t)dyld_cache_info->base;
+	dyld_cache_size = dyld_cache_info->size;
+	dyld_cache_end = dyld_cache_base + dyld_cache_size;
+
+	root_of_tree = (header->is_root_of_tree ? "true" : "false");
+
+	printf("*************** Checkpoint Header ***************\n");
         printf("                   Magic: %s\n"
                "                 xnd_pid: %u\n"
                "                xnd_ppid: %u\n"
@@ -430,84 +461,77 @@ static void print_ckpt_header(struct xnd_ckpt_header *hdr)
                "   Root of process tree?: %s\n"
                "            # of entries: %u\n"
                "         # of vm regions: %u\n"
-               " dyld shared cache start: %p\n"
-               "   dyld shared cache end: %p\n"
+               " dyld shared cache start: 0x%016lx\n"
+               "   dyld shared cache end: 0x%016lx\n"
                "  dyld shared cache size: %zu\n"
                "  dyld shared cache uuid: %s\n",
-               hdr->magic, hdr->xnd_pid, hdr->xnd_ppid, hdr->xnd_pgid,
-               hdr->pid, hdr->ppid, hdr->pgid, hdr->sid, 
-               hdr->task_self, hdr->host_self, hdr->num_peers,
-               (hdr->is_root_of_tree ? "TRUE" : "FALSE"), hdr->entry_count,
-               hdr->region_count, dyld_cache_info->base,
-               dyld_cache_info->base + dyld_cache_info->size,
-               dyld_cache_info->size, shared_cache_uuid);
-        printf("*******************************************************\n");
+	       header->magic, header->xnd_pid, header->xnd_ppid,
+	       header->xnd_pgid, header->pid, header->ppid, header->pgid,
+	       header->sid, header->task_self, header->host_self,
+	       header->num_peers, root_of_tree, header->entry_count,
+	       header->region_count, dyld_cache_base, dyld_cache_end,
+	       dyld_cache_size, dyld_cache_uuid);
+	printf("*************************************************\n");
 }
 
-static void print_vm_regions(struct xnd_vm_region *regions, u32 nr_rgns)
+static void
+print_vm_regions(struct xnd_vm_region *regions, u32 nregions)
 {
-        struct xnd_vm_region    *rgn;
-        size_t                  nbyte, bytes;
-        
-        nbyte = 0;
-        for (rgn = regions; rgn < regions + nr_rgns; rgn++) {
-                if (ONLY_RESTORE_DIRTY_PAGES(rgn)) {
-                        bytes = sizeof(struct xnd_vm_page) + VM_PAGE_SIZE;
-                        bytes *= rgn->pages_dirtied;
-                } else {
-                        bytes = rgn->size;
-                }
-                bytes += sizeof(struct xnd_vm_region);
-                nbyte += bytes;
-        }
+	size_t tmp, bytes = 0;
+	struct xnd_vm_region *it;
+	const struct xnd_vm_region *end = regions + nregions;
 
-        printf("************* Checkpointed Memory Regions *************\n");
-        printf("Total memory in checkpoint: %.2fGB/%.2fMB/%zu bytes\n\n",
-               GIGABYTES(nbyte), MEGABYTES(nbyte), nbyte);
-                
-        for (rgn = regions; rgn < regions + nr_rgns; rgn++) {
-                if (skip_vm_region(rgn))
-                        continue;
-                if (ONLY_RESTORE_DIRTY_PAGES(rgn)) {
-                        bytes = sizeof(struct xnd_vm_page) + VM_PAGE_SIZE;
-                        bytes *= rgn->pages_dirtied;
-                        bytes += sizeof(struct xnd_vm_region);
-                } else {
-                        bytes = sizeof(struct xnd_vm_region) + rgn->size;
-                }
-                printf("\tMemory Region #%d:\n", (int)(rgn - regions));
-                if (vm_info_options[REGION_START])
-                        printf("         start=%p\n", rgn->start);
-                if (vm_info_options[REGION_END])
-                        printf("           end=%p\n", rgn->start + rgn->size);
-                if (vm_info_options[REGION_SIZE])
-                        printf("          size=%zu\n", rgn->size);
-                if (vm_info_options[REGION_PROTECTION])
-                        printf("          prot=%s/%s\n",
-                               VM_PROT_STRING(rgn->prot),
-                               VM_PROT_STRING(rgn->max_prot));
-                if (vm_info_options[REGION_SHARE_MODE])
-                        printf("          mode=%s\n", 
-                               vm_share_mode_string(rgn));
-                if (vm_info_options[REGION_USER_TAG]) {
-                        printf("           tag=%s\n", 
-                               vm_user_tag_string(rgn));
-                }
-                if (vm_info_options[REGION_INHERITANCE]) {
-                        printf("       inherit=%s\n", vm_inherit_string(rgn));
-                }
-                printf(" pages_dirtied=%u\n", rgn->pages_dirtied);
-                printf("   total bytes=%zu (in checkpoint image)\n", bytes);
-                printf("\n");
-        }
-        printf("*******************************************************\n");
+	for (it = regions; it != end; it++) {
+		if (ONLY_RESTORE_DIRTY_PAGES(it) && it->dirty_only) {
+			tmp = sizeof(struct xnd_vm_page) + VM_PAGE_SIZE;
+			tmp *= it->pages_dirtied;
+		} else {
+			tmp = it->size;
+		}
+		tmp += sizeof(struct xnd_vm_region);
+		bytes += tmp;
+	}
+
+	printf("********** Checkpointed Memory Regions **********\n");
+	printf("Total checkpointed memory: %.2fGB/%.2fMB/%zu bytes\n\n",
+	       GIGABYTES(bytes), MEGABYTES(bytes), bytes);
+
+	for (it = regions; it != end; it++) {
+		if (skip_vm_region(it))
+			continue;
+		if (ONLY_RESTORE_DIRTY_PAGES(it) && it->dirty_only) {
+			tmp = sizeof(struct xnd_vm_page) + VM_PAGE_SIZE;
+			tmp *= it->pages_dirtied;
+		} else {
+			tmp = it->size;
+		}
+		tmp += sizeof(struct xnd_vm_region);
+		printf("\tMemory region #%u\n", (u32)(it - regions));
+		printf("\t       start=%p\n"
+		       "\t         end=%p\n"
+		       "\t        size=%zu\n"
+		       "\t        prot=%s/%s\n"
+		       "\t        mode=%s\n"
+		       "\t         tag=%s\n"
+		       "\t     inherit=%s\n"
+		       "\t dirty pages=%u\n"
+		       "\t total bytes=%zu (in checkpoint image)\n\n",
+		       it->start,
+		       (void *)((uintptr_t)it->start + it->size),
+		       it->size, VM_PROT_STRING(it->prot),
+		       VM_PROT_STRING(it->max_prot),
+		       vm_share_mode_string(it), vm_user_tag_string(it),
+		       vm_inherit_string(it), it->pages_dirtied, bytes);
+	}
+	printf("*************************************************\n");
 }
 
 static void print_user_context(ucontext_t *uctx)
 {
         mcontext_t mctx = (mcontext_t)&uctx->__mcontext_data;
 
-        printf("************** Checkpointed User Context **************\n");
+
+	printf("*********** Checkpointed User Context ***********\n");
         /* Callee-saved general purpose registers */
         for (u32 i = 19; i <= 28; i++)
                 printf("\tx%u:\t0x%llx\n", i, mctx->__ss.__x[i]);
@@ -519,7 +543,7 @@ static void print_user_context(ucontext_t *uctx)
         printf("\tfp:\t0x%llx\n", get_mcontext_fp(mctx));
         printf("\tlr:\t0x%llx\n", get_mcontext_lr(mctx));
         printf("\tsp:\t0x%llx\n", get_mcontext_sp(mctx));
-        printf("*******************************************************\n");
+	printf("*************************************************\n");
 }
 
 static void print_checkpoint(int fd)
@@ -535,7 +559,7 @@ static void print_checkpoint(int fd)
         enum xnd_ckpt_entry     entries[header.entry_count];
         struct xnd_vm_region    regions[header.region_count];
         ucontext_t              uctx;
-        
+
         if (read_ckpt(fd, &header, entries, regions, &uctx) < 0) {
                 exit(EXIT_FAILURE);
         }
